@@ -5,7 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
 
-import 'dashboard_view.dart';
+import '/components/dashboard.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
