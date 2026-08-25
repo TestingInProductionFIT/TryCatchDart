@@ -6,10 +6,17 @@ import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '/components/dashboard.dart';
+import '/src/telemetry/telemetry_provider.dart';
+
+import 'package:serial/serial.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await windowManager.ensureInitialized();
+
+  // Spawn the background serial worker isolate before the UI starts.
+  // The worker begins scanning for ports immediately.
+  final worker = await SerialWorker.spawn();
 
   const windowOptions = WindowOptions(
     size: Size(1280, 800),
@@ -26,8 +33,13 @@ void main() async {
   });
 
   runApp(
-    const ProviderScope(
-      child: AppLifecycleWrapper(
+    ProviderScope(
+      overrides: [
+        // Inject the live worker handle into the provider graph.
+        // All providers that depend on serialWorkerProvider will use this instance.
+        serialWorkerProvider.overrideWithValue(worker),
+      ],
+      child: const AppLifecycleWrapper(
         child: MaterialApp(
           debugShowCheckedModeBanner: false,
           home: DashboardView(),

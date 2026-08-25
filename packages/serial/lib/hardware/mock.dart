@@ -2,12 +2,16 @@ import 'dart:async';
 import 'dart:math';
 import 'dart:typed_data';
 
+import '../constants.dart';
+
 /// A mock implementation of a serial communication service.
 ///
 /// Simulates incoming binary telemetry data without requiring physical
 /// serial hardware or COM ports. Useful for UI development, automated
 /// testing, and offline demonstrations.
-class MockSerialService {
+///
+/// Emits properly framed packets using configuration from [TelemetryFraming].
+class MockSerialPort {
   Timer? _mockTimer;
   bool _isConnected = false;
 
@@ -24,22 +28,31 @@ class MockSerialService {
   /// Whether the mock connection is currently active and producing data.
   bool get isConnected => _isConnected;
 
-  /// Starts the mock connection and begins emitting randomized byte packets.
+  /// Starts the mock connection and begins emitting randomized packets.
   ///
-  /// Emits random chunks of 10–20 bytes at high frequency to simulate incoming
-  /// sensor or telemetry streams.
+  /// Emits one properly framed packet per millisecond to simulate
+  /// a high-frequency telemetry stream.
   bool connect() {
     disconnect();
     _isConnected = true;
     final random = Random();
 
-    // Emit randomized byte chunks periodically to simulate sensor telemetry
-    _mockTimer = Timer.periodic(const Duration(milliseconds: 1), (_) {
+    _mockTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
       if (!_isConnected) return;
-      final dummyBytes = Uint8List.fromList(
-        List.generate(random.nextInt(11) + 10, (_) => random.nextInt(256)),
-      );
-      _byteStreamController.add(dummyBytes);
+
+      // Build a valid framed packet the parser can decode.
+      final packet = Uint8List(TelemetryFraming.totalPacketLength);
+      packet[0] = TelemetryFraming.startByte0;
+      packet[1] = TelemetryFraming.startByte1;
+      for (
+        int i = TelemetryFraming.startWordLength;
+        i < TelemetryFraming.totalPacketLength;
+        i++
+      ) {
+        packet[i] = random.nextInt(256);
+      }
+
+      _byteStreamController.add(packet);
     });
 
     return true;

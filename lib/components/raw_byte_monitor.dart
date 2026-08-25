@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:trycatch/src/serial/provider.dart';
+import 'package:serial/serial.dart';
+import 'package:trycatch/src/collections/ring_buffer.dart';
+import 'package:trycatch/src/telemetry/telemetry_provider.dart';
 
-/// A diagnostic widget that listens to [rawBytesStreamProvider] and displays
-/// a history of incoming serial byte buffers formatted as hexadecimal values,
-/// with the newest entries at the top.
+/// Displays a live feed of parsed [TelemetryPacket]s received from the serial worker.
+///
+/// Uses a fixed-capacity [RingBuffer] to retain only the most recent packets in memory,
+/// ensuring zero reallocation and flat memory consumption even during multi-hour runs.
 class RawByteMonitor extends ConsumerStatefulWidget {
   const RawByteMonitor({super.key});
 
@@ -13,62 +16,56 @@ class RawByteMonitor extends ConsumerStatefulWidget {
 }
 
 class _RawByteMonitorState extends ConsumerState<RawByteMonitor> {
-  // Holds the history of formatted log lines (newest first)
-  final List<String> _history = [];
+  final RingBuffer<TelemetryPacket> _packetBuffer =
+      RingBuffer<TelemetryPacket>(1000);
+  int _totalPacketsReceived = 0;
 
   @override
   Widget build(BuildContext context) {
-    // Listen to the stream using ref.listen so we can append to local state
-    ref.listen(rawBytesStreamProvider, (_, next) {
-      next.whenData((chunk) {
-        if (chunk.isEmpty) return;
-
-        // Format each byte as a 2-digit uppercase hexadecimal pair
-        final hexString = chunk
-            .map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase())
-            .join(' ');
-
-        final logEntry = 'Received ${chunk.length} bytes: $hexString';
-
+    ref.listen(telemetryStreamProvider, (_, next) {
+      next.whenData((packet) {
         setState(() {
-          // Insert at the top (index 0)
-          _history.insert(0, logEntry);
+          _totalPacketsReceived++;
+          _packetBuffer.push(packet);
         });
       });
     });
 
-    final streamState = ref.watch(rawBytesStreamProvider);
+    final streamState = ref.watch(telemetryStreamProvider);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        // Status header
         if (streamState.hasError)
           Text(
-            'Serial Error: ${streamState.error}',
+            'Stream error: ${streamState.error}',
             style: const TextStyle(color: Colors.red),
           )
-        else if (_history.isEmpty)
+        else if (_packetBuffer.isEmpty)
           const Padding(
             padding: EdgeInsets.only(bottom: 8.0),
-            child: Text('Awaiting raw data...'),
+            child: Text('Awaiting packets...'),
           ),
         Text(
-          'Packets: ${_history.length}',
+          'Packets: $_totalPacketsReceived total (buffered last ${_packetBuffer.length}/${_packetBuffer.capacity})',
           style: Theme.of(context).textTheme.bodySmall,
         ),
-
-        // Constrained height container for the history list so it won't crash parent columns
         SizedBox(
-          height: 700, // Adjust this height as needed for your UI
+          height: 700,
           child: ListView.builder(
-            itemCount: _history.length,
+            itemCount: _packetBuffer.length,
             itemBuilder: (context, index) {
+              // RingBuffer index 0 is the newest packet, index 1 is 2nd newest, etc.
+              final packet = _packetBuffer[index];
+              final hex = packet.rawData
+                  .map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase())
+                  .join(' ');
+
               return Padding(
                 padding: const EdgeInsets.symmetric(vertical: 2.0),
                 child: Text(
-                  _history[index],
+                  '[${packet.receivedAtMs}ms] $hex',
                   style: const TextStyle(fontFamily: 'Monospace', fontSize: 12),
                 ),
               );
