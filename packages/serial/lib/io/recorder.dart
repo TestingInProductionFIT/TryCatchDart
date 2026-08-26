@@ -1,10 +1,11 @@
 import 'dart:io';
 import 'dart:typed_data';
 
-/// Handles recording exact 1:1 raw binary byte streams directly to disk.
+/// Handles recording raw binary byte streams directly to disk with framing headers.
 ///
 /// Records every raw byte received over the serial interface (including preamble
-/// noise, fragmented frames, and corrupted bytes) for complete diagnostic fidelity.
+/// noise, fragmented frames, and corrupted bytes) prepended with a 12-byte framing header
+/// (64-bit microsecond timestamp + 32-bit payload length) for complete diagnostic fidelity.
 class Recorder {
   IOSink? _sink;
   String? _filePath;
@@ -46,12 +47,21 @@ class Recorder {
     }
   }
 
-  /// Appends raw [bytes] to the recording file.
+  /// Appends raw [bytes] to the recording file prepended with a 12-byte timestamp frame header.
   ///
-  /// Non-blocking $O(1)$ write operation handled by Dart's asynchronous I/O loop.
+  /// Non-blocking O(1) write operation handled by Dart's asynchronous I/O loop.
   void recordBytes(Uint8List bytes) {
     if (_sink == null || bytes.isEmpty) return;
+
+    final timestampMicros = DateTime.now().microsecondsSinceEpoch;
+
+    // 8 bytes (Int64 timestamp) + 4 bytes (Uint32 length) = 12-byte header
+    final header = ByteData(12)
+      ..setInt64(0, timestampMicros, Endian.big)
+      ..setUint32(8, bytes.length, Endian.big);
+
+    _sink!.add(header.buffer.asUint8List());
     _sink!.add(bytes);
-    _bytesWritten += bytes.length;
+    _bytesWritten += 12 + bytes.length;
   }
 }

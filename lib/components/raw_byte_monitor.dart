@@ -52,7 +52,7 @@ class _RawByteMonitorState extends ConsumerState<RawByteMonitor> {
           style: Theme.of(context).textTheme.bodySmall,
         ),
         SizedBox(
-          height: 700,
+          height: 600,
           child: ListView.builder(
             itemCount: _packetBuffer.length,
             itemBuilder: (context, index) {

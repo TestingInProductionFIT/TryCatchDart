@@ -10,8 +10,11 @@ class PacketParser {
 
   /// Feed a raw byte chunk from the serial stream into the parser.
   ///
+  /// Pass optional [timestampMs] when replaying recorded binary streams to preserve
+  /// original arrival times. Defaults to [DateTime.now] for live streaming.
+  ///
   /// Returns a list of all complete [TelemetryPacket]s extracted.
-  List<TelemetryPacket> feed(Uint8List chunk) {
+  List<TelemetryPacket> feed(Uint8List chunk, {int? timestampMs}) {
     _buf.addAll(chunk);
     final packets = <TelemetryPacket>[];
 
@@ -44,7 +47,7 @@ class PacketParser {
 
       packets.add(
         TelemetryPacket(
-          receivedAtMs: DateTime.now().millisecondsSinceEpoch,
+          receivedAtMs: timestampMs ?? DateTime.now().millisecondsSinceEpoch,
           rawData: payload,
         ),
       );
