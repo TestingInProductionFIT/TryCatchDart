@@ -3,6 +3,11 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:serial/serial.dart';
 
+/// Builds a wire-valid framed packet carrying [sequence].
+Uint8List validPacket(int sequence) => FrameCodec.encodePacket(
+      TelemetryFrame(sequence: sequence),
+    );
+
 void main() {
   group('PacketParser', () {
     late PacketParser parser;
@@ -12,34 +17,23 @@ void main() {
     });
 
     test('parses a single packet correctly with custom timestamp', () {
-      final data = Uint8List(TelemetryFraming.totalPacketLength);
-      data[0] = TelemetryFraming.startByte0;
-      data[1] = TelemetryFraming.startByte1;
-      for (
-        var i = TelemetryFraming.startWordLength;
-        i < TelemetryFraming.totalPacketLength;
-        i++
-      ) {
-        data[i] = i;
-      }
-
       const customTimestamp = 1700000000000;
-      final packets = parser.feed(data, timestampMs: customTimestamp);
+      final packets =
+          parser.feed(validPacket(7), timestampMs: customTimestamp);
 
       expect(packets.length, 1);
       expect(packets.first.receivedAtMs, customTimestamp);
       expect(packets.first.rawData.length, TelemetryFraming.payloadLength);
-      expect(packets.first.rawData[0], 2);
-      expect(packets.first.rawData[30], 32);
+      expect(packets.first.rawData[0], TelemetryLayout.version);
+
+      final frame =
+          FrameCodec.decode(packets.first.rawData, receivedAtMs: 0)!;
+      expect(frame.sequence, 7);
     });
 
     test('defaults to current timestamp when timestampMs is omitted', () {
-      final data = Uint8List(TelemetryFraming.totalPacketLength);
-      data[0] = TelemetryFraming.startByte0;
-      data[1] = TelemetryFraming.startByte1;
-
       final before = DateTime.now().millisecondsSinceEpoch;
-      final packets = parser.feed(data);
+      final packets = parser.feed(validPacket(1));
       final after = DateTime.now().millisecondsSinceEpoch;
 
       expect(packets.length, 1);
@@ -48,40 +42,46 @@ void main() {
     });
 
     test('handles garbage bytes before start word', () {
-      final garbage = Uint8List.fromList([
-        0x12,
-        0x34,
-        0x56,
-        0xAA,
-      ]); // AA without 55
-      final valid = Uint8List(33);
-      valid[0] = 0xAA;
-      valid[1] = 0x55;
-      for (var i = 2; i < 33; i++) {
-        valid[i] = 0xFF;
-      }
+      final garbage =
+          Uint8List.fromList([0x12, 0x34, 0x56, 0xAA]); // AA without 55
 
       const customTimestamp = 1700000000000;
-      final combined = Uint8List.fromList([...garbage, ...valid]);
+      final combined = Uint8List.fromList([...garbage, ...validPacket(3)]);
       final packets = parser.feed(combined, timestampMs: customTimestamp);
 
       expect(packets.length, 1);
-      expect(packets.first.receivedAtMs, customTimestamp);
-      expect(packets.first.rawData.length, 31);
-      expect(packets.first.rawData.every((b) => b == 0xFF), isTrue);
+      final frame =
+          FrameCodec.decode(packets.first.rawData, receivedAtMs: 0)!;
+      expect(frame.sequence, 3);
+    });
+
+    test('drops a packet with a corrupted payload CRC', () {
+      final packet = validPacket(9);
+      packet[10] ^= 0xFF; // corrupt inside the payload → CRC mismatch
+
+      final packets = parser.feed(packet, timestampMs: 0);
+      expect(packets, isEmpty);
+    });
+
+    test('resynchronizes after a corrupted packet', () {
+      final bad = validPacket(1)..[20] ^= 0xFF;
+      final good = validPacket(2);
+      final combined = Uint8List.fromList([...bad, ...good]);
+
+      final packets = parser.feed(combined, timestampMs: 0);
+      expect(packets.length, 1);
+      final frame =
+          FrameCodec.decode(packets.first.rawData, receivedAtMs: 0)!;
+      expect(frame.sequence, 2);
     });
 
     test('handles packets split across multiple chunks', () {
-      final fullPacket = Uint8List(33);
-      fullPacket[0] = 0xAA;
-      fullPacket[1] = 0x55;
-      for (var i = 2; i < 33; i++) {
-        fullPacket[i] = i * 2;
-      }
+      final fullPacket = validPacket(4);
 
       final chunk1 = Uint8List.sublistView(fullPacket, 0, 10);
       final chunk2 = Uint8List.sublistView(fullPacket, 10, 25);
-      final chunk3 = Uint8List.sublistView(fullPacket, 25, 33);
+      final chunk3 =
+          Uint8List.sublistView(fullPacket, 25, fullPacket.length);
 
       const completionTimestamp = 1700000005000;
 
@@ -91,33 +91,25 @@ void main() {
 
       expect(packets.length, 1);
       expect(packets.first.receivedAtMs, completionTimestamp);
-      expect(packets.first.rawData.length, 31);
-      expect(packets.first.rawData[0], 4);
+      final frame =
+          FrameCodec.decode(packets.first.rawData, receivedAtMs: 0)!;
+      expect(frame.sequence, 4);
     });
 
-    test(
-      'handles multiple packets in a single chunk with shared timestamp',
-      () {
-        final packet1 = Uint8List(33);
-        packet1[0] = 0xAA;
-        packet1[1] = 0x55;
-        packet1[2] = 0x01;
+    test('handles multiple packets in a single chunk with shared timestamp', () {
+      const customTimestamp = 1700000000000;
+      final combined =
+          Uint8List.fromList([...validPacket(1), ...validPacket(2)]);
+      final packets = parser.feed(combined, timestampMs: customTimestamp);
 
-        final packet2 = Uint8List(33);
-        packet2[0] = 0xAA;
-        packet2[1] = 0x55;
-        packet2[2] = 0x02;
+      expect(packets.length, 2);
+      expect(packets[0].receivedAtMs, customTimestamp);
+      expect(packets[1].receivedAtMs, customTimestamp);
 
-        const customTimestamp = 1700000000000;
-        final combined = Uint8List.fromList([...packet1, ...packet2]);
-        final packets = parser.feed(combined, timestampMs: customTimestamp);
-
-        expect(packets.length, 2);
-        expect(packets[0].receivedAtMs, customTimestamp);
-        expect(packets[1].receivedAtMs, customTimestamp);
-        expect(packets[0].rawData[0], 0x01);
-        expect(packets[1].rawData[0], 0x02);
-      },
-    );
+      final f1 = FrameCodec.decode(packets[0].rawData, receivedAtMs: 0)!;
+      final f2 = FrameCodec.decode(packets[1].rawData, receivedAtMs: 0)!;
+      expect(f1.sequence, 1);
+      expect(f2.sequence, 2);
+    });
   });
 }

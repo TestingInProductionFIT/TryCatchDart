@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Direction C — Industrial Technical</title>
+<style>
+  :root{
+    --bg:#EDEDE9; --panel:#FCFCFA; --ink:#1C1C1A; --border:#1C1C1A;
+    --muted:#57564F; --faint:#8B897F;
+    --amber:#C2410C; --green:#15803D; --red:#B91C1C; --blue:#1D4ED8; --violet:#6D28D9;
+    --amberbg:#FEF3E2; --greenbg:#EDF7EE; --redbg:#FBEAEA;
+    --mono:"Cascadia Mono","Consolas",monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);font:14px/1.4 "Segoe UI",system-ui,sans-serif;padding:12px;min-height:100vh}
+  .mono{font-family:var(--mono)}
+
+  /* ---------- top bar ---------- */
+  .topbar{display:flex;align-items:center;gap:0;background:var(--panel);border:1.5px solid var(--border);margin-bottom:10px}
+  .brand{display:flex;align-items:center;gap:10px;padding:0 16px;height:52px;border-right:1.5px solid var(--border);
+    font-weight:800;letter-spacing:.06em;font-size:14px}
+  .brand .logo{width:26px;height:26px;background:var(--ink);color:var(--panel);display:flex;align-items:center;
+    justify-content:center;font-size:10px;font-weight:800;font-family:var(--mono)}
+  .cell{padding:0 16px;height:52px;display:flex;flex-direction:column;justify-content:center;gap:1px;border-right:1.5px solid var(--border)}
+  .lbl{font-family:var(--mono);font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint)}
+  .val{font-family:var(--mono);font-size:13.5px;font-weight:700}
+  .val.ok{color:var(--green)}
+  .flag{display:inline-flex;align-items:center;gap:7px;font-family:var(--mono);font-size:11.5px;font-weight:700;
+    padding:0 14px;height:52px;border-right:1.5px solid var(--border)}
+  .flag.rec{color:var(--red)}
+  .flag .sq{width:9px;height:9px;background:var(--red);animation:blink 1.2s infinite}
+  @keyframes blink{50%{opacity:.2}}
+  .spacer{flex:1;border-right:1.5px solid var(--border)}
+  .btn{font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
+    padding:0 18px;height:52px;border:none;border-left:1.5px solid var(--border);background:var(--panel);color:var(--ink);cursor:default}
+  .btn.primary{background:var(--ink);color:var(--panel)}
+
+  /* ---------- grid ---------- */
+  .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:10px}
+  .tile{position:relative;background:var(--panel);border:1.5px solid var(--border);padding:0;
+    display:flex;flex-direction:column;min-width:0}
+  .tile::before,.tile::after{content:"";position:absolute;width:7px;height:7px;pointer-events:none}
+  .tile::before{top:-1.5px;left:-1.5px;border-top:3px solid var(--ink);border-left:3px solid var(--ink)}
+  .tile::after{bottom:-1.5px;right:-1.5px;border-bottom:3px solid var(--ink);border-right:3px solid var(--ink)}
+  .tile-head{display:flex;align-items:center;gap:8px;padding:7px 12px;border-bottom:1px solid var(--border);
+    background:repeating-linear-gradient(-45deg,transparent 0 6px,rgba(28,28,26,.025) 6px 7px)}
+  .tile-head h3{font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;font-weight:700}
+  .tile-head .tag{margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--muted)}
+  .tile-body{padding:10px 12px;display:flex;flex-direction:column;flex:1;min-height:0}
+  .c5{grid-column:span 5}.c4{grid-column:span 4}.c3{grid-column:span 3}.c2{grid-column:span 2}
+  .stack{display:flex;flex-direction:column;gap:10px}
+  .grow{flex:1;min-height:0}
+
+  svg{display:block;width:100%}
+  .gridline{stroke:#E4E3DD;stroke-width:1}
+  .ticktext{font-family:var(--mono);font-size:9px;fill:var(--faint)}
+
+  .big{font-family:var(--mono);font-size:32px;font-weight:800;letter-spacing:-.02em}
+  .big small{font-size:13px;color:var(--muted);font-weight:600;margin-left:3px}
+  .pill{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:10.5px;font-weight:700;
+    letter-spacing:.06em;padding:3px 9px;border:1.5px solid}
+  .pill.ok{color:var(--green);border-color:var(--green);background:var(--greenbg)}
+  .pill.warn{color:var(--amber);border-color:var(--amber);background:var(--amberbg)}
+  .pill.bad{color:var(--red);border-color:var(--red);background:var(--redbg)}
+  .pill.info{color:var(--violet);border-color:var(--violet)}
+  .legend{display:flex;gap:14px;font-family:var(--mono);font-size:9.5px;color:var(--muted);margin-top:6px;text-transform:uppercase;letter-spacing:.06em}
+  .legend i{display:inline-block;width:14px;height:2.5px;vertical-align:middle;margin-right:5px}
+
+  /* fsm */
+  .fsm-now{display:flex;align-items:center;gap:12px;margin-bottom:10px}
+  .fsm-state{font-family:var(--mono);font-size:24px;font-weight:800;letter-spacing:.02em;color:var(--amber)}
+  .pipeline{display:flex;align-items:center;gap:0;border:1.5px solid var(--border);width:fit-content}
+  .st{font-family:var(--mono);font-size:9.5px;font-weight:700;letter-spacing:.08em;padding:5px 9px;border-right:1px solid var(--border);color:var(--faint)}
+  .st:last-child{border-right:none}
+  .st.done{color:var(--ink);background:var(--bg)}
+  .st.cur{color:#fff;background:var(--amber)}
+  .arrow{display:none}
+
+  /* stats */
+  .stats{display:flex;flex-direction:column;flex:1}
+  .stat{display:flex;align-items:baseline;justify-content:space-between;padding:7px 2px;border-bottom:1px solid #E4E3DD;flex:1}
+  .stat:last-child{border-bottom:none}
+  .stat .k{font-family:var(--mono);font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+  .stat .v{font-family:var(--mono);font-size:16px;font-weight:800}
+  .stat .v small{font-size:10px;color:var(--muted)}
+
+  .badge{position:fixed;bottom:10px;right:12px;font-family:var(--mono);font-size:10px;color:var(--faint);
+    border:1.5px solid var(--border);padding:4px 8px;background:var(--panel)}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand"><div class="logo">TC</div>TRYCATCH<span style="color:var(--faint);font-weight:600">/GS-01</span></div>
+  <div class="cell"><span class="lbl">Link</span><span class="val ok">COM7 ● 10.0 Hz</span></div>
+  <div class="cell"><span class="lbl">Packets</span><span class="val">4218</span></div>
+  <div class="cell"><span class="lbl">Errors</span><span class="val ok">000</span></div>
+  <div class="flag rec"><span class="sq"></span>REC 00:42</div>
+  <div class="spacer"></div>
+  <button class="btn">Recordings</button>
+  <button class="btn">Settings</button>
+  <button class="btn primary">Edit layout</button>
+</div>
+
+<div class="grid">
+
+  <!-- altitude -->
+  <div class="tile c5" style="height:238px">
+    <div class="tile-head"><h3>Altitude</h3><span class="tag">LIVE · 60 S</span></div>
+    <div class="tile-body">
+      <svg id="altChart" viewBox="0 0 460 152" class="grow" preserveAspectRatio="none"></svg>
+      <div class="legend"><span><i style="background:var(--amber)"></i>baro</span>
+        <span><i style="background:var(--blue)"></i>GPS</span>
+        <span><i style="background:var(--violet)"></i>DR</span></div>
+    </div>
+  </div>
+
+  <!-- velocity -->
+  <div class="tile c4" style="height:238px">
+    <div class="tile-head"><h3>Velocity — m/s</h3><span class="tag">NED</span></div>
+    <div class="tile-body">
+      <svg id="velChart" viewBox="0 0 360 152" class="grow" preserveAspectRatio="none"></svg>
+      <div class="legend"><span><i style="background:var(--green)"></i>vertical</span>
+        <span><i style="background:var(--ink)"></i>total</span></div>
+    </div>
+  </div>
+
+  <!-- right stack -->
+  <div class="c3 stack" style="height:238px">
+    <div class="tile grow">
+      <div class="tile-head"><h3>Flight state</h3><span class="tag">T+36.2 S</span></div>
+      <div class="tile-body">
+        <div class="fsm-now"><span class="fsm-state">DROGUE</span><span class="pill info">4.1 S</span></div>
+        <div class="pipeline">
+          <span class="st done">IDLE</span><span class="st done">ARM</span><span class="st done">BOOST</span>
+          <span class="st done">COAST</span><span class="st done">APOG</span><span class="st cur">DROGUE</span>
+          <span class="st">MAIN</span><span class="st">LAND</span>
+        </div>
+      </div>
+    </div>
+    <div class="tile grow">
+      <div class="tile-head"><h3>Battery</h3></div>
+      <div class="tile-body">
+        <div style="display:flex;align-items:center;gap:14px">
+          <div class="big" style="font-size:26px">7.92<small>V</small></div>
+          <span class="pill ok">CHARGED</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- map -->
+  <div class="tile c5" style="height:222px">
+    <div class="tile-head"><h3>Map</h3><span class="tag">OSM · FOLLOW OFF</span></div>
+    <div class="tile-body" style="padding:0">
+      <svg id="mapSvg" viewBox="0 0 460 160" class="grow" preserveAspectRatio="xMidYMid slice" style="flex:1"></svg>
+    </div>
+  </div>
+
+  <!-- rocket 3d -->
+  <div class="tile c3" style="height:222px">
+    <div class="tile-head"><h3>Attitude</h3><span class="tag">P 12° · Y 214°</span></div>
+    <div class="tile-body" style="padding:0">
+      <svg viewBox="0 0 260 148" class="grow" style="flex:1;background:#F3F2ED">
+        <g stroke="#D9D8D0"><line x1="30" y1="128" x2="230" y2="128"/><line x1="30" y1="128" x2="30" y2="20"/></g>
+        <g transform="translate(130,84) rotate(-12)">
+          <path d="M0,-52 C7,-38 9,-18 9,30 L-9,30 C-9,-18 -7,-38 0,-52 Z" fill="#FCFCFA" stroke="#1C1C1A" stroke-width="1.4"/>
+          <path d="M9,10 L26,42 L9,42 Z M-9,10 L-26,42 L-9,42 Z" fill="#FCFCFA" stroke="#1C1C1A" stroke-width="1.2"/>
+          <path d="M0,-52 C3,-45 4.5,-38 5,-30 L-5,-30 C-4.5,-38 -3,-45 0,-52 Z" fill="var(--amber)"/>
+          <line x1="0" y1="30" x2="0" y2="58" stroke="var(--violet)" stroke-width="1.4" stroke-dasharray="3 3"/>
+        </g>
+        <g font-family="Cascadia Mono,Consolas,monospace" font-size="8" fill="#8B897F">
+          <text x="226" y="131">E</text><text x="26" y="24">U</text>
+        </g>
+      </svg>
+    </div>
+  </div>
+
+  <!-- stats -->
+  <div class="tile c2" style="height:222px">
+    <div class="tile-head"><h3>Telemetry</h3></div>
+    <div class="tile-body" style="padding:4px 12px">
+      <div class="stats">
+        <div class="stat"><span class="k">Max alt</span><span class="v">1058<small> m</small></span></div>
+        <div class="stat"><span class="k">From site</span><span class="v">0.42<small> km</small></span></div>
+        <div class="stat"><span class="k">GPS</span><span class="v" style="color:var(--green)">3D·12</span></div>
+        <div class="stat"><span class="k">DR pts</span><span class="v">3</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- hall -->
+  <div class="tile c2" style="height:222px">
+    <div class="tile-head"><h3>Hall</h3></div>
+    <div class="tile-body">
+      <div class="big" style="font-size:24px">2950</div>
+      <div style="margin:5px 0 10px"><span class="pill bad">WIRE BROKEN</span></div>
+      <svg id="hallChart" viewBox="0 0 150 62" class="grow" preserveAspectRatio="none"></svg>
+    </div>
+  </div>
+
+</div>
+
+<div class="badge">Direction C — Industrial Technical</div>
+
+<script>
+const KF=[[0,0,0],[8,0,0],[10.8,216,154],[21.7,1058,0],[22.5,1010,-40],[44.4,150,-40],[45,150,-6],[69.4,0,-6]];
+function sample(t){
+  for(let i=0;i<KF.length-1;i++){
+    if(t>=KF[i][0]&&t<=KF[i+1][0]){
+      const f=(t-KF[i][0])/(KF[i+1][0]-KF[i][0]);
+      return{alt:KF[i][1]+f*(KF[i+1][1]-KF[i][1]),vv:KF[i][2]+f*(KF[i+1][2]-KF[i][2])};
+    }
+  }
+  return{alt:0,vv:0};
+}
+const T0=36.2, WIN=60;
+function windowPts(fn,n=120){
+  const pts=[];for(let i=0;i<=n;i++){const t=T0-WIN+(i/n)*WIN;pts.push([t,fn(sample(Math.max(0,t)))]);}return pts;
+}
+function render(elId,series,viewBox,pad,fmt){
+  const el=document.getElementById(elId);const[W,H]=viewBox.split(",").map(Number);
+  let all=[];series.forEach(s=>all=all.concat(s.pts.map(p=>p[1])));
+  let lo=Math.min(...all),hi=Math.max(...all);const span=(hi-lo)||1;lo-=span*.08;hi+=span*.08;
+  const tLo=T0-WIN,tHi=T0;
+  const X=t=>pad.l+(t-tLo)/(tHi-tLo)*(W-pad.l-pad.r);
+  const Y=v=>H-pad.b-(v-lo)/(hi-lo)*(H-pad.t-pad.b);
+  let out='';
+  for(let i=0;i<=4;i++){const y=pad.t+i*(H-pad.t-pad.b)/4;
+    out+=`<line class="gridline" x1="${pad.l}" y1="${y}" x2="${W-pad.r}" y2="${y}"/>`;
+    out+=`<text class="ticktext" x="${pad.l-4}" y="${y+3}" text-anchor="end">${fmt(hi-i*(hi-lo)/4)}</text>`;}
+  for(let i=0;i<=4;i++){const t=tLo+i*(tHi-tLo)/4;
+    out+=`<text class="ticktext" x="${X(t)}" y="${H-2}" text-anchor="middle">${Math.round(t)}s</text>`;}
+  series.forEach(s=>{
+    const d=s.pts.map((p,i)=>(i?'L':'M')+X(p[0]).toFixed(1)+','+Y(p[1]).toFixed(1)).join(' ');
+    if(s.area){out+=`<path d="${d} L${X(tHi)},${H-pad.b} L${X(tLo)},${H-pad.b} Z" fill="${s.color}" opacity=".12"/>`;}
+    out+=`<path d="${d}" fill="none" stroke="${s.color}" stroke-width="1.7"${s.dashed?' stroke-dasharray="4 4"':''} stroke-linejoin="round"/>`;
+  });
+  el.innerHTML=out;
+}
+const f2=v=>v>=1000?(v/1000).toFixed(1)+'k':Math.round(v);
+render('altChart',[
+  {pts:windowPts(s=>s.alt),color:'#C2410C',area:true},
+  {pts:windowPts(s=>s.alt*0.985),color:'#1D4ED8',dashed:true},
+], "460,152",{l:38,r:8,t:6,b:16},f2);
+render('velChart',[
+  {pts:windowPts(s=>s.vv),color:'#15803D'},
+  {pts:windowPts(s=>Math.abs(s.vv)*1.02),color:'#1C1C1A',dashed:true},
+], "360,152",{l:34,r:8,t:6,b:16},f2);
+render('hallChart',[{pts:windowPts(s=>s.alt>950?2950:2500,60),color:'#B91C1C'}],"150,62",{l:4,r:4,t:4,b:4},v=>'');
+
+const map=document.getElementById('mapSvg');
+let grid='';for(let x=0;x<=460;x+=40)grid+=`<line x1="${x}" y1="0" x2="${x}" y2="160" stroke="#E4E3DD"/>`;
+for(let y=0;y<=160;y+=40)grid+=`<line x1="0" y1="${y}" x2="460" y2="${y}" stroke="#E4E3DD"/>`;
+map.innerHTML=`<rect width="460" height="160" fill="#F3F2ED"/>`+grid+`
+  <path d="M40,120 Q90,95 130,105 T230,95 T330,70 T440,60" fill="none" stroke="#D9D8D0" stroke-width="9"/>
+  <path d="M120,110 C170,100 220,88 260,70 C300,52 340,48 392,50" fill="none" stroke="#1D4ED8" stroke-width="2"/>
+  <path d="M120,110 C175,118 235,120 300,116 C345,113 375,104 396,96" fill="none" stroke="#6D28D9" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <g transform="translate(120,110)"><path d="M0,0 L0,-14 L9,-10 L0,-6" fill="#C2410C"/><circle r="2.5" fill="#C2410C"/></g>
+  <text x="132" y="100" font-family="Cascadia Mono,Consolas,monospace" font-size="8" fill="#57564F">SITE 50.0755 14.4378</text>
+  <g transform="translate(392,50)"><rect x="-4" y="-4" width="8" height="8" fill="none" stroke="#1D4ED8" stroke-width="1.6"/><circle r="1.4" fill="#1D4ED8"/></g>
+  <text x="380" y="38" font-family="Cascadia Mono,Consolas,monospace" font-size="8" fill="#1C1C1A" font-weight="bold">ROCKET</text>
+  <text x="298" y="132" font-family="Cascadia Mono,Consolas,monospace" font-size="8" fill="#6D28D9">DR ESTIMATE</text>`;
+</script>
+</body>
+</html>

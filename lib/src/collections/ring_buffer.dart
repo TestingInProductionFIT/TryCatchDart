@@ -69,6 +69,13 @@ class RingBuffer<T> extends Iterable<T> {
     return _buffer[realIndex] as T;
   }
 
+  /// Lazily iterates the elements newest-first (zero allocation).
+  Iterable<T> newestFirst() sync* {
+    for (var i = 0; i < _length; i++) {
+      yield this[i];
+    }
+  }
+
   /// Clears all stored elements without reallocating the underlying storage array.
   void clear() {
     _buffer.fillRange(0, capacity, null);

@@ -1,19 +1,22 @@
 import 'dart:async';
-import 'dart:math';
 import 'dart:typed_data';
 
-import '../constants.dart';
+import '../telemetry/flight_simulator.dart';
+import '../telemetry/frame_codec.dart';
 
 /// A mock implementation of a serial communication service.
 ///
-/// Simulates incoming binary telemetry data without requiring physical
-/// serial hardware or COM ports. Useful for UI development, automated
-/// testing, and offline demonstrations.
+/// Simulates an incoming stream of realistic flight telemetry driven by
+/// [FlightSimulator] without requiring physical serial hardware or COM ports.
+/// Useful for UI development, automated testing, and offline demonstrations.
 ///
-/// Emits properly framed packets using configuration from [TelemetryFraming].
+/// Every `connect()` starts a fresh simulated flight (GPS cold start → pad →
+/// boost → coast → drogue → main → landed). Frames are emitted at 10 Hz as
+/// properly framed wire packets.
 class MockSerialPort {
   Timer? _mockTimer;
   bool _isConnected = false;
+  FlightSimulator? _simulator;
 
   /// Identifier used to select the mock port in UI dropdowns.
   static String get portName => 'MOCK';
@@ -28,31 +31,18 @@ class MockSerialPort {
   /// Whether the mock connection is currently active and producing data.
   bool get isConnected => _isConnected;
 
-  /// Starts the mock connection and begins emitting randomized packets.
-  ///
-  /// Emits one properly framed packet per millisecond to simulate
-  /// a high-frequency telemetry stream.
+  /// Starts the mock connection and begins emitting simulated flight frames.
   bool connect() {
     disconnect();
     _isConnected = true;
-    final random = Random();
+    _simulator = FlightSimulator();
 
-    _mockTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
+    const tick = Duration(milliseconds: 100);
+    _mockTimer = Timer.periodic(tick, (_) {
       if (!_isConnected) return;
 
-      // Build a valid framed packet the parser can decode.
-      final packet = Uint8List(TelemetryFraming.totalPacketLength);
-      packet[0] = TelemetryFraming.startByte0;
-      packet[1] = TelemetryFraming.startByte1;
-      for (
-        int i = TelemetryFraming.startWordLength;
-        i < TelemetryFraming.totalPacketLength;
-        i++
-      ) {
-        packet[i] = random.nextInt(256);
-      }
-
-      _byteStreamController.add(packet);
+      final frame = _simulator!.step(tick.inMilliseconds / 1000);
+      _byteStreamController.add(FrameCodec.encodePacket(frame));
     });
 
     return true;
@@ -63,6 +53,7 @@ class MockSerialPort {
     _isConnected = false;
     _mockTimer?.cancel();
     _mockTimer = null;
+    _simulator = null;
   }
 
   /// Simulates transmitting [bytes] across the mock connection.

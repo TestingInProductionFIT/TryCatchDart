@@ -30,25 +30,14 @@ void main() {
       }
     });
 
-    Uint8List createTelemetryPacketData(int payloadByte) {
-      final data = Uint8List(TelemetryFraming.totalPacketLength);
-      data[0] = TelemetryFraming.startByte0;
-      data[1] = TelemetryFraming.startByte1;
-      for (
-        var i = TelemetryFraming.startWordLength;
-        i < TelemetryFraming.totalPacketLength;
-        i++
-      ) {
-        data[i] = payloadByte;
-      }
-      return data;
-    }
+    /// Builds a wire-valid framed packet carrying [sequence].
+    Uint8List createTelemetryPacket(int sequence) =>
+        FrameCodec.encodePacket(TelemetryFrame(sequence: sequence));
 
     test('parses telemetry packets from recorder binary file', () async {
       await recorder.start(testFilePath);
 
-      final packetData = createTelemetryPacketData(0x42);
-      recorder.recordBytes(packetData);
+      recorder.recordBytes(createTelemetryPacket(0x42));
       await recorder.stop();
 
       final packets = await fileParser
@@ -57,7 +46,10 @@ void main() {
 
       expect(packets.length, 1);
       expect(packets.first.rawData.length, TelemetryFraming.payloadLength);
-      expect(packets.first.rawData[0], 0x42);
+      expect(
+        FrameCodec.decode(packets.first.rawData, receivedAtMs: 0)!.sequence,
+        0x42,
+      );
     });
 
     test('correctly converts microsecond timestamps to milliseconds', () async {
@@ -67,7 +59,7 @@ void main() {
       const timestampMicros = 1700000000000000;
       const expectedMs = 1700000000000;
 
-      final packetData = createTelemetryPacketData(0x99);
+      final packetData = createTelemetryPacket(0x99);
 
       final header = ByteData(12)
         ..setInt64(0, timestampMicros, Endian.big)
@@ -85,11 +77,14 @@ void main() {
 
       expect(packets.length, 1);
       expect(packets.first.receivedAtMs, expectedMs);
-      expect(packets.first.rawData[0], 0x99);
+      expect(
+        FrameCodec.decode(packets.first.rawData, receivedAtMs: 0)!.sequence,
+        0x99,
+      );
     });
 
     test('handles packet split across multiple framed chunks', () async {
-      final fullPacket = createTelemetryPacketData(0x07);
+      final fullPacket = createTelemetryPacket(0x07);
 
       final chunk1 = Uint8List.sublistView(fullPacket, 0, 10);
       final chunk2 = Uint8List.sublistView(fullPacket, 10, fullPacket.length);
@@ -123,7 +118,10 @@ void main() {
 
       expect(packets.length, 1);
       expect(packets.first.receivedAtMs, expectedMs2);
-      expect(packets.first.rawData[0], 0x07);
+      expect(
+        FrameCodec.decode(packets.first.rawData, receivedAtMs: 0)!.sequence,
+        0x07,
+      );
     });
 
     test('yields empty stream for an empty recording file', () async {
@@ -132,7 +130,7 @@ void main() {
 
       final packets = await fileParser
           .parseFile(testFilePath, packetParser)
-          .toList();
+        .toList();
 
       expect(packets, isEmpty);
     });

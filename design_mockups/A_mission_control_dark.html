@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Direction A — Mission Control Dark</title>
+<style>
+  :root{
+    --bg:#0B0E14; --panel:#12161F; --panel2:#171C27; --border:#232A38;
+    --text:#E6EAF2; --muted:#8A94A6; --faint:#5B6472;
+    --cyan:#22D3EE; --green:#34D399; --amber:#FBBF24; --red:#F87171;
+    --violet:#A78BFA; --blue:#60A5FA; --orange:#FB923C;
+    --mono:"Cascadia Mono","Consolas",monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font:14px/1.45 "Segoe UI",system-ui,sans-serif;padding:14px;min-height:100vh}
+  .mono{font-family:var(--mono)}
+
+  /* ---------- top bar ---------- */
+  .topbar{display:flex;align-items:center;gap:18px;background:var(--panel);border:1px solid var(--border);
+    border-radius:10px;padding:10px 16px;margin-bottom:12px}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:600;letter-spacing:.14em;font-size:13px}
+  .brand .logo{width:26px;height:26px;border-radius:7px;background:linear-gradient(135deg,var(--cyan),#3B82F6);
+    display:flex;align-items:center;justify-content:center;font-size:13px;color:#04121A;font-weight:800}
+  .sep{width:1px;height:24px;background:var(--border)}
+  .group{display:flex;align-items:center;gap:10px}
+  .lbl{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--faint)}
+  .val{font-family:var(--mono);font-size:13px;color:var(--text)}
+  .led{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)}
+  .led.rec{background:var(--red);box-shadow:0 0 8px var(--red);animation:blink 1.2s infinite}
+  @keyframes blink{50%{opacity:.25}}
+  .chip{font-family:var(--mono);font-size:11.5px;padding:4px 10px;border-radius:6px;border:1px solid var(--border);background:var(--panel2)}
+  .chip.rec{color:var(--red);border-color:rgba(248,113,113,.4)}
+  .spacer{flex:1}
+  .btn{font-size:12px;font-weight:600;padding:7px 14px;border-radius:7px;border:1px solid var(--border);
+    background:var(--panel2);color:var(--muted);cursor:default}
+  .btn.primary{background:var(--cyan);border-color:var(--cyan);color:#04121A}
+  .btn.rec{color:var(--red);border-color:rgba(248,113,113,.4)}
+
+  /* ---------- grid ---------- */
+  .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:12px}
+  .tile{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:12px 14px;
+    display:flex;flex-direction:column;min-width:0}
+  .tile-head{display:flex;align-items:baseline;gap:8px;margin-bottom:8px}
+  .tile-head h3{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);font-weight:600}
+  .tile-head .tag{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--faint)}
+  .c5{grid-column:span 5}.c4{grid-column:span 4}.c3{grid-column:span 3}.c2{grid-column:span 2}.c6{grid-column:span 6}
+  .stack{display:flex;flex-direction:column;gap:12px}
+  .grow{flex:1;min-height:0}
+
+  /* chart svg */
+  svg{display:block;width:100%}
+  .axis{stroke:#2A3242;stroke-width:1}
+  .gridline{stroke:#1B212D;stroke-width:1}
+  .ticktext{font-family:var(--mono);font-size:9px;fill:var(--faint)}
+
+  /* big readouts */
+  .big{font-family:var(--mono);font-size:30px;font-weight:600;letter-spacing:-.02em}
+  .big small{font-size:13px;color:var(--muted);font-weight:400;margin-left:4px}
+  .pill{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;
+    padding:3px 9px;border-radius:5px;border:1px solid}
+  .pill .dot{width:6px;height:6px;border-radius:50%}
+  .pill.ok{color:var(--green);border-color:rgba(52,211,153,.35);background:rgba(52,211,153,.08)}
+  .pill.warn{color:var(--amber);border-color:rgba(251,191,36,.35);background:rgba(251,191,36,.08)}
+  .pill.bad{color:var(--red);border-color:rgba(248,113,113,.35);background:rgba(248,113,113,.08)}
+  .pill.info{color:var(--violet);border-color:rgba(167,139,250,.35);background:rgba(167,139,250,.08)}
+
+  /* fsm pipeline */
+  .fsm-now{display:flex;align-items:center;gap:12px;margin-bottom:10px}
+  .fsm-state{font-family:var(--mono);font-size:22px;font-weight:700;color:var(--cyan)}
+  .pipeline{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
+  .st{font-family:var(--mono);font-size:10px;padding:3px 8px;border-radius:4px;border:1px solid var(--border);color:var(--faint)}
+  .st.done{color:var(--muted);border-color:var(--border);background:var(--panel2)}
+  .st.cur{color:#04121A;background:var(--cyan);border-color:var(--cyan);font-weight:700}
+  .arrow{color:var(--faint);font-size:9px}
+
+  /* stats */
+  .stats{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border);border-radius:8px;overflow:hidden}
+  .stat{background:var(--panel2);padding:9px 11px}
+  .stat .k{font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint)}
+  .stat .v{font-family:var(--mono);font-size:16px;margin-top:2px}
+  .stat .v small{font-size:10px;color:var(--muted)}
+
+  .legend{display:flex;gap:14px;font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:6px}
+  .legend i{display:inline-block;width:14px;height:2px;vertical-align:middle;margin-right:5px;border-radius:1px}
+
+  .badge{position:fixed;bottom:10px;right:12px;font-family:var(--mono);font-size:10px;color:var(--faint);
+    border:1px solid var(--border);border-radius:6px;padding:4px 8px;background:var(--panel)}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand"><div class="logo">TC</div>TRYCATCH</div>
+  <div class="sep"></div>
+  <div class="group"><span class="led"></span><div><div class="lbl">Link</div><div class="val">COM7 · 10.0 Hz</div></div></div>
+  <div class="group"><div><div class="lbl">Packets</div><div class="val">4 218</div></div></div>
+  <div class="group"><div><div class="lbl">Dropped</div><div class="val" style="color:var(--green)">0</div></div></div>
+  <div class="sep"></div>
+  <span class="chip rec">● REC 00:42</span>
+  <div class="spacer"></div>
+  <div class="btn">Recordings</div>
+  <div class="btn">Settings</div>
+  <div class="btn primary">Edit layout</div>
+</div>
+
+<div class="grid">
+
+  <!-- altitude -->
+  <div class="tile c5" style="height:236px">
+    <div class="tile-head"><h3>Altitude</h3><span class="tag">live · 60 s</span></div>
+    <svg id="altChart" viewBox="0 0 460 170" class="grow" preserveAspectRatio="none"></svg>
+    <div class="legend"><span><i style="background:var(--cyan)"></i>barometric</span>
+      <span><i style="background:var(--blue)"></i>GPS</span>
+      <span><i style="background:var(--violet);opacity:.8"></i>dead reckoning</span></div>
+  </div>
+
+  <!-- velocity -->
+  <div class="tile c4" style="height:236px">
+    <div class="tile-head"><h3>Velocity</h3><span class="tag">m/s</span></div>
+    <svg id="velChart" viewBox="0 0 360 170" class="grow" preserveAspectRatio="none"></svg>
+    <div class="legend"><span><i style="background:var(--green)"></i>vertical</span>
+      <span><i style="background:var(--orange)"></i>total</span></div>
+  </div>
+
+  <!-- right stack -->
+  <div class="c3 stack" style="height:236px">
+    <div class="tile grow">
+      <div class="tile-head"><h3>Flight state</h3><span class="tag mono">T+36.2 s</span></div>
+      <div class="fsm-now"><span class="fsm-state">DROGUE</span><span class="pill info"><span class="dot" style="background:var(--violet)"></span>4.1 s in state</span></div>
+      <div class="pipeline">
+        <span class="st done">IDLE</span><span class="arrow">▸</span><span class="st done">ARMED</span><span class="arrow">▸</span>
+        <span class="st done">BOOST</span><span class="arrow">▸</span><span class="st done">COAST</span><span class="arrow">▸</span>
+        <span class="st done">APOGEE</span><span class="arrow">▸</span><span class="st cur">DROGUE</span><span class="arrow">▸</span>
+        <span class="st">MAIN</span><span class="arrow">▸</span><span class="st">LANDED</span>
+      </div>
+    </div>
+    <div class="tile grow">
+      <div class="tile-head"><h3>Battery</h3></div>
+      <div style="display:flex;align-items:center;gap:14px">
+        <div class="big" style="font-size:26px">7.92<small>V</small></div>
+        <span class="pill ok"><span class="dot" style="background:var(--green)"></span>CHARGED</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- map -->
+  <div class="tile c5" style="height:220px">
+    <div class="tile-head"><h3>Map</h3><span class="tag">OSM · follow off</span></div>
+    <svg id="mapSvg" viewBox="0 0 460 160" class="grow" preserveAspectRatio="xMidYMid slice" style="border-radius:6px;background:#0E1219"></svg>
+  </div>
+
+  <!-- rocket 3d -->
+  <div class="tile c3" style="height:220px">
+    <div class="tile-head"><h3>Attitude</h3><span class="tag">pitch 12° · yaw 214°</span></div>
+    <svg viewBox="0 0 260 150" class="grow" style="background:#0E1219;border-radius:6px">
+      <g stroke="#2A3242"><line x1="30" y1="130" x2="230" y2="130"/><line x1="30" y1="130" x2="30" y2="20"/></g>
+      <g transform="translate(130,85) rotate(-12)">
+        <path d="M0,-52 C7,-38 9,-18 9,30 L-9,30 C-9,-18 -7,-38 0,-52 Z" fill="#1B2330" stroke="var(--cyan)" stroke-width="1.2"/>
+        <path d="M9,10 L26,42 L9,42 Z M-9,10 L-26,42 L-9,42 Z" fill="#1B2330" stroke="var(--cyan)" stroke-width="1"/>
+        <line x1="0" y1="30" x2="0" y2="58" stroke="var(--violet)" stroke-width="1" stroke-dasharray="3 3"/>
+      </g>
+      <g font-family="Cascadia Mono,Consolas,monospace" font-size="8" fill="#8A94A6">
+        <text x="226" y="133">E</text><text x="26" y="24">U</text>
+      </g>
+    </svg>
+  </div>
+
+  <!-- stats -->
+  <div class="tile c2" style="height:220px">
+    <div class="tile-head"><h3>Telemetry</h3></div>
+    <div class="stats" style="grid-template-columns:1fr">
+      <div class="stat"><div class="k">Max altitude</div><div class="v">1 058<small> m</small></div></div>
+      <div class="stat"><div class="k">From site</div><div class="v">0.42<small> km</small></div></div>
+      <div class="stat"><div class="k">GPS</div><div class="v" style="color:var(--green)">3D · 12</div></div>
+      <div class="stat"><div class="k">DR points</div><div class="v">3</div></div>
+    </div>
+  </div>
+
+  <!-- hall -->
+  <div class="tile c2" style="height:220px">
+    <div class="tile-head"><h3>Hall sensor</h3></div>
+    <div class="big" style="font-size:24px">2 950</div>
+    <div style="margin:6px 0 10px"><span class="pill bad"><span class="dot" style="background:var(--red)"></span>WIRE BROKEN</span></div>
+    <svg id="hallChart" viewBox="0 0 150 70" class="grow" preserveAspectRatio="none"></svg>
+  </div>
+
+</div>
+
+<div class="badge">Direction A — Mission Control Dark</div>
+
+<script>
+// synthetic flight data (matches the simulator shape)
+const KF=[[0,0,0],[8,0,0],[10.8,216,154],[21.7,1058,0],[22.5,1010,-40],[44.4,150,-40],[45,150,-6],[69.4,0,-6]];
+function sample(t){
+  for(let i=0;i<KF.length-1;i++){
+    if(t>=KF[i][0]&&t<=KF[i+1][0]){
+      const f=(t-KF[i][0])/(KF[i+1][0]-KF[i][0]);
+      return{alt:KF[i][1]+f*(KF[i+1][1]-KF[i][1]),vv:KF[i][2]+f*(KF[i+1][2]-KF[i][2])};
+    }
+  }
+  return{alt:0,vv:0};
+}
+const T0=36.2, WIN=60; // "now" at t=36.2, 60 s window
+function windowPts(fn,n=120){
+  const pts=[];for(let i=0;i<=n;i++){const t=T0-WIN+(i/n)*WIN;pts.push([t,fn(sample(Math.max(0,t)))]);}return pts;
+}
+function render(elId,series,viewBox,pad,fmt){
+  const el=document.getElementById(elId);const[W,H]=viewBox.split(",").map(Number);
+  let all=[];series.forEach(s=>all=all.concat(s.pts.map(p=>p[1])));
+  let lo=Math.min(...all),hi=Math.max(...all);const span=(hi-lo)||1;lo-=span*.08;hi+=span*.08;
+  const tLo=T0-WIN,tHi=T0;
+  const X=t=>pad.l+(t-tLo)/(tHi-tLo)*(W-pad.l-pad.r);
+  const Y=v=>H-pad.b-(v-lo)/(hi-lo)*(H-pad.t-pad.b);
+  let out='';
+  for(let i=0;i<=4;i++){const y=pad.t+i*(H-pad.t-pad.b)/4;
+    out+=`<line class="gridline" x1="${pad.l}" y1="${y}" x2="${W-pad.r}" y2="${y}"/>`;
+    out+=`<text class="ticktext" x="${pad.l-4}" y="${y+3}" text-anchor="end">${fmt(hi-i*(hi-lo)/4)}</text>`;}
+  for(let i=0;i<=4;i++){const t=tLo+i*(tHi-tLo)/4;
+    out+=`<text class="ticktext" x="${X(t)}" y="${H-2}" text-anchor="middle">${Math.round(t)}s</text>`;}
+  series.forEach(s=>{
+    const d=s.pts.map((p,i)=>(i?'L':'M')+X(p[0]).toFixed(1)+','+Y(p[1]).toFixed(1)).join(' ');
+    if(s.area){out+=`<path d="${d} L${X(tHi)},${H-pad.b} L${X(tLo)},${H-pad.b} Z" fill="${s.color}" opacity=".1"/>`;}
+    out+=`<path d="${d}" fill="none" stroke="${s.color}" stroke-width="1.6"${s.dashed?' stroke-dasharray="4 4"':''} stroke-linejoin="round"/>`;
+  });
+  el.innerHTML=out;
+}
+const f2=v=>v>=1000?(v/1000).toFixed(1)+'k':Math.round(v);
+render('altChart',[
+  {pts:windowPts(s=>s.alt),color:'#22D3EE',area:true},
+  {pts:windowPts(s=>s.alt*0.985),color:'#60A5FA',dashed:true},
+], "460,170",{l:38,r:8,t:6,b:16},f2);
+render('velChart',[
+  {pts:windowPts(s=>s.vv),color:'#34D399'},
+  {pts:windowPts(s=>Math.abs(s.vv)*1.02),color:'#FB923C',dashed:true},
+], "360,170",{l:34,r:8,t:6,b:16},f2);
+render('hallChart',[{pts:windowPts(s=>s.alt>950?2950:2500,60),color:'#F87171'}],"150,70",{l:4,r:4,t:4,b:4},v=>'');
+
+// map
+const map=document.getElementById('mapSvg');
+let grid='';for(let x=0;x<=460;x+=40)grid+=`<line x1="${x}" y1="0" x2="${x}" y2="160" stroke="#161C27"/>`;
+for(let y=0;y<=160;y+=40)grid+=`<line x1="0" y1="${y}" x2="460" y2="${y}" stroke="#161C27"/>`;
+map.innerHTML=grid+`
+  <path d="M120,110 C170,100 220,88 260,70 C300,52 340,48 392,50" fill="none" stroke="#60A5FA" stroke-width="1.8"/>
+  <path d="M120,110 C175,118 235,120 300,116 C345,113 375,104 396,96" fill="none" stroke="#A78BFA" stroke-width="1.2" stroke-dasharray="4 4"/>
+  <g transform="translate(120,110)"><path d="M0,0 L0,-14 L9,-10 L0,-6" fill="#FBBF24"/><circle r="2.5" fill="#FBBF24"/></g>
+  <text x="132" y="100" font-family="Cascadia Mono,Consolas,monospace" font-size="8" fill="#5B6472">SITE · 50.0755, 14.4378</text>
+  <g transform="translate(392,50)"><circle r="3.5" fill="none" stroke="#60A5FA" stroke-width="1.4"/><circle r="1.4" fill="#60A5FA"/></g>
+  <text x="384" y="38" font-family="Cascadia Mono,Consolas,monospace" font-size="8" fill="#8A94A6">ROCKET</text>
+  <text x="300" y="132" font-family="Cascadia Mono,Consolas,monospace" font-size="8" fill="#A78BFA">DR ESTIMATE</text>`;
+</script>
+</body>
+</html>

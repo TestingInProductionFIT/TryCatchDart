@@ -99,6 +99,13 @@ void workerMain(SendPort mainSendPort) async {
       case ListPortsCommand():
         mainSendPort.send(PortListEvent(SerialService.availablePorts));
 
+      case SendBytesCommand(:final bytes):
+        if (!service.sendBytes(bytes)) {
+          mainSendPort.send(ErrorEvent(
+            'Not connected — failed to send ${bytes.length} byte(s)',
+          ));
+        }
+
       case StartRecordingCommand(:final filePath):
         await recorder.start(filePath);
         pushStatus(status.copyWith(isRecording: true, recordingPath: filePath));

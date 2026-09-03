@@ -5,8 +5,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
 
-import '/components/dashboard.dart';
-import '/src/telemetry/telemetry_provider.dart';
+import 'app/app_shell.dart';
+import 'src/telemetry/telemetry_provider.dart';
+import 'theme/app_theme.dart';
 
 import 'package:serial/serial.dart';
 
@@ -39,10 +40,12 @@ void main() async {
         // All providers that depend on serialWorkerProvider will use this instance.
         serialWorkerProvider.overrideWithValue(worker),
       ],
-      child: const AppLifecycleWrapper(
+      child: AppLifecycleWrapper(
         child: MaterialApp(
           debugShowCheckedModeBanner: false,
-          home: DashboardView(),
+          themeMode: ThemeMode.light,
+          theme: buildAppTheme(),
+          home: const AppShell(),
         ),
       ),
     ),

@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
@@ -109,6 +110,19 @@ class SerialConfigNotifier extends Notifier<SerialConfig> {
   /// Stops the active recording session.
   void stopRecording() {
     ref.read(serialWorkerProvider).send(const StopRecordingCommand());
+  }
+
+  /// Transmits raw [bytes] to the rocket over the active connection.
+  ///
+  /// Used by the data-driven control panel; returns whether the command was
+  /// dispatched at all (connection state is checked by the worker).
+  bool sendBytes(List<int> bytes) {
+    final status = ref.read(serialStatusProvider).value;
+    if (status?.isConnected != true) return false;
+    ref
+        .read(serialWorkerProvider)
+        .send(SendBytesCommand(Uint8List.fromList(bytes)));
+    return true;
   }
 
   /// Opens the recordings folder in the desktop OS file explorer.

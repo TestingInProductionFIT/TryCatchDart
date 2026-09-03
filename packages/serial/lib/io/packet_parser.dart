@@ -1,11 +1,26 @@
 import 'dart:typed_data';
 
 import '../constants.dart';
+import '../telemetry/frame_codec.dart';
 import '../worker/protocol.dart';
 
 /// Stateful byte-stream parser that accumulates incoming chunks and extracts
-/// complete [TelemetryPacket] instances based on [TelemetryFraming].
+/// complete [TelemetryPacket] instances based on the configured framing.
+///
+/// Frames whose trailing CRC16 does not match are treated as garbage and
+/// silently dropped — the buffer still advances past them so a corrupt frame
+/// cannot desynchronize the stream.
+///
+/// [payloadLength] defaults to the current wire format; pass another value to
+/// parse recordings made with a previous framing.
 class PacketParser {
+  final int payloadLength;
+
+  PacketParser({this.payloadLength = TelemetryFraming.payloadLength});
+
+  int get _totalPacketLength =>
+      TelemetryFraming.startWordLength + payloadLength;
+
   final _buf = <int>[];
 
   /// Feed a raw byte chunk from the serial stream into the parser.
@@ -18,7 +33,7 @@ class PacketParser {
     _buf.addAll(chunk);
     final packets = <TelemetryPacket>[];
 
-    while (_buf.length >= TelemetryFraming.totalPacketLength) {
+    while (_buf.length >= _totalPacketLength) {
       final start = _indexOfStartWord();
 
       if (start == -1) {
@@ -35,15 +50,21 @@ class PacketParser {
       }
 
       // Check if we have enough bytes for the complete packet.
-      if (_buf.length < TelemetryFraming.totalPacketLength) break;
+      if (_buf.length < _totalPacketLength) break;
 
       // Extract payload bytes.
       final payload = Uint8List.fromList(
         _buf.sublist(
           TelemetryFraming.startWordLength,
-          TelemetryFraming.totalPacketLength,
+          _totalPacketLength,
         ),
       );
+
+      // Advance buffer past this packet.
+      _buf.removeRange(0, _totalPacketLength);
+
+      // Drop frames with a bad CRC.
+      if (!FrameCodec.verifyCrc(payload)) continue;
 
       packets.add(
         TelemetryPacket(
@@ -51,9 +72,6 @@ class PacketParser {
           rawData: payload,
         ),
       );
-
-      // Advance buffer past this packet.
-      _buf.removeRange(0, TelemetryFraming.totalPacketLength);
     }
 
     return packets;

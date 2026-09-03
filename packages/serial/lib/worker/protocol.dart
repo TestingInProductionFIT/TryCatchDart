@@ -26,6 +26,16 @@ class ListPortsCommand extends SerialCommand {
   const ListPortsCommand();
 }
 
+/// Transmit raw [bytes] to the rocket over the active connection.
+///
+/// Used by the control panel for arming / deployment commands defined entirely
+/// on the UI side as data.
+class SendBytesCommand extends SerialCommand {
+  final Uint8List bytes;
+
+  const SendBytesCommand(this.bytes);
+}
+
 /// Start recording parsed telemetry packets to the given file path.
 class StartRecordingCommand extends SerialCommand {
   final String filePath;
