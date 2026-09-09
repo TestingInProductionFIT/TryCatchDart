@@ -60,6 +60,10 @@ class PlaybackBar extends ConsumerWidget {
             onChanged: duration == 0
                 ? null
                 : (v) => controller.seek((v * duration).round()),
+            // Grabbing the timeline pauses so the ticker stops fighting
+            // the scrub; playback stays paused until the user resumes.
+            onChangeStart:
+                duration == 0 ? null : (_) => controller.pause(),
           ),
         ),
         for (final speed in ReplayController.speeds)

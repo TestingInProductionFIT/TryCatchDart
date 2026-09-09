@@ -29,8 +29,9 @@ to disk and replays them, and (eventually) sends commands back to the rocket.
   with seek and speed control.
 - **Ground-side dead reckoning** — a decoupled estimation module fills GPS
   gaps (≥1 s of silence) so tracks and the 3D flight view stay connected.
-- **Raw monitor** — a full-screen monospace hex dump of the packet stream for
-  debugging the link.
+- **Channel health** — a live monitor of undecodable bytes/s on the
+  frequency (traffic that is not our packets) with a clear/activity/
+  interference verdict, for checking the frequency is free before launch.
 
 ## Getting started
 
@@ -64,14 +65,14 @@ See `packages/serial/lib/telemetry/frame_codec.dart` for the layout.
 
 ```
 lib/
-  app/            chrome: top bar, playback, router, raw-monitor screen
+  app/            chrome: top bar, playback, router, channel-health screen
   theme/          "Precision Light" design system (colors, text, cards, pills)
   workspaces/     KD-tree layout, workspace controller, dashboard + widgets
   flights/        recording list + replay controller
   settings/       launch-site presets
-  components/     raw byte monitor
+  components/     channel health monitor
   src/
-    telemetry/    ingestion store (ring buffers, packet rate, DR pump)
+    telemetry/    ingestion store (ring buffers, packet rate, DR pump, channel health)
     estimation/   ground-side dead reckoning
     geo/          haversine & offset helpers
     collections/  ring buffer (zero-copy views)

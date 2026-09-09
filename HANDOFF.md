@@ -102,7 +102,10 @@ Framing: sync `0xAA55` + payload 53 bytes (includes trailing CRC16). Payload map
   boost/coast→ascent, drogue/main→parachute (idle/armed/apogee/landed direct).
   GPS random-walk error, eastward wind drift under canopy, battery 8.4 V →
   −2.5 mV/s. Launch site Prague (50.0755, 14.4378). `MockSerialPort` runs it
-  at 10 Hz through `FrameCodec.encodePacket`.
+  at 10 Hz through `FrameCodec.encodePacket`, plus a 20 s cyclic interference
+  pattern (12 s clean / 4 s light ~150 B/s noise / 4 s heavy ~500 B/s noise +
+  periodic bit-flipped clones for CRC errors — `mockPhaseForTick`, tested) so
+  the channel-health monitor sweeps all three verdicts with no hardware.
 - Worker isolate (`worker/`): typed commands/events over SendPort.
   Commands: Connect/Disconnect/ListPorts/StartRecording/StopRecording/
   **SendBytesCommand(bytes)** (control panel). Events: PacketReceived/
@@ -127,7 +130,9 @@ lib/
                             workspace_controller, workspace_grid, dashboard_screen, widgets/*
   flights/                  replay_controller, recordings_screen
   settings/                 launch_site_store, settings_screen
-  components/               raw_byte_monitor (full-screen monospace, unscrollable)
+  components/               channel_health_monitor (live frequency scan:
+                            unmatched bytes/s graph + clear/activity/
+                            interference verdict)
 ```
 
 - **TelemetryStore** (`telemetryStoreProvider`): single ingestion point, decodes
@@ -371,12 +376,21 @@ newest packets on top, top-anchored, max-1100 block centred. RESET unfocuses
 first (Windows AXTree engine quirk on mass tree churn); SwitchListTile got
 its own Material (ListTile splash assert).
 
-## 7. Raw monitor
+## 7. Channel health monitor
 
-Full-screen monospace hex, **unscrollable**: renders only the newest lines
-that fit (line height 20 px, container padding reserved), drops the rest, and
-centers the block in the leftover space. No header, no totals, no seq —
-just `[time] hex · state · alt`.
+Live frequency scan (hamburger → Channel health): the worker's `PacketParser`
+keeps cumulative byte counters (total/matched/garbage/CRC-error) and pushes
+`LinkStats` snapshots ~2 Hz (plus a 500 ms heartbeat so the graph decays in
+silence); the UI diffs them into bytes/s via `ChannelHealthTracker`
+(`lib/src/telemetry/channel_health.dart`, tested). Rolling 60 s graph of
+ours/unmatched/total B/s, verdict banner (clear <50, activity <400, else
+interference unmatched B/s), stat tiles, live-radio-only placeholder when
+disconnected. Replaces the old raw hex packet viewer (deleted 2026-09).
+Replay shows the whole flight like the other charts: `ReplayController` buckets
+the recording's raw chunks into 500 ms `ChannelBin`s at load
+(`buildChannelProfile`, tested), the chart plots 0…duration with the played
+segment full opacity + remainder dimmed, and verdict/totals follow the
+playhead. No connection needed to replay channel history.
 
 ## 8. Decisions & user preferences (important!)
 

@@ -377,15 +377,30 @@ class _SatFlightPainter extends CustomPainter {
       if (a != null && b != null && c != null && d != null) {
         emitTri(a, b, c);
         emitTri(a, c, d);
-      } else if (depth < maxDepth) {
-        final halfSpan = span ~/ 2;
-        emitCell(fx0, fy0, halfSpan, depth + 1);
-        emitCell(fx0 + halfSpan, fy0, halfSpan, depth + 1);
-        emitCell(fx0, fy0 + halfSpan, halfSpan, depth + 1);
-        emitCell(fx0 + halfSpan, fy0 + halfSpan, halfSpan, depth + 1);
+        return;
       }
-      // Else: boundary cell at finest resolution — drop it so the sky or
-      // the far terrain behind shows through instead of a clamped streak.
+      if (depth >= maxDepth) {
+        // Boundary cell at finest resolution — drop it so the sky or
+        // the far terrain behind shows through instead of a clamped streak.
+        return;
+      }
+      if (a == null && b == null && c == null && d == null) {
+        // Fully empty cell (sky, or ground outside the patch): subdividing
+        // blindly to the finest level burns ~80 ray-casts to draw nothing —
+        // exactly what janks low horizontal cameras, where most of the
+        // screen misses. Boundaries project to straight lines, which cannot
+        // cross a quad without taking a corner, so an all-null cell hides a
+        // boundary only when the valid island is smaller than the cell
+        // itself; one centre probe catches that case.
+        final halfSpan = span ~/ 2;
+        if (halfSpan < 1) return;
+        if (nodeAt(fx0 + halfSpan, fy0 + halfSpan) == null) return;
+      }
+      final halfSpan = span ~/ 2;
+      emitCell(fx0, fy0, halfSpan, depth + 1);
+      emitCell(fx0 + halfSpan, fy0, halfSpan, depth + 1);
+      emitCell(fx0, fy0 + halfSpan, halfSpan, depth + 1);
+      emitCell(fx0 + halfSpan, fy0 + halfSpan, halfSpan, depth + 1);
     }
 
     final cols = (size.width / s).ceil();

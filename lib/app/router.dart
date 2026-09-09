@@ -5,7 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 enum AppScreen {
   dashboard('Dashboard', Icons.space_dashboard_outlined),
   flights('Recorded flights', Icons.flight_outlined),
-  monitor('Raw monitor', Icons.terminal_outlined),
+  monitor('Channel health', Icons.monitor_heart_outlined),
   settings('Settings', Icons.settings_outlined);
 
   const AppScreen(this.label, this.icon);

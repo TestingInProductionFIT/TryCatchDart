@@ -64,6 +64,30 @@ class _Rocket3dWidgetState extends ConsumerState<Rocket3dWidget> {
 
 // ── Renderer ─────────────────────────────────────────────────────────────────
 
+/// Camera framing that centres the visible stack on screen.
+///
+/// The mesh origin sits below the geometric centre (nose tip at +1.38 vs
+/// fin bottoms at −0.77), so looking at the origin parks the rocket high
+/// with the tip clipped. The target midpoint follows the airframe
+/// configuration — popped cone lowers it, the parachute raises it — and the
+/// taller canopy stack gets a longer lens so nothing clips. [scale] must
+/// match the model scale used by the painter.
+({Vector3 target, double distance}) rocketFraming({
+  required bool showNoseCone,
+  required bool showParachute,
+  double scale = 0.9,
+}) {
+  final top = showParachute
+      ? RocketMesh.bodyTop + ParachuteMesh.apexY
+      : showNoseCone
+          ? RocketMesh.noseTip
+          : RocketMesh.bodyTop;
+  return (
+    target: Vector3(0, (top + RocketMesh.finBottom) / 2 * scale, 0),
+    distance: showParachute ? 3.6 : 3.2,
+  );
+}
+
 class _RocketPainter extends CustomPainter {
   final double pitchDeg;
   final double yawDeg;
@@ -95,12 +119,17 @@ class _RocketPainter extends CustomPainter {
       math.sin(elevation),
       math.cos(elevation) * math.cos(azimuth),
     );
-    // With the chute out the stack is taller: look slightly up so the
-    // canopy fits. The rocket itself keeps its scale — only the camera
-    // target moves.
-    final target = showParachute ? Vector3(0, 0.45, 0) : Vector3.zero();
+    // The camera looks at the middle of the visible stack (not the mesh
+    // origin) so the rocket renders centred in every airframe state.
+    const modelScale = 0.9;
+    final framing = rocketFraming(
+      showNoseCone: showNoseCone,
+      showParachute: showParachute,
+      scale: modelScale,
+    );
+    final target = framing.target;
     final view = makeViewMatrix(
-      target + camDir.scaled(3.2), // eye
+      target + camDir.scaled(framing.distance), // eye
       target, // target
       Vector3(0, 1, 0), // up
     );
@@ -111,7 +140,7 @@ class _RocketPainter extends CustomPainter {
       pitchDeg: pitchDeg,
       yawDeg: yawDeg,
       rollDeg: rollDeg,
-      scale: 0.9,
+      scale: modelScale,
     );
 
     // Light: a headlight slightly above the camera so the visible side is lit.

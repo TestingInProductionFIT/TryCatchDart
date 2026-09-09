@@ -421,9 +421,10 @@ double niceCeil(double v) {
 /// The far ring is deliberately huge (past the horizon from any flight
 /// camera) and sits a hair below the detailed plane so the near ground
 /// overdraws it with no z-fighting shimmer; it is tinted from [groundTint]
-/// (the satellite patch's mean color) lightly hazed toward the sky, so the
-/// seam reads as aerial perspective instead of a grey card. A subtle
-/// horizon-anchored haze band melts its top edge into the sky.
+/// (the satellite patch's mean color) lightly lifted toward the sky, so the
+/// seam reads as distance instead of a grey card. Sky and ground meet
+/// directly at the horizon — no haze band overlays (a banded overlay reads
+/// as a separate stripe at low camera angles).
 void paintSkyAndFarTerrain(Canvas canvas, Size size, FlightCamera cam,
     {Color? groundTint}) {
   final vp = cam.vp;
@@ -470,44 +471,6 @@ void paintSkyAndFarTerrain(Canvas canvas, Size size, FlightCamera cam,
     size,
     Paint()..color = farBase,
   );
-  // Aerial-perspective haze straddling the horizon so the far ring melts
-  // into the sky. Drawn before the detailed ground, which overdraws the
-  // lower part and keeps only the far blend.
-  final horizonY = _horizonScreenY(cam, size);
-  if (horizonY != null && horizonY > -300 && horizonY < size.height + 300) {
-    const bandAbove = 24.0;
-    const bandBelow = 150.0;
-    final top = horizonY - bandAbove;
-    canvas.drawRect(
-      Rect.fromLTWH(0, top, size.width, bandAbove + bandBelow),
-      Paint()
-        ..shader = LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [
-            horizonSky.withValues(alpha: 0.55),
-            horizonSky.withValues(alpha: 0.0),
-          ],
-        ).createShader(
-            Rect.fromLTWH(0, top, size.width, bandAbove + bandBelow)),
-    );
-  }
-}
-
-/// Screen Y of the horizon (eye-height plane at distance), or `null` when
-/// the camera looks straight down and there is no horizon on screen.
-double? _horizonScreenY(FlightCamera cam, Size size) {
-  final fwd = cam.target - cam.eye;
-  fwd.y = 0;
-  if (fwd.length < 1e-6) return null;
-  fwd.normalize();
-  final far = cam.eye + fwd * 30000;
-  // Same height as the eye: converges to the horizon line at distance.
-  far.y = cam.eye.y;
-  final clip = cam.vp.transformed(Vector4(far.x, far.y, far.z, 1));
-  if (clip.w <= _clipEps) return null;
-  final iw = 1 / clip.w;
-  return (0.5 - clip.y * iw * 0.5) * size.height;
 }
 
 /// GPS trail (solid blue). DR is never part of the trail.

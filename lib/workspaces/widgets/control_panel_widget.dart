@@ -251,51 +251,59 @@ class _CommandTile extends StatelessWidget {
         icon = Icons.check;
     }
 
-    return Tooltip(
-      message: enabled ? command.description : 'Connect first',
-      waitDuration: const Duration(milliseconds: 500),
-      child: MouseRegion(
-        cursor: enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
-        child: Material(
-          color: background,
-          shape: RoundedRectangleBorder(
+    // Own semantics container per tile: adjacent Tooltips inside this
+    // GridView trip an upstream Windows AXTree defect (flutter/flutter
+    // #182444 — the overlay graft identifier gets absorbed into a
+    // neighbour's node and the engine rejects the whole update). The
+    // container keeps each anchor's config on its own node.
+    return Semantics(
+      container: true,
+      child: Tooltip(
+        message: enabled ? command.description : 'Connect first',
+        waitDuration: const Duration(milliseconds: 500),
+        child: MouseRegion(
+          cursor: enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
+          child: Material(
+            color: background,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(AppDimens.radiusSmall),
+              side: BorderSide(
+                  color: state == _TileState.idle ? border : Colors.transparent,
+                  width: 1),
+            ),
+          child: InkWell(
+            onTap: enabled ? onTap : null,
             borderRadius: BorderRadius.circular(AppDimens.radiusSmall),
-            side: BorderSide(
-                color: state == _TileState.idle ? border : Colors.transparent,
-                width: 1),
-          ),
-        child: InkWell(
-          onTap: enabled ? onTap : null,
-          borderRadius: BorderRadius.circular(AppDimens.radiusSmall),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                Icon(
-                  icon,
-                  size: 21,
-                  color: state == _TileState.idle
-                      ? (enabled ? accent : AppColors.strongBorder)
-                      : foreground,
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  label,
-                  textAlign: TextAlign.center,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    color: foreground,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Icon(
+                    icon,
+                    size: 21,
+                    color: state == _TileState.idle
+                        ? (enabled ? accent : AppColors.strongBorder)
+                        : foreground,
                   ),
-                ),
-              ],
+                  const SizedBox(height: 4),
+                  Text(
+                    label,
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: foreground,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
-        ),
+          ),
         ),
       ),
     );

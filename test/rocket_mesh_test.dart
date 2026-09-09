@@ -84,17 +84,67 @@ void main() {
           expect(v.y, closeTo(-RocketMesh.baseExtent + 0.03, 1e-9));
         }
       }
-      // Mouth cap: up-facing disk just inside the tube mouth.
-      final caps =
-          RocketMesh.triangles.where((t) => t.interiorCap).toList();
+      // Mouth lid: up-facing disk floating just above the rim.
+      final lidY = RocketMesh.bodyTop + RocketMesh.mouthLift;
+      final caps = RocketMesh.triangles
+          .where((t) =>
+              t.interiorCap &&
+              [t.a, t.b, t.c].every((v) => (v.y - lidY).abs() < 1e-9))
+          .toList();
       expect(caps, isNotEmpty);
       for (final t in caps) {
         expect(t.normal.y, closeTo(1.0, 1e-9));
+      }
+    });
+
+    test('mouth lid sits clear of the bore wall', () {
+      // 2 mm inset per side (4 mm narrower overall), so the rim depth
+      // never ties with the tube wall and bleeds through the side. (The pink
+      // bulkhead meets the rim edge-to-edge instead — no overlapping
+      // faces, like the tube/cage butt joint.)
+      var maxAxisDist = 0.0;
+      for (final t in RocketMesh.triangles.where((t) =>
+          t.interiorCap && t.color == const Color(0xFF232328))) {
         for (final v in [t.a, t.b, t.c]) {
-          expect(v.y, lessThan(RocketMesh.bodyTop));
-          expect(v.y, greaterThan(RocketMesh.bodyTop - 0.05));
+          final d = Vector2(v.x, v.z).length;
+          if (d > maxAxisDist) maxAxisDist = d;
         }
       }
+      expect(maxAxisDist,
+          closeTo(RocketMesh.bodyRadius - RocketMesh.mouthInset, 1e-9));
+      expect(maxAxisDist, lessThan(RocketMesh.bodyRadius));
+    });
+
+    test('popped tube top is closed with no gap under the lid', () {
+      // Pink bulkhead: full disk at the rim plane.
+      final pink = RocketMesh.triangles
+          .where((t) => t.interiorCap && t.color == AppColors.pink)
+          .toList();
+      expect(pink, isNotEmpty);
+      for (final t in pink) {
+        for (final v in [t.a, t.b, t.c]) {
+          expect(v.y, closeTo(RocketMesh.bodyTop, 1e-9));
+        }
+      }
+      // Black puck wall spans rim → lid with no gap.
+      final black = RocketMesh.triangles
+          .where((t) =>
+              t.interiorCap && t.color == const Color(0xFF232328))
+          .toList();
+      expect(black, isNotEmpty);
+      var minY = double.infinity;
+      var maxY = -double.infinity;
+      for (final t in black) {
+        for (final v in [t.a, t.b, t.c]) {
+          if (v.y < minY) minY = v.y;
+          if (v.y > maxY) maxY = v.y;
+        }
+      }
+      expect(minY, closeTo(RocketMesh.bodyTop, 1e-9));
+      expect(
+          maxY,
+          closeTo(
+              RocketMesh.bodyTop + RocketMesh.mouthLift, 1e-9));
     });
 
     test('mouth cap shows only while popped', () {
@@ -102,6 +152,26 @@ void main() {
       expect(
           RocketMesh.mesh(showNoseCone: false).any((t) => t.interiorCap),
           isTrue);
+    });
+
+    test('nose tip fan faces outward/up (no see-through hole)', () {
+      // Apex fan: one vertex exactly at the tip.
+      final tip = Vector3(0, RocketMesh.noseTip, 0);
+      final fan = RocketMesh.triangles
+          .where((t) =>
+              t.isNoseCone &&
+              (t.a == tip || t.b == tip || t.c == tip))
+          .toList();
+      expect(fan, isNotEmpty);
+      for (final t in fan) {
+        // Up the cone, like the ring quads below — never into the body.
+        expect(t.normal.y, greaterThan(0));
+        // Radially outward: normal follows the centroid away from the axis.
+        final centroid = (t.a + t.b + t.c) / 3;
+        final radial = Vector2(centroid.x, centroid.z);
+        final normalH = Vector2(t.normal.x, t.normal.z);
+        expect(radial.dot(normalH), greaterThan(0));
+      }
     });
   });
 

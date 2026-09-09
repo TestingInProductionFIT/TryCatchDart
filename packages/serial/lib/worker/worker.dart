@@ -30,11 +30,38 @@ void workerMain(SendPort mainSendPort) async {
 
   var status = const SerialWorkerStatus();
   StreamSubscription<Uint8List>? byteSubscription;
+  Timer? statsTimer;
+  int lastStatsEmitMs = 0;
 
   /// Updates local status and notifies the main UI isolate
   void pushStatus(SerialWorkerStatus next) {
     status = next;
     mainSendPort.send(StatusChangedEvent(next));
+  }
+
+  LinkStats snapshotStats() => LinkStats(
+        timestampMs: DateTime.now().millisecondsSinceEpoch,
+        totalBytes: parser.totalBytes,
+        matchedBytes: parser.matchedBytes,
+        garbageBytes: parser.garbageBytes,
+        crcErrorBytes: parser.crcErrorBytes,
+        matchedPackets: parser.matchedPackets,
+        crcErrors: parser.crcErrorCount,
+      );
+
+  void emitStats({bool force = false}) {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (!force && now - lastStatsEmitMs < 250) return;
+    lastStatsEmitMs = now;
+    mainSendPort.send(LinkStatsEvent(snapshotStats()));
+  }
+
+  /// Steady heartbeat so the UI graph decays to zero during silence and
+  /// keeps a regular sample cadence (not just on chunk arrival).
+  void ensureStatsTimer() {
+    statsTimer ??= Timer.periodic(const Duration(milliseconds: 500), (_) {
+      if (status.isConnected) emitStats(force: true);
+    });
   }
 
   /// Subscribes to the serial byte stream and processes chunks concurrently
@@ -49,6 +76,8 @@ void workerMain(SendPort mainSendPort) async {
         for (final packet in parser.feed(chunk)) {
           mainSendPort.send(PacketReceivedEvent(packet));
         }
+        // 3. Fresh channel-health snapshot (throttled).
+        emitStats();
       },
       onError: (Object e) {
         service.disconnect();
@@ -61,6 +90,7 @@ void workerMain(SendPort mainSendPort) async {
         pushStatus(status.copyWith(isConnected: false, connectedPort: null));
       },
     );
+    ensureStatsTimer();
   }
 
   // Push initial hardware port discovery list upon startup
@@ -77,14 +107,16 @@ void workerMain(SendPort mainSendPort) async {
         byteSubscription?.cancel();
         byteSubscription = null;
         service.disconnect();
-        parser.reset();
+        parser.resetStats();
 
         // Connect using centralized SerialHardwareConfig settings
         final ok = service.connect(port);
 
         if (ok) {
           pushStatus(status.copyWith(isConnected: true, connectedPort: port));
+          lastStatsEmitMs = 0;
           attachByteStream();
+          emitStats(force: true);
         } else {
           mainSendPort.send(ErrorEvent('Failed to open $port'));
         }
@@ -93,8 +125,9 @@ void workerMain(SendPort mainSendPort) async {
         byteSubscription?.cancel();
         byteSubscription = null;
         service.disconnect();
-        parser.reset();
+        parser.resetStats();
         pushStatus(status.copyWith(isConnected: false, connectedPort: null));
+        emitStats(force: true);
 
       case ListPortsCommand():
         mainSendPort.send(PortListEvent(SerialService.availablePorts));

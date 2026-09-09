@@ -131,7 +131,7 @@ abstract final class WidgetRegistry {
       id: 'fsm',
       title: 'State machine',
       description: 'Flight software state and timeline',
-      minSize: const Size(240, 120),
+      minSize: const Size(240, 170),
       builder: (context) => FsmWidget(),
     ),
     WidgetDescriptor(

@@ -63,6 +63,44 @@ class PacketReceivedEvent extends SerialEvent {
   PacketReceivedEvent(this.packet);
 }
 
+/// Cumulative byte counters describing what the parser saw on the wire.
+///
+/// `matchedBytes` decoded into our packets; `garbageBytes` never contained
+/// a sync word and `crcErrorBytes` framed but failed CRC — together they are
+/// "traffic on our frequency that isn't ours" (other teams, noise).
+/// Counters reset on every (re)connect; the UI derives bytes/s from deltas.
+class LinkStats {
+  final int timestampMs;
+  final int totalBytes;
+  final int matchedBytes;
+  final int garbageBytes;
+  final int crcErrorBytes;
+  final int matchedPackets;
+  final int crcErrors;
+
+  const LinkStats({
+    required this.timestampMs,
+    this.totalBytes = 0,
+    this.matchedBytes = 0,
+    this.garbageBytes = 0,
+    this.crcErrorBytes = 0,
+    this.matchedPackets = 0,
+    this.crcErrors = 0,
+  });
+
+  /// Bytes that arrived but never became one of our packets.
+  int get unmatchedBytes => garbageBytes + crcErrorBytes;
+
+  static const empty = LinkStats(timestampMs: 0);
+}
+
+/// Emitted (throttled, ~2 Hz plus on every stats change burst) with the
+/// latest cumulative [LinkStats] snapshot from the worker isolate.
+class LinkStatsEvent extends SerialEvent {
+  final LinkStats stats;
+  LinkStatsEvent(this.stats);
+}
+
 /// Emitted with the list of detected serial ports.
 class PortListEvent extends SerialEvent {
   final List<String> ports;

@@ -73,6 +73,13 @@ abstract final class RocketMesh {
 
   /// Fin cage sleeve over the lower body (top edge meets the tube bottom).
   static const double _cageTop = -0.27;
+
+  /// Open-tube lid while popped: 2 mm inset per side (4 mm narrower
+  /// overall than the bore) so its rim never ties with the tube wall in
+  /// the depth sort (the old flush disk bled a black sliver through the
+  /// tube side), floating ~2 cm above the rim like a cap.
+  static const double _mouthInset = 0.002;
+  static const double _mouthLift = 0.02;
   static const double _finSpan = 0.17;
 
   /// Swept rectangular fin: constant chord (root == tip, as in the .ork),
@@ -94,6 +101,17 @@ abstract final class RocketMesh {
   static double get noseBlackLength => _noseTipFraction * noseLength;
   static double get bodyRadius => _bodyRadius;
   static double get bodyTop => _bodyTop;
+
+  /// Nose tip height (model units, +Y).
+  static double get noseTip => _noseTip;
+
+  /// Lowest point of the airframe (fin bottoms, model units).
+  static double get finBottom => _bodyBottom - _finDrop;
+
+  /// Open-tube lid geometry (model units): height above the tube rim and
+  /// per-side radial inset from the bore.
+  static double get mouthLift => _mouthLift;
+  static double get mouthInset => _mouthInset;
   static double get finChord => _finChord;
   static double get finSpan => _finSpan;
   static double get finSweep => _finSweep;
@@ -154,7 +172,10 @@ abstract final class RocketMesh {
         if (i == _noseRings - 1) {
           final s0 = ring(y0, _haackRadius(t0), j);
           final s1 = ring(y0, _haackRadius(t0), j + 1);
-          tris.add(RocketMeshTri(tip, s0, s1, color, isNoseCone: true));
+          // Wound tip → s1 → s0 so the fan normal points outward/up like
+          // the ring quads below it; the reverse order faces inward and
+          // gets backface-culled into a see-through hole from above.
+          tris.add(RocketMeshTri(tip, s1, s0, color, isNoseCone: true));
         } else {
           final lo0 = ring(y0, _haackRadius(t0), j);
           final lo1 = ring(y0, _haackRadius(t0), j + 1);
@@ -165,14 +186,33 @@ abstract final class RocketMesh {
       }
     }
 
-    // Dark disk just inside the tube mouth: with the cone on it hides
-    // behind the nose wall; popped, it closes the open tube. Slightly below
-    // the rim so the two rings never z-fight.
-    final mouthY = _bodyTop - 0.01;
+    // Popped tube closure: a pink bulkhead disk at the rim plane plus a
+    // short black puck (wall + lid) above it. The old floating lid left
+    // the open bore visible as a hole underneath; the wall meets the
+    // bulkhead edge-on (no coplanar faces → no z-fighting), and the lid
+    // stays narrower than the bore so its rim never ties with the tube
+    // wall in the depth sort. With the cone on all of it hides behind the
+    // nose wall.
+    final mouthY = _bodyTop + _mouthLift;
+    final mouthR = _bodyRadius - _mouthInset;
+    final bulkCenter = Vector3(0, _bodyTop, 0);
+    for (var i = 0; i < _segments; i++) {
+      final r0 = ring(_bodyTop, _bodyRadius, i);
+      final r1 = ring(_bodyTop, _bodyRadius, i + 1);
+      tris.add(RocketMeshTri(bulkCenter, r1, r0, _bodyColor,
+          interiorCap: true));
+    }
+    for (var i = 0; i < _segments; i++) {
+      final t0 = ring(mouthY, mouthR, i);
+      final t1 = ring(mouthY, mouthR, i + 1);
+      final b0 = ring(_bodyTop, mouthR, i);
+      final b1 = ring(_bodyTop, mouthR, i + 1);
+      tris.addAll(_quad(t0, t1, b1, b0, _blackColor, interiorCap: true));
+    }
     final mouthCenter = Vector3(0, mouthY, 0);
     for (var i = 0; i < _segments; i++) {
-      final p0 = ring(mouthY, _bodyRadius, i);
-      final p1 = ring(mouthY, _bodyRadius, i + 1);
+      final p0 = ring(mouthY, mouthR, i);
+      final p1 = ring(mouthY, mouthR, i + 1);
       tris.add(RocketMeshTri(mouthCenter, p1, p0, _blackColor,
           interiorCap: true));
     }
@@ -235,12 +275,19 @@ abstract final class RocketMesh {
     bool doubleSided = false,
     bool noCull = false,
     bool isNoseCone = false,
+    bool interiorCap = false,
   }) {
     return [
       RocketMeshTri(a, b, c, color,
-          doubleSided: doubleSided, noCull: noCull, isNoseCone: isNoseCone),
+          doubleSided: doubleSided,
+          noCull: noCull,
+          isNoseCone: isNoseCone,
+          interiorCap: interiorCap),
       RocketMeshTri(a, c, d, color,
-          doubleSided: doubleSided, noCull: noCull, isNoseCone: isNoseCone),
+          doubleSided: doubleSided,
+          noCull: noCull,
+          isNoseCone: isNoseCone,
+          interiorCap: interiorCap),
     ];
   }
 

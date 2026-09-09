@@ -12,7 +12,7 @@ import 'top_bar.dart';
 ///
 /// Screens live in an [IndexedStack] so switching is instant: every screen
 /// stays mounted, and returning to a screen restores its state (map tiles,
-/// raw monitor history, scroll positions) instead of rebuilding the whole
+/// channel-health history, scroll positions) instead of rebuilding the whole
 /// subtree.
 class AppShell extends ConsumerWidget {
   const AppShell({super.key});

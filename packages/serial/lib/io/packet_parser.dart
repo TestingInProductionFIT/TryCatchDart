@@ -11,6 +11,11 @@ import '../worker/protocol.dart';
 /// silently dropped — the buffer still advances past them so a corrupt frame
 /// cannot desynchronize the stream.
 ///
+/// The parser also keeps cumulative byte counters ([totalBytes],
+/// [matchedBytes], [garbageBytes], [crcErrorBytes]) so the UI can report
+/// channel health: bytes that arrived on the frequency but never decoded
+/// into one of our packets (other transmitters, noise).
+///
 /// [payloadLength] defaults to the current wire format; pass another value to
 /// parse recordings made with a previous framing.
 class PacketParser {
@@ -23,6 +28,27 @@ class PacketParser {
 
   final _buf = <int>[];
 
+  /// Every raw byte ever fed (including garbage and corrupt frames).
+  int totalBytes = 0;
+
+  /// Valid packets decoded so far.
+  int matchedPackets = 0;
+
+  /// Bytes consumed as valid packets (sync word + payload each).
+  int matchedBytes = 0;
+
+  /// Bytes discarded while hunting for the sync word ( чужой traffic/noise).
+  int garbageBytes = 0;
+
+  /// Frames dropped on CRC mismatch.
+  int crcErrorCount = 0;
+
+  /// Bytes consumed by CRC-failed frames (whole packet length each).
+  int crcErrorBytes = 0;
+
+  /// Bytes that arrived but never became one of our packets.
+  int get unmatchedBytes => garbageBytes + crcErrorBytes;
+
   /// Feed a raw byte chunk from the serial stream into the parser.
   ///
   /// Pass optional [timestampMs] when replaying recorded binary streams to preserve
@@ -30,6 +56,7 @@ class PacketParser {
   ///
   /// Returns a list of all complete [TelemetryPacket]s extracted.
   List<TelemetryPacket> feed(Uint8List chunk, {int? timestampMs}) {
+    totalBytes += chunk.length;
     _buf.addAll(chunk);
     final packets = <TelemetryPacket>[];
 
@@ -38,6 +65,8 @@ class PacketParser {
 
       if (start == -1) {
         // Retain only the last byte in case the start word was split across chunks.
+        // Everything else is unmatched traffic on this frequency.
+        garbageBytes += _buf.length - 1;
         final last = _buf.last;
         _buf.clear();
         _buf.add(last);
@@ -46,6 +75,7 @@ class PacketParser {
 
       if (start > 0) {
         // Discard preceding garbage bytes.
+        garbageBytes += start;
         _buf.removeRange(0, start);
       }
 
@@ -64,7 +94,14 @@ class PacketParser {
       _buf.removeRange(0, _totalPacketLength);
 
       // Drop frames with a bad CRC.
-      if (!FrameCodec.verifyCrc(payload)) continue;
+      if (!FrameCodec.verifyCrc(payload)) {
+        crcErrorCount++;
+        crcErrorBytes += _totalPacketLength;
+        continue;
+      }
+
+      matchedPackets++;
+      matchedBytes += _totalPacketLength;
 
       packets.add(
         TelemetryPacket(
@@ -79,6 +116,17 @@ class PacketParser {
 
   /// Clears the accumulation buffer.
   void reset() => _buf.clear();
+
+  /// Clears the accumulation buffer and all cumulative byte counters.
+  void resetStats() {
+    _buf.clear();
+    totalBytes = 0;
+    matchedPackets = 0;
+    matchedBytes = 0;
+    garbageBytes = 0;
+    crcErrorCount = 0;
+    crcErrorBytes = 0;
+  }
 
   int _indexOfStartWord() {
     final limit = _buf.length - 1;

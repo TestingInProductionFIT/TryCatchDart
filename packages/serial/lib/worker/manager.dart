@@ -27,11 +27,13 @@ class SerialWorker {
   final _statusController = StreamController<SerialWorkerStatus>.broadcast();
   final _packetController = StreamController<TelemetryPacket>.broadcast();
   final _portsController = StreamController<List<String>>.broadcast();
+  final _linkStatsController = StreamController<LinkStats>.broadcast();
 
   // Cached state snapshots: allow UI widgets to perform immediate synchronous reads
   // without waiting for the next stream event (avoids UI loading flashes).
   SerialWorkerStatus _status = const SerialWorkerStatus();
   List<String> _ports = const [];
+  LinkStats _linkStats = LinkStats.empty;
 
   /// Current synchronous snapshot of the worker's operational status.
   SerialWorkerStatus get currentStatus => _status;
@@ -47,6 +49,12 @@ class SerialWorker {
 
   /// Stream of scanned serial/COM port list updates.
   Stream<List<String>> get portsStream => _portsController.stream;
+
+  /// Latest cumulative link-health snapshot from the worker.
+  LinkStats get currentLinkStats => _linkStats;
+
+  /// Stream of cumulative [LinkStats] snapshots (~2 Hz while connected).
+  Stream<LinkStats> get linkStatsStream => _linkStatsController.stream;
 
   SerialWorker._(this._isolate, ReceivePort receivePort) {
     // Listen for incoming events emitted by the background worker isolate
@@ -81,6 +89,10 @@ class SerialWorker {
         // Note: PortListEvent contains hardware COM port names (e.g. 'COM3', 'MOCK')
         _ports = ports;
         _portsController.add(ports);
+
+      case LinkStatsEvent(:final stats):
+        _linkStats = stats;
+        _linkStatsController.add(stats);
 
       case ErrorEvent(:final message):
         // ignore: avoid_print
@@ -122,6 +134,7 @@ class SerialWorker {
     _statusController.close();
     _packetController.close();
     _portsController.close();
+    _linkStatsController.close();
     _isolate.kill(priority: Isolate.beforeNextEvent);
   }
 }

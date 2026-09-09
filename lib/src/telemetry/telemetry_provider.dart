@@ -38,6 +38,15 @@ final serialStatusProvider = StreamProvider<SerialWorkerStatus>((ref) async* {
   yield* worker.statusStream;
 });
 
+/// Stream of cumulative link-health snapshots from the serial worker.
+///
+/// Emitted ~2 Hz while connected (plus throttled updates on traffic bursts).
+/// The channel-health monitor derives bytes/s rates from counter deltas.
+final linkStatsStreamProvider = StreamProvider<LinkStats>((ref) {
+  final worker = ref.watch(serialWorkerProvider);
+  return worker.linkStatsStream;
+});
+
 /// Most recently reported list of available serial ports.
 final availablePortsProvider = StreamProvider<List<String>>((ref) async* {
   final worker = ref.watch(serialWorkerProvider);

@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:serial/serial.dart';
 
 import '../settings/launch_site_store.dart';
+import '../src/telemetry/channel_health.dart';
 import '../src/telemetry/telemetry_store.dart';
 
 /// Maps a recording header's launch reference to a display site, or `null`
@@ -57,6 +58,11 @@ class ReplayState {
   /// carries none). Visuals anchor to this while the replay is active.
   final LaunchSite? launchSite;
 
+  /// Whole-flight channel profile (matched/unmatched bytes per 500 ms bin),
+  /// rebuilt from the recording's raw chunks so the channel-health monitor
+  /// shows the same picture the live view did. Empty outside a replay.
+  final List<ChannelBin> channelProfile;
+
   const ReplayState({
     this.filePath,
     this.playing = false,
@@ -66,6 +72,7 @@ class ReplayState {
     this.errorMsg,
     this.frames = const [],
     this.launchSite,
+    this.channelProfile = const [],
   });
 
   bool get isActive => filePath != null;
@@ -79,6 +86,7 @@ class ReplayState {
     String? errorMsg,
     List<TelemetryFrame>? frames,
     LaunchSite? launchSite,
+    List<ChannelBin>? channelProfile,
   }) =>
       ReplayState(
         filePath: filePath ?? this.filePath,
@@ -89,6 +97,7 @@ class ReplayState {
         errorMsg: errorMsg ?? this.errorMsg,
         frames: frames ?? this.frames,
         launchSite: launchSite ?? this.launchSite,
+        channelProfile: channelProfile ?? this.channelProfile,
       );
 }
 
@@ -152,6 +161,8 @@ class ReplayController extends Notifier<ReplayState> {
       frames: frames,
       launchSite:
           launchSiteFromHeader(await tryReadRecordingHeader(path)),
+      channelProfile:
+          buildChannelProfile(await readRecordingChunks(path)),
     );
 
     _lastTickMs = DateTime.now().millisecondsSinceEpoch;
