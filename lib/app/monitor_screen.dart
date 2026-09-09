@@ -8,6 +8,7 @@ class MonitorScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const RawByteMonitor();
+    // NOTE: non-const so dark-mode flips repaint (AppColors is dynamic).
+    return RawByteMonitor();
   }
 }

@@ -152,6 +152,7 @@ void main() {
       for (final ws in [
         WidgetRegistry.defaultFlightLayout(),
         WidgetRegistry.defaultPrepLayout(),
+        WidgetRegistry.defaultReplayLayout(),
       ]) {
         expect(ws.root, isNotNull);
         for (final l in ws.root!.leaves) {

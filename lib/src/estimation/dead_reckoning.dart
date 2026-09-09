@@ -35,7 +35,14 @@ class DrPosition {
 /// Semantics: the DR position equals the most recent GPS fix plus the
 /// velocity integral since that fix. Between fixes it drifts away from the
 /// true position as sensor error accumulates; each new fix re-anchors it.
+///
+/// Touchdown freeze: once the estimate sinks to the lowest seen fix altitude
+/// (minus a small tolerance) it is pinned there with zeroed velocity — a
+/// landed rocket doesn't keep sliding, so the frozen point is the estimated
+/// landing spot. A fresh fix clearly above the floor unfreezes it.
 class DeadReckoningEstimator {
+  /// Touchdown tolerance below the lowest seen fix (GPS noise margin).
+  static const double groundToleranceM = 2.0;
   // Anchor: the most recent GPS fix.
   double? _anchorLat;
   double? _anchorLon;
@@ -53,6 +60,16 @@ class DeadReckoningEstimator {
   double _lastVelD = 0;
 
   int? _lastUpdateMs;
+
+  /// Lowest GPS fix altitude seen (MSL) — the touchdown floor derives from it.
+  double? _lowestFixMsl;
+
+  /// `true` once the estimate has been pinned to the ground.
+  bool _grounded = false;
+
+  /// Touchdown floor (MSL), or `null` before the first fix.
+  double? get groundFloorMsl =>
+      _lowestFixMsl == null ? null : _lowestFixMsl! - groundToleranceM;
 
   /// Most recent computed DR position, if the estimator has been anchored.
   DrPosition? get position => _buildPosition(_lastUpdateMs ?? 0);
@@ -89,15 +106,19 @@ class DeadReckoningEstimator {
   /// (`null` before the first GPS fix).
   DrPosition? update(TelemetryFrame frame) {
     final t = frame.receivedAtMs;
-    if (_lastUpdateMs != null && t > _lastUpdateMs!) {
-      final dt = (t - _lastUpdateMs!) / 1000.0;
-      _offN += frame.velocityNorth * dt;
-      _offE += frame.velocityEast * dt;
-      _offUp += -frame.velocityDown * dt;
+    // Frozen on the ground: only the clock advances, no integration and no
+    // velocity adoption — the landing spot stays put.
+    if (!_grounded) {
+      if (_lastUpdateMs != null && t > _lastUpdateMs!) {
+        final dt = (t - _lastUpdateMs!) / 1000.0;
+        _offN += frame.velocityNorth * dt;
+        _offE += frame.velocityEast * dt;
+        _offUp += -frame.velocityDown * dt;
+      }
+      _lastVelN = frame.velocityNorth;
+      _lastVelE = frame.velocityEast;
+      _lastVelD = frame.velocityDown;
     }
-    _lastVelN = frame.velocityNorth;
-    _lastVelE = frame.velocityEast;
-    _lastVelD = frame.velocityDown;
     _lastUpdateMs = t;
 
     if (frame.gpsHasFix) {
@@ -108,23 +129,50 @@ class DeadReckoningEstimator {
       _offN = 0;
       _offE = 0;
       _offUp = 0;
+      _lowestFixMsl = _lowestFixMsl == null
+          ? frame.gpsAltitude
+          : math.min(_lowestFixMsl!, frame.gpsAltitude);
+      // Airborne again (e.g. new flight without a reset) lifts the freeze.
+      final floor = groundFloorMsl;
+      if (floor == null || frame.gpsAltitude > floor + groundToleranceM) {
+        _grounded = false;
+      }
     }
 
+    _enforceGround();
     return _buildPosition(t);
   }
 
   /// Integrates the last known velocity forward to [atMs] without a fresh
   /// frame — ground-side extrapolation while the link is silent. Advances the
-  /// internal clock so a later [update] resumes from here.
+  /// internal clock so a later [update] resumes from here. Frozen once
+  /// grounded (only the clock advances).
   DrPosition? extrapolate(int atMs) {
-    if (_lastUpdateMs != null && atMs > _lastUpdateMs!) {
+    if (!_grounded && _lastUpdateMs != null && atMs > _lastUpdateMs!) {
       final dt = (atMs - _lastUpdateMs!) / 1000.0;
       _offN += _lastVelN * dt;
       _offE += _lastVelE * dt;
       _offUp += -_lastVelD * dt;
+    }
+    if (_lastUpdateMs == null || atMs > _lastUpdateMs!) {
       _lastUpdateMs = atMs;
     }
+    _enforceGround();
     return position;
+  }
+
+  /// Pins the estimate to the touchdown floor, freezing all velocity.
+  void _enforceGround() {
+    final floor = groundFloorMsl;
+    final anchorAlt = _anchorAlt;
+    if (floor == null || anchorAlt == null) return;
+    if (anchorAlt + _offUp < floor) {
+      _offUp = floor - anchorAlt;
+      _lastVelN = 0;
+      _lastVelE = 0;
+      _lastVelD = 0;
+      _grounded = true;
+    }
   }
 
   /// Clears all state (e.g. on session change).
@@ -140,5 +188,7 @@ class DeadReckoningEstimator {
     _lastVelE = 0;
     _lastVelD = 0;
     _lastUpdateMs = null;
+    _lowestFixMsl = null;
+    _grounded = false;
   }
 }

@@ -104,6 +104,33 @@ void main() {
       expect(haversineDistanceM(50, 14, p.latitude, p.longitude),
           closeTo(300, 1.5));
     });
+
+    test('freezes at the touchdown floor instead of sliding', () {
+      final dr = DeadReckoningEstimator();
+      dr.update(frame(tMs: 0, lat: 50, lon: 14, gpsAlt: 300));
+
+      // Descending at 6 m/s with wind drift: must pin at 298 m and stop.
+      for (var t = 1; t <= 60; t++) {
+        dr.update(
+            frame(tMs: t * 1000, gpsFix: false, vDown: 6, vE: 3, vN: 1));
+      }
+      final landed = dr.position!;
+      expect(landed.altitude, closeTo(298, 0.01));
+
+      // Keeps sliding nowhere: frozen horizontally too.
+      for (var t = 61; t <= 120; t++) {
+        dr.update(
+            frame(tMs: t * 1000, gpsFix: false, vDown: 6, vE: 3, vN: 1));
+      }
+      final still = dr.position!;
+      expect(still.altitude, closeTo(298, 0.01));
+      expect(still.latitude, closeTo(landed.latitude, 1e-12));
+      expect(still.longitude, closeTo(landed.longitude, 1e-12));
+
+      // A fresh airborne fix unfreezes.
+      final up = dr.update(frame(tMs: 121000, gpsAlt: 500))!;
+      expect(up.altitude, closeTo(500, 0.01));
+    });
   });
 
   group('geo', () {

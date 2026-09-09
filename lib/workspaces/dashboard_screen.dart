@@ -56,7 +56,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     return Container(
       height: AppDimens.workspaceTabsHeight,
       padding: const EdgeInsets.symmetric(horizontal: AppDimens.outerPadding),
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         color: AppColors.background,
         border: Border(bottom: BorderSide(color: AppColors.border)),
       ),
@@ -118,38 +118,42 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       height: double.infinity,
       margin: const EdgeInsets.only(right: 4),
       decoration: active
-          ? const BoxDecoration(
+          ? BoxDecoration(
               border: Border(
                 bottom: BorderSide(color: AppColors.pink, width: 2.5),
               ),
             )
           : null,
-      child: InkWell(
-        onTap: () => ref.read(workspaceProvider.notifier).setActive(ws.id),
-        onDoubleTap: () => _renameWorkspaceDialog(context, ws),
-        onSecondaryTapUp: (details) =>
-            _workspaceContextMenu(context, ws, details.globalPosition),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                ws.name,
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: active ? FontWeight.w700 : FontWeight.w500,
-                  color: active ? AppColors.foreground : AppColors.mutedForeground,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: InkWell(
+          // Renaming lives in the right-click menu only — double-click is
+          // reserved for canvas interactions, not the tab strip.
+          onTap: () => ref.read(workspaceProvider.notifier).setActive(ws.id),
+          onSecondaryTapUp: (details) =>
+              _workspaceContextMenu(context, ws, details.globalPosition),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  ws.name,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: active ? FontWeight.w700 : FontWeight.w500,
+                    color: active ? AppColors.foreground : AppColors.mutedForeground,
+                  ),
                 ),
-              ),
-              if (_editMode && canDelete) ...[
-                const SizedBox(width: 6),
-                InkWell(
-                  onTap: () => ref.read(workspaceProvider.notifier).deleteWorkspace(ws.id),
-                  child: const Icon(Icons.close, size: 13, color: AppColors.mutedForeground),
-                ),
+                if (_editMode && canDelete) ...[
+                  const SizedBox(width: 6),
+                  InkWell(
+                    onTap: () => ref.read(workspaceProvider.notifier).deleteWorkspace(ws.id),
+                    child: Icon(Icons.close, size: 13, color: AppColors.mutedForeground),
+                  ),
+                ],
               ],
-            ],
+            ),
           ),
         ),
       ),
@@ -360,14 +364,17 @@ class _StripButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Tooltip(
-      message: tooltip,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(AppDimens.radiusSmall),
-        child: Padding(
-          padding: const EdgeInsets.all(6),
-          child: Icon(icon, size: 16, color: AppColors.mutedForeground),
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: Tooltip(
+        message: tooltip,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(AppDimens.radiusSmall),
+          child: Padding(
+            padding: const EdgeInsets.all(6),
+            child: Icon(icon, size: 16, color: AppColors.mutedForeground),
+          ),
         ),
       ),
     );
@@ -389,35 +396,38 @@ class _StripToggle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: active ? AppColors.pink : AppColors.card,
-      shape: StadiumBorder(
-        side: BorderSide(
-            color: active ? AppColors.pink : AppColors.border),
-      ),
-      child: InkWell(
-        onTap: onTap,
-        customBorder: const StadiumBorder(),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                icon,
-                size: 14,
-                color: active ? Colors.white : AppColors.foreground,
-              ),
-              const SizedBox(width: 6),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: Material(
+        color: active ? AppColors.pink : AppColors.card,
+        shape: StadiumBorder(
+          side: BorderSide(
+              color: active ? AppColors.pink : AppColors.border),
+        ),
+        child: InkWell(
+          onTap: onTap,
+          customBorder: const StadiumBorder(),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  icon,
+                  size: 14,
                   color: active ? Colors.white : AppColors.foreground,
                 ),
-              ),
-            ],
+                const SizedBox(width: 6),
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: active ? Colors.white : AppColors.foreground,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

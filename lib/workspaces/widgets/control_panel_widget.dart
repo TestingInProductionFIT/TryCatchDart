@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../flights/replay_controller.dart';
 import '../../src/telemetry/telemetry_provider.dart';
 import '../../theme/app_colors.dart';
 
@@ -57,19 +58,11 @@ abstract final class RocketCommands {
       bytes: [magicT, magicC, 0x02, 0x00],
     ),
     RocketCommand(
-      id: 'fire_drogue',
-      label: 'Fire drogue',
-      description: 'Manual drogue parachute deployment',
+      id: 'fire_parachute',
+      label: 'Fire chute',
+      description: 'Manual parachute deployment',
       icon: Icons.paragliding,
       bytes: [magicT, magicC, 0x03, 0x00],
-      danger: true,
-    ),
-    RocketCommand(
-      id: 'fire_main',
-      label: 'Fire main',
-      description: 'Manual main parachute deployment',
-      icon: Icons.umbrella_outlined,
-      bytes: [magicT, magicC, 0x04, 0x00],
       danger: true,
     ),
     RocketCommand(
@@ -147,20 +140,40 @@ class _ControlPanelWidgetState extends ConsumerState<ControlPanelWidget> {
 
   @override
   Widget build(BuildContext context) {
+    // Commands make no sense while replaying a recording — the radio is
+    // idle and the Replay workspace omits this widget entirely; this guard
+    // covers custom layouts that still contain it.
+    if (ref.watch(replayProvider).isActive) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.block, size: 22, color: AppColors.faint),
+            SizedBox(height: 8),
+            Text(
+              'Control panel disabled during replay',
+              style: TextStyle(fontSize: 12, color: AppColors.mutedForeground),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      );
+    }
     final connected =
         ref.watch(serialStatusProvider).value?.isConnected ?? false;
 
     // Buttons fill the tile: a 2-column grid (3 when wide) whose row height
     // is derived from the available height, so the buttons stretch to fill
-    // the tile instead of sitting in a fixed 44px strip. Falls back to
-    // scrolling at the 36px minimum when the tile is too short.
+    // the tile instead of sitting in a fixed strip. Falls back to
+    // scrolling at the 54px minimum (icon-over-label needs the room) when
+    // the tile is too short.
     return LayoutBuilder(builder: (context, constraints) {
       final columns = constraints.maxWidth > 460 ? 3 : 2;
       final rows = (RocketCommands.all.length / columns).ceil();
       final bounded = constraints.maxHeight.isFinite;
       final fillExtent =
           (constraints.maxHeight - 8 * (rows - 1)) / rows;
-      final extent = bounded ? math.max(36.0, fillExtent) : 44.0;
+      final extent = bounded ? math.max(54.0, fillExtent) : 56.0;
 
       final grid = GridView(
         shrinkWrap: true,
@@ -187,7 +200,7 @@ class _ControlPanelWidgetState extends ConsumerState<ControlPanelWidget> {
         ],
       );
 
-      if (bounded && fillExtent >= 36.0) return grid;
+      if (bounded && fillExtent >= 54.0) return grid;
       return SingleChildScrollView(child: grid);
     });
   }
@@ -241,43 +254,48 @@ class _CommandTile extends StatelessWidget {
     return Tooltip(
       message: enabled ? command.description : 'Connect first',
       waitDuration: const Duration(milliseconds: 500),
-      child: Material(
-        color: background,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppDimens.radiusSmall),
-          side: BorderSide(
-              color: state == _TileState.idle ? border : Colors.transparent,
-              width: 1),
-        ),
+      child: MouseRegion(
+        cursor: enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
+        child: Material(
+          color: background,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppDimens.radiusSmall),
+            side: BorderSide(
+                color: state == _TileState.idle ? border : Colors.transparent,
+                width: 1),
+          ),
         child: InkWell(
           onTap: enabled ? onTap : null,
           borderRadius: BorderRadius.circular(AppDimens.radiusSmall),
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Row(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 Icon(
                   icon,
-                  size: 17,
+                  size: 21,
                   color: state == _TileState.idle
                       ? (enabled ? accent : AppColors.strongBorder)
                       : foreground,
                 ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    label,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w600,
-                      color: foreground,
-                    ),
+                const SizedBox(height: 4),
+                Text(
+                  label,
+                  textAlign: TextAlign.center,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: foreground,
                   ),
                 ),
               ],
             ),
           ),
+        ),
         ),
       ),
     );

@@ -149,30 +149,59 @@ class _TimeSeriesChartState extends ConsumerState<TimeSeriesChart> {
     // Window filter + decimation. Points are bucketed by *absolute* packet
     // time, so the sampled set is stable while the window slides — the line
     // no longer flickers once data reaches the left edge.
-    final samples = <TelemetryFrame>[];
+    // In replay the whole flight is shown: samples up to the replay clock at
+    // full opacity, the not-yet-played remainder dimmed.
     final bucketMs = math.max(1, windowMs ~/ _maxPoints);
-    var lastBucket = -1;
-    final len = history.length;
-    for (var i = 0; i < len; i++) {
-      final frame = history.getChronological(i);
-      final t = frame.receivedAtMs;
-      if (t < windowStart || t > nowMs) continue;
-      final bucket = t ~/ bucketMs;
-      if (bucket == lastBucket) continue;
-      samples.add(frame);
-      lastBucket = bucket;
+    final playedSamples = <TelemetryFrame>[];
+    final futureSamples = <TelemetryFrame>[];
+    if (fullFlight) {
+      var lastPlayedBucket = -1;
+      var lastFutureBucket = -1;
+      TelemetryFrame? lastPlayed;
+      for (final frame in replayFrames) {
+        final t = frame.receivedAtMs;
+        final bucket = t ~/ bucketMs;
+        if (t <= nowMs) {
+          if (bucket == lastPlayedBucket) continue;
+          playedSamples.add(frame);
+          lastPlayedBucket = bucket;
+          lastPlayed = frame;
+        } else {
+          if (bucket == lastFutureBucket) continue;
+          // Carry the last played point so the dimmed segment connects.
+          if (futureSamples.isEmpty && lastPlayed != null) {
+            futureSamples.add(lastPlayed);
+            lastFutureBucket = lastPlayed.receivedAtMs ~/ bucketMs;
+            if (bucket == lastFutureBucket) continue;
+          }
+          futureSamples.add(frame);
+          lastFutureBucket = bucket;
+        }
+      }
+    } else {
+      var lastBucket = -1;
+      final len = history.length;
+      for (var i = 0; i < len; i++) {
+        final frame = history.getChronological(i);
+        final t = frame.receivedAtMs;
+        if (t < windowStart || t > nowMs) continue;
+        final bucket = t ~/ bucketMs;
+        if (bucket == lastBucket) continue;
+        playedSamples.add(frame);
+        lastBucket = bucket;
+      }
     }
+    final samples = fullFlight
+        ? [...playedSamples, ...futureSamples.skip(playedSamples.isEmpty ? 0 : 1)]
+        : playedSamples;
 
-    final seriesSpots = <List<FlSpot>>[
-      for (final spec in widget.config.series)
-        [
-          for (final frame in samples)
+    List<FlSpot> spotsFor(List<TelemetryFrame> frames, SeriesSpec spec) => [
+          for (final frame in frames)
             FlSpot(
               (frame.receivedAtMs - originMs) / 1000,
               spec.value(frame),
             ),
-        ],
-    ];
+        ];
 
     // Auto y-range snapped to round values so gridlines and ticks stay clean
     // (e.g. velocity hovering at 0 gets a -0.5..0.5 axis, not -0.37..0.41).
@@ -216,16 +245,16 @@ class _TimeSeriesChartState extends ConsumerState<TimeSeriesChart> {
         ySpan <= 0 ? yStep : ySpan / ((ySpan / yStep).round().clamp(2, 6));
 
     final lineBars = <LineChartBarData>[
-      for (var i = 0; i < widget.config.series.length; i++)
+      for (var i = 0; i < widget.config.series.length; i++) ...[
         LineChartBarData(
-          spots: seriesSpots[i],
+          spots: spotsFor(playedSamples, widget.config.series[i]),
           color: widget.config.series[i].color,
           barWidth: 1.6,
           // Raw data — no smoothing/filtering.
           isCurved: false,
           dotData: const FlDotData(show: false),
           dashArray: widget.config.series[i].dashed ? [5, 4] : null,
-          // Subtle area fill under single-series charts.
+          // Subtle area fill under single-series charts (played part only).
           belowBarData: widget.config.series.length == 1
               ? BarAreaData(
                   show: true,
@@ -233,6 +262,17 @@ class _TimeSeriesChartState extends ConsumerState<TimeSeriesChart> {
                 )
               : BarAreaData(show: false),
         ),
+        if (fullFlight)
+          LineChartBarData(
+            spots: spotsFor(futureSamples, widget.config.series[i]),
+            color: widget.config.series[i].color.withValues(alpha: 0.25),
+            barWidth: 1.6,
+            isCurved: false,
+            dotData: const FlDotData(show: false),
+            dashArray: widget.config.series[i].dashed ? [5, 4] : null,
+            belowBarData: BarAreaData(show: false),
+          ),
+      ],
     ];
 
     final xInterval = _timeInterval(windowMs / 1000);
@@ -311,7 +351,7 @@ class _TimeSeriesChartState extends ConsumerState<TimeSeriesChart> {
                   ),
                   borderData: FlBorderData(
                     show: true,
-                    border: const Border(
+                    border: Border(
                       left: BorderSide(color: AppColors.border),
                       bottom: BorderSide(color: AppColors.border),
                     ),

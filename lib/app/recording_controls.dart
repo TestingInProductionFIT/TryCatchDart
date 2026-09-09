@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:serial/serial.dart';
 
 import '../theme/app_colors.dart';
+import 'format.dart';
 import '/src/telemetry/telemetry_provider.dart';
 
 /// Recording control for the REC cell of the top bar: a Record button when
@@ -44,8 +45,8 @@ class _RecordingControlsState extends ConsumerState<RecordingControls> {
   String _elapsed() {
     final started = _startedAt;
     if (started == null) return '0:00';
-    final d = DateTime.now().difference(started);
-    return '${d.inMinutes}:${(d.inSeconds % 60).toString().padLeft(2, '0')}';
+    return formatMinSec(
+        DateTime.now().difference(started).inMilliseconds);
   }
 
   @override
@@ -88,7 +89,7 @@ class _RecordingControlsState extends ConsumerState<RecordingControls> {
         onPressed: ref.read(serialConfigProvider.notifier).startRecording,
         style: OutlinedButton.styleFrom(
           foregroundColor: AppColors.destructive,
-          side: const BorderSide(color: AppColors.destructive),
+          side: BorderSide(color: AppColors.destructive),
           padding: const EdgeInsets.symmetric(horizontal: 12),
           minimumSize: const Size(0, 32),
           textStyle: const TextStyle(

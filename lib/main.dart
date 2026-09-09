@@ -7,6 +7,7 @@ import 'package:window_manager/window_manager.dart';
 
 import 'app/app_shell.dart';
 import 'src/telemetry/telemetry_provider.dart';
+import 'theme/app_colors.dart';
 import 'theme/app_theme.dart';
 
 import 'package:serial/serial.dart';
@@ -14,6 +15,7 @@ import 'package:serial/serial.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await windowManager.ensureInitialized();
+  await AppThemeMode.instance.load();
 
   // Spawn the background serial worker isolate before the UI starts.
   // The worker begins scanning for ports immediately.
@@ -23,12 +25,10 @@ void main() async {
     size: Size(1280, 800),
     minimumSize: Size(1024, 600),
     center: true,
-    fullScreen: true,
     title: '{TryCatch}',
   );
 
   windowManager.waitUntilReadyToShow(windowOptions, () async {
-    await windowManager.setFullScreen(true);
     await windowManager.show();
     await windowManager.focus();
   });
@@ -41,11 +41,18 @@ void main() async {
         serialWorkerProvider.overrideWithValue(worker),
       ],
       child: AppLifecycleWrapper(
-        child: MaterialApp(
-          debugShowCheckedModeBanner: false,
-          themeMode: ThemeMode.light,
-          theme: buildAppTheme(),
-          home: const AppShell(),
+        // Rebuilds MaterialApp on a dark-mode flip; every AppColors getter
+        // resolves the active palette, so the whole tree follows.
+        child: ValueListenableBuilder<bool>(
+          valueListenable: AppThemeMode.instance,
+          builder: (_, isDark, _) => MaterialApp(
+            debugShowCheckedModeBanner: false,
+            themeMode: ThemeMode.light,
+            theme: buildAppTheme(dark: isDark),
+            // NOTE: intentionally non-const — a const home would freeze the
+            // whole subtree across dark-mode flips (AppColors is dynamic).
+            home: AppShell(),
+          ),
         ),
       ),
     ),

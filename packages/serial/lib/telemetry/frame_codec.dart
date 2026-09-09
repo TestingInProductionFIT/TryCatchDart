@@ -8,7 +8,10 @@ import 'telemetry_frame.dart';
 
 /// Byte offsets and scales of every field inside a telemetry payload.
 ///
-/// Payload layout (big-endian, 52 bytes, CRC included):
+/// Payload layout (big-endian, 53 bytes, CRC included). Wire v2 carries the
+/// redesigned FSM set (idle/armed/ascent/apogee/parachute/landed/debug);
+/// v1 payloads (same layout, old FSM ids) still decode with their state
+/// translated — see [FsmState.fromV1Id].
 ///
 /// | Offset | Size | Field     | Type | Scale    | Notes                          |
 /// |--------|------|-----------|------|----------|--------------------------------|
@@ -38,7 +41,7 @@ import 'telemetry_frame.dart';
 /// | 51     | 2    | crc       | u16  | —        | CRC16-CCITT over bytes 0..50   |
 abstract final class TelemetryLayout {
   /// Current wire format version emitted by encoders.
-  static const int version = 1;
+  static const int version = 2;
 
   static const int offsetVersion = 0;
   static const int offsetFlags = 1;
@@ -210,13 +213,15 @@ abstract final class FrameCodec {
   /// Decodes a raw payload (as carried by a [TelemetryPacket]) into a frame.
   ///
   /// Auto-detects the payload generation by length: the current format
-  /// ([TelemetryFraming.payloadLength] bytes) or the legacy v1.0 52-byte
-  /// layout used before the hall sensor was widened to u16.
+  /// ([TelemetryFraming.payloadLength] bytes, wire v2) or the legacy v1.0
+  /// 52-byte layout used before the hall sensor was widened to u16. v1
+  /// payloads of either length have their FSM byte translated to the v2
+  /// state set ([FsmState.fromV1Id]).
   ///
   /// Returns `null` for wrong lengths, unknown versions or CRC mismatches.
   static TelemetryFrame? decode(Uint8List payload, {required int receivedAtMs}) {
     if (payload.length == TelemetryFraming.payloadLength) {
-      return _decodeCurrent(payload, receivedAtMs);
+      return _decode53(payload, receivedAtMs);
     }
     if (payload.length == 52) {
       return _decodeLegacy52(payload, receivedAtMs);
@@ -224,15 +229,22 @@ abstract final class FrameCodec {
     return null;
   }
 
-  static TelemetryFrame? _decodeCurrent(Uint8List payload, int receivedAtMs) {
+  static TelemetryFrame? _decode53(Uint8List payload, int receivedAtMs) {
     final b = ByteData.sublistView(payload);
-    if (b.getUint8(TelemetryLayout.offsetVersion) != TelemetryLayout.version) {
-      return null;
-    }
+    final version = b.getUint8(TelemetryLayout.offsetVersion);
+    if (version != TelemetryLayout.version && version != 1) return null;
     if (b.getUint16(payloadCrcOffset) !=
         crc16CCITT(payload, 0, payloadCrcOffset)) {
       return null;
     }
+    final rawFsm = b.getUint8(TelemetryLayout.offsetFsmState);
+    final fsmId =
+        version == 1 ? FsmState.fromV1Id(rawFsm).id : rawFsm;
+    return _buildFrame(b, receivedAtMs, fsmId);
+  }
+
+  static TelemetryFrame? _buildFrame(
+      ByteData b, int receivedAtMs, int fsmStateId) {
     final lat =
         b.getInt32(TelemetryLayout.offsetGpsLat) * TelemetryLayout.latLonScale;
     if (lat.isNaN) return null;
@@ -264,12 +276,13 @@ abstract final class FrameCodec {
       yaw: b.getInt16(TelemetryLayout.offsetYaw) * TelemetryLayout.angleScale,
       batteryVoltage: b.getUint16(TelemetryLayout.offsetBattery) / 1000,
       hallRaw: b.getUint16(TelemetryLayout.offsetHall),
-      fsmStateId: b.getUint8(TelemetryLayout.offsetFsmState),
+      fsmStateId: fsmStateId,
     );
   }
 
   /// Legacy 52-byte layout: identical except `hall` is a 0/1 byte at 48,
-  /// `fsmState` at 49 and the CRC at 50.
+  /// `fsmState` at 49 and the CRC at 50. v1-only; the state is translated
+  /// to the v2 set.
   static TelemetryFrame? _decodeLegacy52(Uint8List payload, int receivedAtMs) {
     const legacyCrcOffset = 50;
     const legacyFsmOffset = 49;
@@ -309,7 +322,7 @@ abstract final class FrameCodec {
       batteryVoltage: b.getUint16(TelemetryLayout.offsetBattery) / 1000,
       // Legacy hall was a 0/1 flag; map onto the raw scale for the UI.
       hallRaw: b.getUint8(legacyHallOffset) != 0 ? 2950 : 2500,
-      fsmStateId: b.getUint8(legacyFsmOffset),
+      fsmStateId: FsmState.fromV1Id(b.getUint8(legacyFsmOffset)).id,
     );
   }
 

@@ -7,48 +7,79 @@ import 'dart:math' as math;
 ///
 /// Wire values are the `id` of each state; ordering of the enum must not be
 /// relied upon when serializing — always use [id].
+///
+/// Each state carries the physical configuration it implies: whether the
+/// nosecone is on and whether the parachute is open. The 3D views render
+/// directly from these flags.
 enum FsmState {
-  /// Sitting on the pad, pre-flight checks, GPS acquiring.
+  /// Sitting on the pad, pre-flight checks, GPS acquiring. Assembled.
   idle(0, 'Idle'),
 
-  /// Armed and waiting for ignition.
+  /// Armed and waiting for ignition. Assembled.
   armed(1, 'Armed'),
 
-  /// Motor detected as burning.
-  boost(2, 'Boost'),
+  /// Powered ascent and ballistic coast after burnout. Assembled.
+  ascent(2, 'Ascent'),
 
-  /// Motor burnout, ballistic ascent.
-  coast(3, 'Coast'),
+  /// Apogee reached, nosecone popped, waiting for the parachute to open.
+  apogee(3, 'Apogee'),
 
-  /// Apogee reached, drogue deployment event.
-  apogee(4, 'Apogee'),
+  /// Descending under the open parachute (nosecone gone).
+  parachute(4, 'Parachute'),
 
-  /// Descending on drogue parachute.
-  drogue(5, 'Drogue'),
+  /// Touchdown, flight over. Recovery gear jettisoned/collapsed.
+  landed(5, 'Landed'),
 
-  /// Descending on main parachute.
-  main(6, 'Main'),
+  /// Bench debug with the airframe open (no nosecone, no parachute).
+  debugUnlocked(6, 'Debug - Unlocked'),
 
-  /// Touchdown, flight over.
-  landed(7, 'Landed'),
-
-  /// Firmware-side fault detected.
-  fault(8, 'Fault'),
+  /// Bench debug in flight configuration (nosecone on, no parachute).
+  debugLocked(7, 'Debug - Locked'),
 
   /// Placeholder used when an unmapped wire value is received.
   unknown(255, 'Unknown');
 
   const FsmState(this.id, this.label);
 
-  /// Value carried in the telemetry frame's FSM byte.
+  /// Value carried in the telemetry frame's FSM byte (wire v2).
   final int id;
 
   /// Human-friendly name for UI display.
   final String label;
 
+  /// Whether the nosecone is on in this state.
+  bool get hasNosecone => switch (this) {
+        FsmState.idle ||
+        FsmState.armed ||
+        FsmState.ascent ||
+        FsmState.debugLocked =>
+          true,
+        FsmState.apogee ||
+        FsmState.parachute ||
+        FsmState.landed ||
+        FsmState.debugUnlocked ||
+        FsmState.unknown =>
+          false,
+      };
+
+  /// Whether the parachute is open in this state.
+  bool get hasParachute => this == FsmState.parachute;
+
   /// Maps a wire value to a state, falling back to [unknown].
   static FsmState fromId(int id) =>
       FsmState.values.firstWhere((s) => s.id == id, orElse: () => FsmState.unknown);
+
+  /// Maps a v1 wire id onto the v2 state set (v1: 0 idle, 1 armed, 2 boost,
+  /// 3 coast, 4 apogee, 5 drogue, 6 main, 7 landed, 8 fault).
+  static FsmState fromV1Id(int id) => switch (id) {
+        0 => FsmState.idle,
+        1 => FsmState.armed,
+        2 || 3 => FsmState.ascent,
+        4 => FsmState.apogee,
+        5 || 6 => FsmState.parachute,
+        7 => FsmState.landed,
+        _ => FsmState.unknown,
+      };
 }
 
 /// Bit positions inside the telemetry frame's flags byte.

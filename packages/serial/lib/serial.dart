@@ -7,6 +7,7 @@ export 'hardware/real.dart';
 export 'io/file_parser.dart';
 export 'io/packet_parser.dart';
 export 'io/recorder.dart';
+export 'io/recording_file.dart';
 export 'telemetry/frame_codec.dart';
 export 'telemetry/flight_simulator.dart';
 export 'telemetry/telemetry_frame.dart';

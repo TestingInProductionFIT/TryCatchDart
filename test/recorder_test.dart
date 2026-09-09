@@ -47,7 +47,9 @@ void main() {
       recorder.recordBytes(chunk2);
       recorder.recordBytes(chunk3);
 
-      // 3 chunks * 12-byte header + (4 + 4 + 2) payload bytes = 46 bytes total
+      // 3 chunks * 12-byte header + (4 + 4 + 2) payload bytes = 46 bytes
+      // of body; stop() prepends the 112-byte file header (garbage chunks
+      // decode to nothing, so the header carries zero stats).
       expect(recorder.bytesWritten, 46);
 
       await recorder.stop();
@@ -59,10 +61,18 @@ void main() {
       expect(await file.exists(), isTrue);
 
       final savedBytes = await file.readAsBytes();
-      expect(savedBytes.length, 46);
+      expect(savedBytes.length, 112 + 46);
 
-      // Verify Frame 1
-      var offset = 0;
+      // Verify file header.
+      final fileHeader =
+          RecordingHeader.decode(savedBytes.sublist(0, 112))!;
+      expect(fileHeader.hasStats, isTrue);
+      expect(fileHeader.hasLaunchSite, isFalse);
+      expect(fileHeader.packetCount, 0);
+      expect(fileHeader.payloadLength, 0);
+
+      // Verify Frame 1 (body starts past the 112-byte file header).
+      var offset = 112;
       var header1 = ByteData.sublistView(savedBytes, offset, offset + 12);
       var ts1 = header1.getInt64(0, Endian.big);
       var len1 = header1.getUint32(8, Endian.big);

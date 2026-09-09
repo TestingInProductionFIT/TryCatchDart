@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:serial/serial.dart';
@@ -5,8 +7,8 @@ import 'package:trycatch/src/collections/ring_buffer.dart';
 import 'package:trycatch/src/telemetry/telemetry_provider.dart';
 import 'package:trycatch/theme/app_colors.dart';
 
-/// Full-screen raw packet feed for debugging: a fixed window of the most
-/// recent packets in monospace hex. Shows what fits — no scrolling.
+/// Full-screen raw packet feed for debugging: newest packets first, pinned
+/// to the top. Shows what fits — no scrolling.
 class RawByteMonitor extends ConsumerStatefulWidget {
   const RawByteMonitor({super.key});
 
@@ -36,11 +38,10 @@ class _RawByteMonitorState extends ConsumerState<RawByteMonitor> {
         final lineCount =
             ((constraints.maxHeight - 8) / _lineHeight).floor().clamp(0, 100);
 
-        // RingBuffer index 0 is the newest packet; render the newest lines
-        // that fit, oldest first.
+        // RingBuffer index 0 is the newest packet: newest first, pinned to
+        // the top, horizontally centred as a block.
         final lines = <Widget>[];
-        for (var i = lineCount - 1; i >= 0; i--) {
-          if (i >= _packetBuffer.length) continue;
+        for (var i = 0; i < lineCount && i < _packetBuffer.length; i++) {
           lines.add(SizedBox(
             height: _lineHeight,
             child: _PacketLine(packet: _packetBuffer[i]),
@@ -51,19 +52,24 @@ class _RawByteMonitorState extends ConsumerState<RawByteMonitor> {
           color: AppColors.background,
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
           child: _packetBuffer.isEmpty
-              ? const Center(
+              ? Center(
                   child: Text(
                     'Awaiting packets…',
                     style: TextStyle(
                         fontSize: 13, color: AppColors.mutedForeground),
                   ),
                 )
-              // Center the block in the leftover space, like mx-auto.
-              : Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: lines,
+              // Top-anchored block, centred horizontally with a readable
+              // max width; each line stays left-aligned inside it.
+              : Align(
+                  alignment: Alignment.topCenter,
+                  child: SizedBox(
+                    width: math.min(constraints.maxWidth, 1100),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: lines,
+                    ),
                   ),
                 ),
         );
@@ -96,18 +102,18 @@ class _PacketLine extends StatelessWidget {
             TextSpan(
               text:
                   '[${DateTime.fromMillisecondsSinceEpoch(packet.receivedAtMs).toIso8601String().substring(11, 23)}] ',
-              style: const TextStyle(color: AppColors.mutedForeground),
+              style: TextStyle(color: AppColors.mutedForeground),
             ),
             TextSpan(text: hex),
             TextSpan(
               text: ' · $caption',
-              style: const TextStyle(color: AppColors.mutedForeground),
+              style: TextStyle(color: AppColors.mutedForeground),
             ),
           ],
         ),
         maxLines: 1,
         overflow: TextOverflow.clip,
-        style: const TextStyle(
+        style: TextStyle(
           fontFamily: 'Consolas',
           fontFamilyFallback: ['Courier New', 'monospace'],
           fontSize: 12,

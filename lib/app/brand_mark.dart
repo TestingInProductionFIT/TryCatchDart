@@ -42,7 +42,7 @@ class BrandMark extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
+            Text(
               '{TryCatch}',
               style: TextStyle(
                 fontSize: 15.5,

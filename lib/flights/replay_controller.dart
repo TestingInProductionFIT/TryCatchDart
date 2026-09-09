@@ -4,7 +4,30 @@ import 'dart:io';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:serial/serial.dart';
 
+import '../settings/launch_site_store.dart';
 import '../src/telemetry/telemetry_store.dart';
+
+/// Maps a recording header's launch reference to a display site, or `null`
+/// when the header is missing or carries no site.
+LaunchSite? launchSiteFromHeader(RecordingHeader? header) {
+  final launch = header?.launchRef;
+  if (launch == null) return null;
+  return LaunchSite(
+    name: launch.name,
+    latitude: launch.latitude,
+    longitude: launch.longitude,
+    altitudeMsl: launch.mslM,
+  );
+}
+
+/// Launch site the visuals (map flag, 3D origin, distances, pressure
+/// reference) should anchor to: the replay file's own site while a replay
+/// with one is active, else the selected site.
+final effectiveLaunchSiteProvider = Provider<LaunchSite?>((ref) {
+  final replay = ref.watch(replayProvider);
+  if (replay.isActive && replay.launchSite != null) return replay.launchSite;
+  return ref.watch(currentLaunchSiteProvider);
+});
 
 /// Replay playback state.
 class ReplayState {
@@ -30,6 +53,10 @@ class ReplayState {
   /// replay progresses. Empty outside a replay.
   final List<TelemetryFrame> frames;
 
+  /// Launch site read from the recording header (`null` when the header
+  /// carries none). Visuals anchor to this while the replay is active.
+  final LaunchSite? launchSite;
+
   const ReplayState({
     this.filePath,
     this.playing = false,
@@ -38,6 +65,7 @@ class ReplayState {
     this.durationMs,
     this.errorMsg,
     this.frames = const [],
+    this.launchSite,
   });
 
   bool get isActive => filePath != null;
@@ -50,6 +78,7 @@ class ReplayState {
     int? durationMs,
     String? errorMsg,
     List<TelemetryFrame>? frames,
+    LaunchSite? launchSite,
   }) =>
       ReplayState(
         filePath: filePath ?? this.filePath,
@@ -59,6 +88,7 @@ class ReplayState {
         durationMs: durationMs ?? this.durationMs,
         errorMsg: errorMsg ?? this.errorMsg,
         frames: frames ?? this.frames,
+        launchSite: launchSite ?? this.launchSite,
       );
 }
 
@@ -96,7 +126,7 @@ class ReplayController extends Notifier<ReplayState> {
         filePath: path,
         durationMs: 0,
         errorMsg:
-            'Unsupported recording format — recorded before the current wire format.',
+            'Unsupported recording — expected a v1 file with a header.',
       );
       return;
     }
@@ -120,26 +150,22 @@ class ReplayController extends Notifier<ReplayState> {
       positionMs: 0,
       durationMs: packets.last.receivedAtMs - packets.first.receivedAtMs,
       frames: frames,
+      launchSite:
+          launchSiteFromHeader(await tryReadRecordingHeader(path)),
     );
 
     _lastTickMs = DateTime.now().millisecondsSinceEpoch;
     _ticker = Timer.periodic(const Duration(milliseconds: 50), (_) => _tick());
   }
 
+  /// Parses the v1 recording at [path] (framing comes from its header).
+  /// Headerless files yield nothing — upgrade them with finalize.
   Future<List<TelemetryPacket>> _decode(String path) async {
-    // Current framing first, then the legacy 52-byte layout from before the
-    // hall sensor was widened. The 31-byte placeholder format has no CRC and
-    // cannot be decoded.
-    for (final payloadLength in [TelemetryFraming.payloadLength, 52]) {
-      final packets = await FileParser()
-          .parseFile(path, PacketParser(payloadLength: payloadLength))
-          .toList();
-      final decodable = packets.any(
-        (p) => FrameCodec.decode(p.rawData, receivedAtMs: 0) != null,
-      );
-      if (decodable) return packets;
-    }
-    return const [];
+    final packets = await FileParser().parseFile(path).toList();
+    final decodable = packets.any(
+      (p) => FrameCodec.decode(p.rawData, receivedAtMs: 0) != null,
+    );
+    return decodable ? packets : const [];
   }
 
   /// Advances the virtual clock and ingests everything that is due.

@@ -10,21 +10,23 @@ to disk and replays them, and (eventually) sends commands back to the rocket.
 
 - **Live telemetry** — 10 Hz frames over a serial port, parsed and CRC-checked
   in a background isolate. No hardware? The built-in **MOCK** port runs a
-  deterministic full-flight simulator (pad → boost → coast → apogee → drogue →
-  main → landed), so the whole app is demoable without a rocket.
+  deterministic full-flight simulator (pad → ascent → apogee → parachute →
+  landed), so the whole app is demoable without a rocket.
 - **Tiling dashboard** — hyprland-style workspaces backed by a KD-tree layout
   tree. Every split keeps its widgets' minimum sizes; drag dividers to resize,
   double-click a divider (in edit mode) to flip a split between horizontal and
   vertical, drag tiles onto each other to swap them. Workspaces are persisted.
-- **11 widget types** — time-series charts (altitude, velocity, acceleration,
-  battery, hall sensor), map with GPS + dead-reckoning tracks, 3D rocket
+- **12 widget types** — time-series charts (altitude, pressure, velocity,
+  acceleration, battery, hall sensor), map with GPS + dead-reckoning tracks, 3D rocket
   attitude view, 3D flight path, flight-state machine, stats, and a two-click
   command panel. Adding a widget = one class + one registry entry.
 - **Raw data, no smoothing** — every chart shares one code path and plots the
   raw telemetry.
 - **Recording & replay** — raw serial chunks are dumped to
-  `Documents/TryCatch/recordings/*.bin` and can be replayed with seek and
-  speed control; old recording formats keep replaying via legacy decoders.
+  `Documents/TryCatch/recordings/*.bin` (v1 files open with a 112-byte
+  header: launch site, time span, packet count and peaks, so the grid lists
+  stats without decoding; headerless files are rejected) and can be replayed
+  with seek and speed control.
 - **Ground-side dead reckoning** — a decoupled estimation module fills GPS
   gaps (≥1 s of silence) so tracks and the 3D flight view stay connected.
 - **Raw monitor** — a full-screen monospace hex dump of the packet stream for

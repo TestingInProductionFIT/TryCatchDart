@@ -9,7 +9,6 @@ void main() {
     late Directory tempDir;
     late String testFilePath;
     late FileParser fileParser;
-    late PacketParser packetParser;
     late Recorder recorder;
 
     setUp(() async {
@@ -19,7 +18,6 @@ void main() {
       testFilePath =
           '${tempDir.path}${Platform.pathSeparator}test_recording.bin';
       fileParser = FileParser();
-      packetParser = PacketParser();
       recorder = Recorder();
     });
 
@@ -34,15 +32,33 @@ void main() {
     Uint8List createTelemetryPacket(int sequence) =>
         FrameCodec.encodePacket(TelemetryFrame(sequence: sequence));
 
+    /// Wraps raw chunk bodies in a v1 file: header + 12-byte chunk framings.
+    Future<void> writeHeaderedFile(
+      String path,
+      List<(int, Uint8List)> chunks,
+    ) async {
+      final file = File(path);
+      await file.parent.create(recursive: true);
+      const header = RecordingHeader(payloadLength: 53, hasStats: true);
+      final builder = BytesBuilder()..add(header.encode());
+      for (final (tsUs, payload) in chunks) {
+        builder.add((ByteData(12)
+              ..setInt64(0, tsUs, Endian.big)
+              ..setUint32(8, payload.length, Endian.big))
+            .buffer
+            .asUint8List());
+        builder.add(payload);
+      }
+      await file.writeAsBytes(builder.toBytes());
+    }
+
     test('parses telemetry packets from recorder binary file', () async {
       await recorder.start(testFilePath);
 
       recorder.recordBytes(createTelemetryPacket(0x42));
       await recorder.stop();
 
-      final packets = await fileParser
-          .parseFile(testFilePath, packetParser)
-          .toList();
+      final packets = await fileParser.parseFile(testFilePath).toList();
 
       expect(packets.length, 1);
       expect(packets.first.rawData.length, TelemetryFraming.payloadLength);
@@ -52,28 +68,16 @@ void main() {
       );
     });
 
-    test('correctly converts microsecond timestamps to milliseconds', () async {
-      final file = File(testFilePath);
-      await file.parent.create(recursive: true);
-
+    test('correctly converts microsecond timestamps to milliseconds',
+        () async {
       const timestampMicros = 1700000000000000;
       const expectedMs = 1700000000000;
 
-      final packetData = createTelemetryPacket(0x99);
+      await writeHeaderedFile(testFilePath, [
+        (timestampMicros, createTelemetryPacket(0x99)),
+      ]);
 
-      final header = ByteData(12)
-        ..setInt64(0, timestampMicros, Endian.big)
-        ..setUint32(8, packetData.length, Endian.big);
-
-      final builder = BytesBuilder()
-        ..add(header.buffer.asUint8List())
-        ..add(packetData);
-
-      await file.writeAsBytes(builder.toBytes());
-
-      final packets = await fileParser
-          .parseFile(testFilePath, packetParser)
-          .toList();
+      final packets = await fileParser.parseFile(testFilePath).toList();
 
       expect(packets.length, 1);
       expect(packets.first.receivedAtMs, expectedMs);
@@ -89,32 +93,16 @@ void main() {
       final chunk1 = Uint8List.sublistView(fullPacket, 0, 10);
       final chunk2 = Uint8List.sublistView(fullPacket, 10, fullPacket.length);
 
-      final file = File(testFilePath);
-      await file.parent.create(recursive: true);
-
       const timestampMicros1 = 1700000001000000;
       const timestampMicros2 = 1700000005000000;
       const expectedMs2 = 1700000005000;
 
-      final frame1 = ByteData(12)
-        ..setInt64(0, timestampMicros1, Endian.big)
-        ..setUint32(8, chunk1.length, Endian.big);
+      await writeHeaderedFile(testFilePath, [
+        (timestampMicros1, chunk1),
+        (timestampMicros2, chunk2),
+      ]);
 
-      final frame2 = ByteData(12)
-        ..setInt64(0, timestampMicros2, Endian.big)
-        ..setUint32(8, chunk2.length, Endian.big);
-
-      final builder = BytesBuilder()
-        ..add(frame1.buffer.asUint8List())
-        ..add(chunk1)
-        ..add(frame2.buffer.asUint8List())
-        ..add(chunk2);
-
-      await file.writeAsBytes(builder.toBytes());
-
-      final packets = await fileParser
-          .parseFile(testFilePath, packetParser)
-          .toList();
+      final packets = await fileParser.parseFile(testFilePath).toList();
 
       expect(packets.length, 1);
       expect(packets.first.receivedAtMs, expectedMs2);
@@ -128,11 +116,25 @@ void main() {
       final file = File(testFilePath);
       await file.create(recursive: true);
 
-      final packets = await fileParser
-          .parseFile(testFilePath, packetParser)
-        .toList();
+      final packets = await fileParser.parseFile(testFilePath).toList();
 
       expect(packets, isEmpty);
+    });
+
+    test('rejects headerless files, even with valid packets inside',
+        () async {
+      final file = File(testFilePath);
+      await file.parent.create(recursive: true);
+      final packet = createTelemetryPacket(0x07);
+      final chunkHeader = ByteData(12)
+        ..setInt64(0, 1700000000000000, Endian.big)
+        ..setUint32(8, packet.length, Endian.big);
+      await file.writeAsBytes([
+        ...chunkHeader.buffer.asUint8List(),
+        ...packet,
+      ]);
+
+      expect(await fileParser.parseFile(testFilePath).toList(), isEmpty);
     });
   });
 }

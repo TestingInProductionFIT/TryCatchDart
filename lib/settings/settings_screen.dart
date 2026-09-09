@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../theme/app_colors.dart';
 import '../theme/widgets/app_card.dart';
+import '../workspaces/widgets/map_tiles.dart';
 import 'launch_site_store.dart';
 
 /// Settings screen: launch site configuration with savable presets.
@@ -20,6 +23,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   final _alt = TextEditingController();
   String? _error;
   bool _syncedFromSelection = false;
+  bool _precaching = false;
+  String? _precacheStatus;
 
   @override
   void dispose() {
@@ -72,6 +77,32 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
     setState(() => _error = null);
     return LaunchSite(name: name, latitude: lat, longitude: lon, altitudeMsl: alt);
+  }
+
+  Future<void> _precacheAll(List<LaunchSite> presets) async {
+    setState(() {
+      _precaching = true;
+      _precacheStatus = null;
+    });
+    try {
+      final (:fetched, :total) = await precacheLaunchSites(
+        presets,
+        onProgress: (done, total) {
+          if (!mounted) return;
+          setState(() =>
+              _precacheStatus = 'Downloading tiles… $done / $total');
+        },
+      );
+      if (!mounted) return;
+      setState(() => _precacheStatus =
+          'Done — $fetched new tiles cached ($total checked).');
+    } catch (_) {
+      if (!mounted) return;
+      setState(
+          () => _precacheStatus = 'Preload failed — check the connection.');
+    } finally {
+      if (mounted) setState(() => _precaching = false);
+    }
   }
 
   @override
@@ -173,13 +204,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   if (_error != null) ...[
                     const SizedBox(height: 8),
                     Text(
-                      _error!,
-                      style: const TextStyle(
-                          color: AppColors.destructive, fontSize: 12),
+                _error!,
+                style: TextStyle(
+                    color: AppColors.destructive, fontSize: 12),
                     ),
                   ],
                   const SizedBox(height: 14),
-                  Row(
+                      Row(
                     children: [
                       FilledButton.icon(
                         onPressed: () async {
@@ -188,6 +219,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                           await ref
                               .read(launchSiteProvider.notifier)
                               .savePreset(site);
+                          // Warm the tile cache around the new site so the
+                          // field map works offline.
+                          unawaited(precacheLaunchSites([site]));
                         },
                         icon: const Icon(Icons.save_outlined, size: 16),
                         label: const Text('Save as preset'),
@@ -218,6 +252,85 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ),
             const SizedBox(height: AppDimens.gap),
             AppCard(
+              title: 'OFFLINE MAPS',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    'Street and satellite tiles are cached on disk as you '
+                    'browse. Preload every saved launch site (about 1 km '
+                    'around each, zooms 13–17) for offline field use.',
+                    style: TextStyle(
+                        fontSize: 12.5, color: AppColors.mutedForeground),
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      FilledButton.icon(
+                        onPressed: _precaching || siteState.presets.isEmpty
+                            ? null
+                            : () => _precacheAll(siteState.presets),
+                        icon: _precaching
+                            ? const SizedBox(
+                                width: 14,
+                                height: 14,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2),
+                              )
+                            : const Icon(Icons.download_outlined, size: 16),
+                        label: Text(_precaching
+                            ? 'Preloading…'
+                            : 'Preload tiles around saved sites'),
+                      ),
+                    ],
+                  ),
+                  if (_precacheStatus != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      _precacheStatus!,
+                      style: AppText.mono.copyWith(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.mutedForeground,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(height: AppDimens.gap),
+            AppCard(
+              title: 'APPEARANCE',
+              child: ValueListenableBuilder<bool>(
+                valueListenable: AppThemeMode.instance,
+                builder: (_, isDark, _) => Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // Own Material: a ListTile paints its splash on the
+                    // nearest Material ancestor, and AppCard's decorated
+                    // container would swallow it (framework assert).
+                    Material(
+                      color: Colors.transparent,
+                      child: SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('Dark mode'),
+                        subtitle: Text(
+                          'Charts, panels and chrome follow. Map tiles stay light.',
+                          style: TextStyle(
+                              fontSize: 12.5,
+                              color: AppColors.mutedForeground),
+                        ),
+                        value: isDark,
+                        onChanged: (v) =>
+                            AppThemeMode.instance.setDark(v),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: AppDimens.gap),
+            AppCard(
               title: 'ABOUT',
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -227,7 +340,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     style: TextStyle(fontWeight: FontWeight.w600),
                   ),
                   const SizedBox(height: 4),
-                  const Text(
+                  Text(
                     'Testing in Production — model rocket telemetry, '
                     'replay and control.',
                     style: TextStyle(

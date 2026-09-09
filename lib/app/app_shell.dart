@@ -24,11 +24,13 @@ class AppShell extends ConsumerWidget {
     return Scaffold(
       body: Column(
         children: [
-          const TopBar(),
+          // NOTE: non-const on purpose — const children would not rebuild on
+          // a dark-mode flip (AppColors resolves dynamically).
+          TopBar(),
           Expanded(
             child: IndexedStack(
               index: screen.index,
-              children: const [
+              children: [
                 DashboardScreen(),
                 RecordingsScreen(),
                 MonitorScreen(),

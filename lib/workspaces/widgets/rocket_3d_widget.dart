@@ -2,20 +2,21 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:serial/serial.dart';
 import 'package:vector_math/vector_math_64.dart';
 
 import '../../src/telemetry/telemetry_store.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/widgets/waiting_for_data.dart';
+import 'orbit_camera.dart';
 import 'rocket_mesh.dart';
 
 /// 3D rocket orientation view.
 ///
-/// A small software renderer built on `vector_math`: a parametric rocket mesh
-/// (body tube, nose cone, three fins) is transformed by the rocket's attitude,
-/// lit with flat shading and depth-sorted (painter's algorithm). Drag orbits
-/// the camera; a corner gizmo shows the world and rocket axes.
+/// A small software renderer built on `vector_math`: the parametric rocket
+/// mesh is transformed by the rocket's attitude, lit with flat shading and
+/// depth-sorted (painter's algorithm). Drag orbits the shared camera; a
+/// corner compass shows the North / East / Up world axes with the same
+/// colours as the flight-path view.
 ///
 /// Attitude is rocket-oriented: pitch = tilt from vertical, yaw = heading,
 /// roll = spin around the longitudinal axis.
@@ -27,71 +28,39 @@ class Rocket3dWidget extends ConsumerStatefulWidget {
 }
 
 class _Rocket3dWidgetState extends ConsumerState<Rocket3dWidget> {
-  double _cameraAzimuthDeg = -35;
-  double _cameraElevationDeg = 16;
-
-  void _orbit(Offset delta) {
-    setState(() {
-      _cameraAzimuthDeg = (_cameraAzimuthDeg - delta.dx * 0.4) % 360;
-      _cameraElevationDeg =
-          (_cameraElevationDeg + delta.dy * 0.4).clamp(-85.0, 85.0);
-    });
-  }
-
   @override
   Widget build(BuildContext context) {
     final latest = ref.watch(telemetryStoreProvider).latest;
+    final camera = ref.watch(orbitCameraProvider);
 
     if (latest == null) {
-      return const Center(child: WaitingForData());
+      return Center(child: WaitingForData());
     }
 
-    final chute = switch (latest.fsmState) {
-      FsmState.apogee || FsmState.drogue => _Chute.drogue,
-      FsmState.main => _Chute.main,
-      _ => _Chute.none,
-    };
+    // Airframe configuration comes straight from the FSM state: the cone
+    // pops at apogee and the canopy opens under parachute.
+    final showNoseCone = latest.fsmState.hasNosecone;
+    final showParachute = latest.fsmState.hasParachute;
 
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onPanUpdate: (details) => _orbit(details.delta),
-          child: CustomPaint(
-            painter: _RocketPainter(
-              pitchDeg: latest.pitch,
-              yawDeg: latest.yaw,
-              rollDeg: latest.roll,
-              cameraAzimuthDeg: _cameraAzimuthDeg,
-              cameraElevationDeg: _cameraElevationDeg,
-            ),
-            child: const SizedBox.expand(),
-          ),
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onPanUpdate: (details) =>
+          ref.read(orbitCameraProvider.notifier).orbit(details.delta),
+      child: CustomPaint(
+        painter: _RocketPainter(
+          pitchDeg: latest.pitch,
+          yawDeg: latest.yaw,
+          rollDeg: latest.roll,
+          cameraAzimuthDeg: camera.azimuthDeg,
+          cameraElevationDeg: camera.elevationDeg,
+          showNoseCone: showNoseCone,
+          showParachute: showParachute,
         ),
-        if (chute != _Chute.none)
-          Positioned(
-            top: 8,
-            right: 10,
-            child: Tooltip(
-              message: chute == _Chute.main
-                  ? 'Main parachute deployed'
-                  : 'Drogue parachute deployed',
-              child: Icon(
-                Icons.paragliding,
-                size: 20,
-                color: chute == _Chute.main
-                    ? AppColors.warning
-                    : const Color(0xFF0D9488),
-              ),
-            ),
-          ),
-      ],
+        child: const SizedBox.expand(),
+      ),
     );
   }
 }
-
-enum _Chute { none, drogue, main }
 
 // ── Renderer ─────────────────────────────────────────────────────────────────
 
@@ -101,6 +70,8 @@ class _RocketPainter extends CustomPainter {
   final double rollDeg;
   final double cameraAzimuthDeg;
   final double cameraElevationDeg;
+  final bool showNoseCone;
+  final bool showParachute;
 
   _RocketPainter({
     required this.pitchDeg,
@@ -108,6 +79,8 @@ class _RocketPainter extends CustomPainter {
     required this.rollDeg,
     required this.cameraAzimuthDeg,
     required this.cameraElevationDeg,
+    this.showNoseCone = true,
+    this.showParachute = false,
   });
 
   @override
@@ -122,9 +95,13 @@ class _RocketPainter extends CustomPainter {
       math.sin(elevation),
       math.cos(elevation) * math.cos(azimuth),
     );
+    // With the chute out the stack is taller: look slightly up so the
+    // canopy fits. The rocket itself keeps its scale — only the camera
+    // target moves.
+    final target = showParachute ? Vector3(0, 0.45, 0) : Vector3.zero();
     final view = makeViewMatrix(
-      camDir.scaled(3.2), // eye
-      Vector3.zero(), // target
+      target + camDir.scaled(3.2), // eye
+      target, // target
       Vector3(0, 1, 0), // up
     );
     final vp = proj * view;
@@ -141,7 +118,8 @@ class _RocketPainter extends CustomPainter {
     final light = (camDir.clone()..scale(0.6)) + Vector3(-0.25, 0.8, 0.1);
     final lightDir = light.normalized();
 
-    _paintMesh(canvas, size, vp, view, model, lightDir);
+    _paintMesh(canvas, size, vp, view, model, lightDir,
+        showNoseCone: showNoseCone, showParachute: showParachute);
     _paintAxisGizmo(canvas, size, view);
   }
 
@@ -151,22 +129,45 @@ class _RocketPainter extends CustomPainter {
     Matrix4 vp,
     Matrix4 view,
     Matrix4 model,
-    Vector3 lightDir,
-  ) {
+    Vector3 lightDir, {
+    required bool showNoseCone,
+    required bool showParachute,
+  }) {
     // Transform all mesh triangles; painter's algorithm by view depth.
+    // The sort is stabilised by mesh order and degenerate (zero-area)
+    // projections are skipped: coplanar double-sided fin faces otherwise
+    // flicker as Dart's sort leaves equal-depth order undefined.
     final visible = <_Tri>[];
-    for (final tri in RocketMesh.triangles) {
-      final a = model.transformed3(tri.a);
-      final b = model.transformed3(tri.b);
-      final c = model.transformed3(tri.c);
+    var index = 0;
+
+    // Parachute frame: translated to the body-top attach point, uniformly
+    // scaled, but never rotated — the canopy always hangs straight up.
+    final chuteModel = Matrix4.translation(
+            model.transformed3(Vector3(0, RocketMesh.bodyTop, 0)))
+        ..scaleByDouble(0.9, 0.9, 0.9, 1.0);
+
+    void push(RocketMeshTri tri, Matrix4 m, Vector3 worldNormal) {
+      final a = m.transformed3(tri.a);
+      final b = m.transformed3(tri.b);
+      final c = m.transformed3(tri.c);
 
       final screenA = _toScreen(a, vp, size);
       final screenB = _toScreen(b, vp, size);
       final screenC = _toScreen(c, vp, size);
-      if (screenA == null || screenB == null || screenC == null) continue;
+      if (screenA == null || screenB == null || screenC == null) return;
+      final area = (screenB.dx - screenA.dx) * (screenC.dy - screenA.dy) -
+          (screenC.dx - screenA.dx) * (screenB.dy - screenA.dy);
+      if (area.abs() < 1e-6) return;
 
-      final n4 = model.transformed3(tri.normal);
-      final worldNormal = n4.normalized();
+      // Closed airframe: cull backfaces so the far wall can never bleed
+      // through the near one at glancing angles (the old streaks). Fin
+      // sheets come in exact opposite pairs, so exactly one survives.
+      // Parachute sheets (noCull) always draw, from both sides.
+      if (!tri.noCull) {
+        final viewNormal = view.transformed(Vector4(
+            worldNormal.x, worldNormal.y, worldNormal.z, 0));
+        if (viewNormal.z <= 1e-6) return;
+      }
       final brightness =
           0.44 + 0.56 * math.max(0.0, worldNormal.dot(lightDir));
 
@@ -180,11 +181,27 @@ class _RocketPainter extends CustomPainter {
         screenB,
         screenC,
         depth: (za + zb + zc) / 3,
+        order: index,
         brightness: brightness.clamp(0.0, 1.0),
         base: tri.color,
       ));
+      index++;
     }
-    visible.sort((x, y) => x.depth.compareTo(y.depth));
+
+    for (final tri in RocketMesh.mesh(showNoseCone: showNoseCone)) {
+      final n4 = model.transformed3(tri.normal);
+      push(tri, model, n4.normalized());
+    }
+    if (showParachute) {
+      for (final tri in ParachuteMesh.triangles) {
+        // Unrotated frame: mesh normals are already world-aligned.
+        push(tri, chuteModel, tri.normal.normalized());
+      }
+    }
+    visible.sort((x, y) {
+      final d = x.depth.compareTo(y.depth);
+      return d != 0 ? d : x.order.compareTo(y.order);
+    });
 
     for (final tri in visible) {
       final color = Color.fromARGB(
@@ -223,9 +240,10 @@ class _RocketPainter extends CustomPainter {
     );
   }
 
-  /// Corner gizmo: world axes X/Y/Z, projected with the same camera
-  /// rotation. Axes pointing away from the camera are dimmed and shorten, so
-  /// the gizmo stays stable while orbiting.
+  /// Corner compass: North / East / Up world axes, projected with the same
+  /// camera rotation as the flight-path view (E amber, U green, N blue — the
+  /// same language there). Axes pointing away from the camera are dimmed and
+  /// shorten, so the gizmo stays stable while orbiting.
   void _paintAxisGizmo(
     Canvas canvas,
     Size size,
@@ -256,9 +274,10 @@ class _RocketPainter extends CustomPainter {
     }
 
     final axes = <(Color, String, ({Offset offset, double toward}))>[
-      (AppColors.destructive, 'X', project(Vector3(1, 0, 0))),
-      (AppColors.success, 'Y', project(Vector3(0, 1, 0))),
-      (AppColors.info, 'Z', project(Vector3(0, 0, 1))),
+      // Model world matches the flight view: X east, Y up, Z south.
+      (AppColors.warning, 'E', project(Vector3(1, 0, 0))),
+      (AppColors.success, 'U', project(Vector3(0, 1, 0))),
+      (AppColors.info, 'N', project(Vector3(0, 0, -1))),
     ]..sort((x, y) => x.$3.toward.compareTo(y.$3.toward));
 
     for (final (color, label, projected) in axes) {
@@ -297,16 +316,24 @@ class _RocketPainter extends CustomPainter {
       old.yawDeg != yawDeg ||
       old.rollDeg != rollDeg ||
       old.cameraAzimuthDeg != cameraAzimuthDeg ||
-      old.cameraElevationDeg != cameraElevationDeg;
+      old.cameraElevationDeg != cameraElevationDeg ||
+      old.showNoseCone != showNoseCone ||
+      old.showParachute != showParachute;
 }
 
 /// One projected, shaded triangle.
 class _Tri {
   final Offset a, b, c;
   final double depth;
+
+  /// Mesh order — stabilises the sort when coplanar faces tie on depth.
+  final int order;
   final double brightness;
   final Color base;
 
   const _Tri(this.a, this.b, this.c,
-      {required this.depth, required this.brightness, required this.base});
+      {required this.depth,
+      required this.order,
+      required this.brightness,
+      required this.base});
 }

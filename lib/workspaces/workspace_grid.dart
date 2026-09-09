@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -53,6 +52,10 @@ class _WorkspaceGridState extends ConsumerState<WorkspaceGrid> {
     return result;
   }
 
+  // Last laid-out grid size (inside the outer padding) — used for
+  // edit-mode hit testing so it matches the rects the renderer produced.
+  Size? _lastLayoutSize;
+
   @override
   Widget build(BuildContext context) {
     final workspace = ref.watch(workspaceProvider).value?.active;
@@ -63,40 +66,38 @@ class _WorkspaceGridState extends ConsumerState<WorkspaceGrid> {
     final root = workspace.root;
     if (root == null) return const _EmptyWorkspace();
 
-    return LayoutBuilder(builder: (context, constraints) {
-      final size = Size(constraints.maxWidth, constraints.maxHeight);
-      final result = _layoutCached(root, size);
-      if (kDebugMode) {
-        debugPrint(
-          '[grid] size ${size.width.round()}x${size.height.round()} · '
-          '${result.leafRects.length} leaves: '
-          '${result.leafRects.values.map((r) => '${r.width.round()}x${r.height.round()}').join(', ')}',
-        );
-      }
+    // Outer padding so tiles never touch the window edge.
+    return Padding(
+      padding: const EdgeInsets.all(AppDimens.outerPadding),
+      child: LayoutBuilder(builder: (context, constraints) {
+        final size = Size(constraints.maxWidth, constraints.maxHeight);
+        _lastLayoutSize = size;
+        final result = _layoutCached(root, size);
 
-      return Stack(
-        clipBehavior: Clip.hardEdge,
-        children: [
-          for (final entry in result.leafRects.entries)
-            if (WidgetRegistry.byId(_typeOf(workspace, entry.key)) != null)
-              _buildLeaf(
-                workspace: workspace,
-                widgetId: entry.key,
-                rect: entry.value,
-                swapTarget: _swapTargetId == entry.key,
-              ),
-          for (final divider in result.dividers) _buildDivider(divider),
-          if (_dragLeafId != null)
-            Positioned(
-              left: _dragPointer.dx,
-              top: _dragPointer.dy,
-              child: const IgnorePointer(
+        return Stack(
+          clipBehavior: Clip.hardEdge,
+          children: [
+            for (final entry in result.leafRects.entries)
+              if (WidgetRegistry.byId(_typeOf(workspace, entry.key)) != null)
+                _buildLeaf(
+                  workspace: workspace,
+                  widgetId: entry.key,
+                  rect: entry.value,
+                  swapTarget: _swapTargetId == entry.key,
+                ),
+            for (final divider in result.dividers) _buildDivider(divider),
+            if (_dragLeafId != null)
+              Positioned(
+                left: _dragPointer.dx,
+                top: _dragPointer.dy,
+              child: IgnorePointer(
                 child: _DragBadge(),
               ),
-            ),
-        ],
-      );
-    });
+              ),
+          ],
+        );
+      }),
+    );
   }
 
   String _typeOf(Workspace ws, String widgetId) =>
@@ -125,9 +126,9 @@ class _WorkspaceGridState extends ConsumerState<WorkspaceGrid> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   if (swapTarget)
-                    const Icon(Icons.swap_horiz, size: 16, color: AppColors.primary),
+                    Icon(Icons.swap_horiz, size: 16, color: AppColors.primary),
                   const SizedBox(width: 2),
-                  const Icon(Icons.drag_indicator,
+                  Icon(Icons.drag_indicator,
                       size: 16, color: AppColors.strongBorder),
                   const SizedBox(width: 4),
                   _HeaderIconButton(
@@ -203,7 +204,7 @@ class _WorkspaceGridState extends ConsumerState<WorkspaceGrid> {
     final workspace = ref.read(workspaceProvider).value?.active;
     final root = workspace?.root;
     if (root == null) return null;
-    final size = context.size;
+    final size = _lastLayoutSize;
     if (size == null) return null;
     final result = _layoutCached(root, size);
     for (final entry in result.leafRects.entries) {
@@ -311,7 +312,7 @@ class _DragBadge extends StatelessWidget {
           ),
         ],
       ),
-      child: const Icon(
+      child: Icon(
         Icons.swap_horiz,
         size: 14,
         color: AppColors.primaryForeground,
@@ -334,14 +335,17 @@ class _HeaderIconButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Tooltip(
-      message: tooltip,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(4),
-        child: Padding(
-          padding: const EdgeInsets.all(2),
-          child: Icon(icon, size: 14, color: AppColors.mutedForeground),
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: Tooltip(
+        message: tooltip,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(4),
+          child: Padding(
+            padding: const EdgeInsets.all(2),
+            child: Icon(icon, size: 14, color: AppColors.mutedForeground),
+          ),
         ),
       ),
     );
@@ -365,7 +369,7 @@ class _EmptyWorkspace extends StatelessWidget {
             style: Theme.of(context).textTheme.titleMedium,
           ),
           const SizedBox(height: 4),
-          const Text(
+          Text(
             'Use "Add widget" to place the first widget.',
             style: TextStyle(color: AppColors.mutedForeground),
           ),

@@ -3,22 +3,32 @@ import 'dart:typed_data';
 
 import '../worker/protocol.dart';
 import 'packet_parser.dart';
+import 'recording_file.dart';
 
-/// Handles reading and decoding framed binary recording files.
+/// Handles reading and decoding v1 recording files.
+///
+/// The file must open with a valid [RecordingHeader]: it is skipped and
+/// its framing is authoritative. Files without a valid header yield no
+/// packets — upgrade them once with [finalizeRecordingFile].
 class FileParser {
-  /// Reads framed binary data from [filePath] and yields parsed [TelemetryPacket]s using [parser].
+  /// Reads framed binary data from [filePath] and yields parsed [TelemetryPacket]s.
   ///
   /// Sequential chunk-by-chunk stream processing ensures low RAM usage when parsing large logs,
   /// preserving historical chunk arrival timestamps for each reconstructed packet.
-  Stream<TelemetryPacket> parseFile(
-    String filePath,
-    PacketParser parser,
-  ) async* {
+  Stream<TelemetryPacket> parseFile(String filePath) async* {
     final file = File(filePath);
     final reader = await file.open(mode: FileMode.read);
 
     try {
       final fileLength = await reader.length();
+      if (fileLength < recordingHeaderLength) return;
+      final header =
+          RecordingHeader.decode(await reader.read(recordingHeaderLength));
+      if (header == null ||
+          (header.payloadLength != 52 && header.payloadLength != 53)) {
+        return;
+      }
+      final parser = PacketParser(payloadLength: header.payloadLength);
 
       while (await reader.position() < fileLength) {
         // Read 12-byte header: Int64 timestamp (bytes 0-7), Uint32 length (bytes 8-11)

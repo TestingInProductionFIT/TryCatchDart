@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../flights/replay_controller.dart';
 import '../theme/app_colors.dart';
+import 'format.dart';
 
 /// Playback controls shown in the top bar while a replay is active.
 ///
@@ -24,12 +25,6 @@ class PlaybackBar extends ConsumerWidget {
         duration > 0 &&
         state.positionMs >= duration;
 
-    String fmt(int ms) {
-      final m = ms ~/ 60000;
-      final s = (ms % 60000) ~/ 1000;
-      return '$m:${s.toString().padLeft(2, '0')}';
-    }
-
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -49,7 +44,7 @@ class PlaybackBar extends ConsumerWidget {
           ),
         ),
         Text(
-          '${fmt(position)} / ${fmt(duration)}',
+          '${formatMinSec(position)} / ${formatMinSec(duration)}',
           style: AppText.mono.copyWith(
             fontSize: 12,
             fontWeight: FontWeight.w700,
@@ -100,7 +95,7 @@ class PlaybackBar extends ConsumerWidget {
                 onPressed: controller.stop,
                 style: OutlinedButton.styleFrom(
                   foregroundColor: AppColors.pinkDeep,
-                  side: const BorderSide(color: AppColors.pinkDeep),
+                  side: BorderSide(color: AppColors.pinkDeep),
                 ),
                 icon: const Icon(Icons.podcasts_outlined, size: 16),
                 label: const Text('Back to live'),

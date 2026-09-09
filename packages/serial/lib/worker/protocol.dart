@@ -39,7 +39,12 @@ class SendBytesCommand extends SerialCommand {
 /// Start recording parsed telemetry packets to the given file path.
 class StartRecordingCommand extends SerialCommand {
   final String filePath;
-  const StartRecordingCommand({required this.filePath});
+
+  /// Launch site to stamp into the recording file header (`null` when no
+  /// site is selected — the recorder then falls back to the first GPS fix).
+  final LaunchRef? launch;
+
+  const StartRecordingCommand({required this.filePath, this.launch});
 }
 
 /// Stop the current recording session and flush to disk.
@@ -77,6 +82,32 @@ class ErrorEvent extends SerialEvent {
 }
 
 // ─── Data Models ─────────────────────────────────────────────────────────────
+
+/// Launch-site reference stamped into a recording file header.
+///
+/// Plain doubles + String so the command stays isolate-transferable.
+/// Defined here (rather than next to the file format) to keep the worker
+/// protocol dependency-free.
+class LaunchRef {
+  /// WGS84 latitude in degrees (positive North).
+  final double latitude;
+
+  /// WGS84 longitude in degrees (positive East).
+  final double longitude;
+
+  /// Site altitude above mean sea level in metres.
+  final double mslM;
+
+  /// Display name (truncated to fit the fixed header on write).
+  final String name;
+
+  const LaunchRef({
+    required this.latitude,
+    required this.longitude,
+    required this.mslM,
+    this.name = '',
+  });
+}
 
 /// Immutable snapshot of the serial worker's operational state.
 class SerialWorkerStatus {

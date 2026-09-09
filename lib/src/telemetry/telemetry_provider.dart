@@ -5,6 +5,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:serial/serial.dart';
 
+import '../../settings/launch_site_store.dart';
+
 // ─── Core worker provider ──────────────────────────────────────────────────────
 
 /// Holds the live [SerialWorker] handle.
@@ -95,6 +97,10 @@ class SerialConfigNotifier extends Notifier<SerialConfig> {
       ref.read(serialWorkerProvider).send(const ListPortsCommand());
 
   /// Starts a recording session with an auto-generated timestamp file in the documents recordings folder.
+  ///
+  /// The currently selected launch site (if any) is stamped into the
+  /// recording file header; otherwise the recorder falls back to the first
+  /// GPS fix in the stream.
   Future<void> startRecording() async {
     final now = DateTime.now();
     final timestamp =
@@ -104,7 +110,18 @@ class SerialConfigNotifier extends Notifier<SerialConfig> {
     final dirPath = await getRecordingsDirectory();
     final filePath = '$dirPath${Platform.pathSeparator}telemetry_$timestamp.bin';
 
-    ref.read(serialWorkerProvider).send(StartRecordingCommand(filePath: filePath));
+    final site = ref.read(currentLaunchSiteProvider);
+    ref.read(serialWorkerProvider).send(StartRecordingCommand(
+          filePath: filePath,
+          launch: site == null
+              ? null
+              : LaunchRef(
+                  latitude: site.latitude,
+                  longitude: site.longitude,
+                  mslM: site.altitudeMsl,
+                  name: site.name,
+                ),
+        ));
   }
 
   /// Stops the active recording session.

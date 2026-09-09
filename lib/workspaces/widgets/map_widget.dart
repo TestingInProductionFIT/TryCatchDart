@@ -3,9 +3,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
-import '../../settings/launch_site_store.dart';
+import '../../flights/replay_controller.dart';
+import '../../src/estimation/dead_reckoning.dart';
 import '../../src/telemetry/telemetry_store.dart';
 import '../../theme/app_colors.dart';
+import '../../theme/widgets/tool_button.dart';
+import 'map_tiles.dart';
 
 /// Flight map: launch site, GPS track + live fix, dead-reckoning track + live
 /// estimate. Tiles are fetched from OSM (internet required).
@@ -21,27 +24,22 @@ class _MapWidgetState extends ConsumerState<MapWidget> {
   bool _follow = false;
   bool _satellite = false;
 
-  static final _streetTiles = TileLayer(
-    urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-    userAgentPackageName: 'dev.trycatch.groundstation',
-  );
+  static final _streetTiles = buildStreetLayer();
 
-  static final _satelliteTiles = TileLayer(
-    urlTemplate:
-        'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-    userAgentPackageName: 'dev.trycatch.groundstation',
-  );
+  static final _satelliteTiles = buildSatelliteLayer();
 
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(telemetryStoreProvider);
-    final site = ref.watch(currentLaunchSiteProvider);
+    final site = ref.watch(effectiveLaunchSiteProvider);
 
     final latest = state.latest;
     final gpsPoint = (latest != null && latest.gpsHasFix)
         ? LatLng(latest.latitude, latest.longitude)
         : null;
-    final dr = state.deadReckoning;
+    // Dead reckoning is a live-only gap filler — never shown during replay.
+    final replaying = state.replaying;
+    final dr = replaying ? null : state.deadReckoning;
     final drPoint = dr == null ? null : LatLng(dr.latitude, dr.longitude);
 
     final initialCenter = gpsPoint ??
@@ -60,7 +58,7 @@ class _MapWidgetState extends ConsumerState<MapWidget> {
             initialCenter: initialCenter,
             initialZoom: 15,
             minZoom: 3,
-            maxZoom: 18,
+            maxZoom: 19,
             interactionOptions: const InteractionOptions(
               flags: InteractiveFlag.drag |
                   InteractiveFlag.scrollWheelZoom |
@@ -71,17 +69,18 @@ class _MapWidgetState extends ConsumerState<MapWidget> {
             _satellite ? _satelliteTiles : _streetTiles,
             PolylineLayer(
               polylines: [
-                // Dead-reckoning estimate: dashed violet, GPS: solid blue.
-                if (state.deadReckoningHistory.length > 1)
-                  Polyline(
-                    points: [
-                      for (final p in state.deadReckoningHistory)
-                        LatLng(p.latitude, p.longitude),
-                    ],
-                    strokeWidth: 2.5,
-                    color: AppColors.seriesDeadReckoning.withValues(alpha: 0.75),
-                    pattern: StrokePattern.dashed(segments: [6, 5]),
-                  ),
+                // Dead-reckoning: one dashed segment per GPS gap, each rooted
+                // at the last known fix — never a single line from the pad.
+                if (!replaying)
+                  for (final segment in _drSegments(state))
+                    if (segment.length > 1)
+                      Polyline(
+                        points: segment,
+                        strokeWidth: 2.5,
+                        color: AppColors.seriesDeadReckoning
+                            .withValues(alpha: 0.75),
+                        pattern: StrokePattern.dashed(segments: [6, 5]),
+                      ),
                 // GPS track.
                 if (state.history.any((f) => f.gpsHasFix))
                   Polyline(
@@ -103,7 +102,7 @@ class _MapWidgetState extends ConsumerState<MapWidget> {
                     height: 30,
                     child: Tooltip(
                       message: 'Launch site: ${site.name}',
-                      child: const Icon(
+                      child: Icon(
                         Icons.flag,
                         size: 22,
                         color: AppColors.pinkDeep,
@@ -157,26 +156,30 @@ class _MapWidgetState extends ConsumerState<MapWidget> {
           top: 8,
           child: Column(
             children: [
-              _MapFab(
+              ToolFab(
                 icon: _follow ? Icons.my_location : Icons.location_searching,
+                tooltip: 'Follow rocket',
                 active: _follow,
                 onTap: () => setState(() => _follow = !_follow),
               ),
               const SizedBox(height: 6),
-              _MapFab(
+              ToolFab(
                 icon: _satellite ? Icons.map_outlined : Icons.satellite_alt,
+                tooltip: 'Toggle satellite',
                 active: _satellite,
                 onTap: () => setState(() => _satellite = !_satellite),
               ),
               const SizedBox(height: 6),
-              _MapFab(
+              ToolFab(
                 icon: Icons.add,
+                tooltip: 'Zoom in',
                 active: false,
                 onTap: () => _zoomBy(1),
               ),
               const SizedBox(height: 6),
-              _MapFab(
+              ToolFab(
                 icon: Icons.remove,
+                tooltip: 'Zoom out',
                 active: false,
                 onTap: () => _zoomBy(-1),
               ),
@@ -188,7 +191,7 @@ class _MapWidgetState extends ConsumerState<MapWidget> {
           right: 4,
           bottom: 2,
           child: Text(
-            _satellite ? 'Imagery © Esri' : '© OpenStreetMap contributors',
+            _satellite ? satelliteAttribution : streetAttribution,
             style: TextStyle(
               fontSize: 9,
               color: Colors.black.withValues(alpha: 0.45),
@@ -206,17 +209,19 @@ class _MapWidgetState extends ConsumerState<MapWidget> {
               borderRadius: BorderRadius.circular(AppDimens.radiusSmall),
               border: Border.all(color: AppColors.border),
             ),
-            child: const Column(
+            child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
                 _LegendRow(
                     color: AppColors.seriesGpsTrack, label: 'GPS', solid: true),
-                SizedBox(height: 3),
-                _LegendRow(
-                    color: AppColors.seriesDeadReckoning,
-                    label: 'Dead reckoning',
-                    solid: false),
+                if (!replaying) ...[
+                  const SizedBox(height: 3),
+                  _LegendRow(
+                      color: AppColors.seriesDeadReckoning,
+                      label: 'Dead reckoning',
+                      solid: false),
+                ],
               ],
             ),
           ),
@@ -229,8 +234,49 @@ class _MapWidgetState extends ConsumerState<MapWidget> {
     final camera = _mapController.camera;
     _mapController.move(
       camera.center,
-      (camera.zoom + delta).clamp(3.0, 18.0),
+      (camera.zoom + delta).clamp(3.0, 19.0),
     );
+  }
+
+  /// Dead-reckoning track split into one segment per GPS gap. Points within a
+  /// gap arrive at 1 Hz, so a >3 s jump starts a new gap; each segment is
+  /// rooted at the last known GPS fix so the dashed line grows out of where
+  /// the fix was lost instead of trailing back to the pad (or bridging two
+  /// unrelated gaps with a straight line).
+  List<List<LatLng>> _drSegments(TelemetryState state) {
+    final dr = state.deadReckoningHistory;
+    final segments = <List<LatLng>>[];
+    var current = <DrPosition>[];
+    var prevMs = -1;
+
+    void close() {
+      if (current.isEmpty) return;
+      final points = <LatLng>[
+        ..._lastKnownFix(state, current.first.atMs),
+        for (final p in current) LatLng(p.latitude, p.longitude),
+      ];
+      segments.add(points);
+      current = <DrPosition>[];
+    }
+
+    for (var i = 0; i < dr.length; i++) {
+      final p = dr.getChronological(i);
+      if (prevMs >= 0 && p.atMs - prevMs > 3000) close();
+      current.add(p);
+      prevMs = p.atMs;
+    }
+    close();
+    return segments;
+  }
+
+  /// Newest GPS fix at or before [atMs], as a single-element anchor list.
+  List<LatLng> _lastKnownFix(TelemetryState state, int atMs) {
+    for (final f in state.history.newestFirst()) {
+      if (f.gpsHasFix && f.receivedAtMs <= atMs) {
+        return [LatLng(f.latitude, f.longitude)];
+      }
+    }
+    return const [];
   }
 }
 
@@ -271,37 +317,6 @@ class _LegendRow extends StatelessWidget {
           ),
         ),
       ],
-    );
-  }
-}
-
-class _MapFab extends StatelessWidget {
-  final IconData icon;
-  final bool active;
-  final VoidCallback onTap;
-
-  const _MapFab({required this.icon, required this.active, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: active ? AppColors.primary : AppColors.card,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(AppDimens.radiusSmall),
-        side: BorderSide(color: active ? Colors.transparent : AppColors.border),
-      ),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(AppDimens.radiusSmall),
-        child: Padding(
-          padding: const EdgeInsets.all(6),
-          child: Icon(
-            icon,
-            size: 16,
-            color: active ? AppColors.primaryForeground : AppColors.foreground,
-          ),
-        ),
-      ),
     );
   }
 }

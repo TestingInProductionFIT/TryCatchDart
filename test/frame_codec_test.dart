@@ -40,7 +40,7 @@ void main() {
       yaw: -95.5,
       batteryVoltage: 8.36,
       hallRaw: 2543,
-      fsmStateId: FsmState.drogue.id,
+      fsmStateId: FsmState.parachute.id,
     );
 
     test('encode → decode round-trips within quantization tolerance', () {
@@ -68,7 +68,8 @@ void main() {
       expect(decoded.yaw, closeTo(-95.5, 0.01));
       expect(decoded.batteryVoltage, closeTo(8.36, 0.001));
       expect(decoded.hallRaw, 2543);
-      expect(decoded.fsmState, FsmState.drogue);
+      expect(decoded.fsmState, FsmState.parachute);
+      expect(decoded.version, TelemetryLayout.version);
       expect(decoded.receivedAtMs, 42);
     });
 
@@ -121,8 +122,39 @@ void main() {
   group('FsmState', () {
     test('maps known ids and falls back to unknown', () {
       expect(FsmState.fromId(0), FsmState.idle);
-      expect(FsmState.fromId(7), FsmState.landed);
+      expect(FsmState.fromId(2), FsmState.ascent);
+      expect(FsmState.fromId(4), FsmState.parachute);
+      expect(FsmState.fromId(5), FsmState.landed);
+      expect(FsmState.fromId(7), FsmState.debugLocked);
       expect(FsmState.fromId(200), FsmState.unknown);
+    });
+
+    test('translates v1 ids to the v2 set', () {
+      expect(FsmState.fromV1Id(0), FsmState.idle);
+      expect(FsmState.fromV1Id(1), FsmState.armed);
+      expect(FsmState.fromV1Id(2), FsmState.ascent);
+      expect(FsmState.fromV1Id(3), FsmState.ascent);
+      expect(FsmState.fromV1Id(4), FsmState.apogee);
+      expect(FsmState.fromV1Id(5), FsmState.parachute);
+      expect(FsmState.fromV1Id(6), FsmState.parachute);
+      expect(FsmState.fromV1Id(7), FsmState.landed);
+      expect(FsmState.fromV1Id(8), FsmState.unknown);
+      expect(FsmState.fromV1Id(200), FsmState.unknown);
+    });
+
+    test('v1 payloads decode with translated states', () {
+      final payload = Uint8List.fromList(
+          FrameCodec.encode(const TelemetryFrame()));
+      // Downgrade to v1 with a v1 state byte (5 = drogue -> parachute).
+      payload[TelemetryLayout.offsetVersion] = 1;
+      payload[TelemetryLayout.offsetFsmState] = 5;
+      final crc = crc16CCITT(payload, 0, TelemetryLayout.offsetCrc);
+      payload[TelemetryLayout.offsetCrc] = crc >> 8;
+      payload[TelemetryLayout.offsetCrc + 1] = crc & 0xFF;
+
+      final decoded = FrameCodec.decode(payload, receivedAtMs: 0)!;
+      expect(decoded.version, 1);
+      expect(decoded.fsmState, FsmState.parachute);
     });
 
     test('ids are unique', () {

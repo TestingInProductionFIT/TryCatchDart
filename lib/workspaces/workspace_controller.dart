@@ -66,7 +66,9 @@ class WorkspaceStore extends AsyncNotifier<WorkspaceState> {
       if (raw != null) {
         final loaded =
             WorkspaceState.fromJson(jsonDecode(raw) as Map<String, dynamic>);
-        if (loaded.workspaces.isNotEmpty) return loaded;
+        if (loaded.workspaces.isNotEmpty) {
+          return _migrate(loaded);
+        }
       }
     } catch (_) {
       // Corrupt persistence falls through to defaults.
@@ -77,7 +79,18 @@ class WorkspaceStore extends AsyncNotifier<WorkspaceState> {
   WorkspaceState _defaultState() {
     final flight = WidgetRegistry.defaultFlightLayout();
     final prep = WidgetRegistry.defaultPrepLayout();
-    return WorkspaceState(workspaces: [flight, prep], activeId: flight.id);
+    final replay = WidgetRegistry.defaultReplayLayout();
+    return WorkspaceState(
+        workspaces: [flight, prep, replay], activeId: flight.id);
+  }
+
+  /// Ensures factory workspaces added after first launch (e.g. Replay) exist
+  /// in persisted states without discarding the user's custom arrangements.
+  WorkspaceState _migrate(WorkspaceState loaded) {
+    if (loaded.workspaces.any((w) => w.name == 'Replay')) return loaded;
+    return loaded.copyWith(
+      workspaces: [...loaded.workspaces, WidgetRegistry.defaultReplayLayout()],
+    );
   }
 
   Future<void> _persist(WorkspaceState next) async {

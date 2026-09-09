@@ -91,7 +91,7 @@ class AppCard extends StatelessWidget {
                 Container(
                   width: 6,
                   height: 6,
-                  decoration: const BoxDecoration(
+                  decoration: BoxDecoration(
                     color: AppColors.pink,
                     shape: BoxShape.circle,
                   ),
@@ -107,7 +107,7 @@ class AppCard extends StatelessWidget {
                 if (title != null) const SizedBox(width: 8),
                 Text(
                   subtitle!,
-                  style: const TextStyle(fontSize: 11, color: AppColors.faint),
+                  style: TextStyle(fontSize: 11, color: AppColors.faint),
                   overflow: TextOverflow.ellipsis,
                 ),
               ],
@@ -119,7 +119,7 @@ class AppCard extends StatelessWidget {
             ],
           ),
         ),
-        const Divider(height: 1, thickness: 1, color: AppColors.border),
+        Divider(height: 1, thickness: 1, color: AppColors.border),
       ],
     );
   }

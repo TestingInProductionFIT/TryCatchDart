@@ -3,13 +3,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:serial/serial.dart';
 
 import '../theme/app_colors.dart';
-import '../theme/widgets/status_pill.dart';
 import '/src/telemetry/telemetry_provider.dart';
 
-/// Compact connection control for the LINK cell of the top bar.
+/// Compact connection control for the top bar: one box, two states.
 ///
-/// Both states render the same skeleton — a selector area (dropdown or
-/// port pill) plus a fixed-width action button — so the bar never shifts.
+/// Both states render the same skeleton — a 104px selector area (borderless
+/// dropdown or green port name) plus a 104px action button — so the bar never
+/// shifts when the link comes up.
 class SerialControls extends ConsumerWidget {
   static const double width = 104 + 8 + 104;
 
@@ -30,47 +30,45 @@ class SerialControls extends ConsumerWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        // Selector area: dropdown when disconnected, port pill when connected.
+        // Selector area: borderless dropdown when disconnected, green port
+        // name when connected.
         SizedBox(
           width: 104,
           height: 32,
           child: status.isConnected
               ? Center(
-                  child: StatusPill(
-                    label: status.connectedPort ?? '',
-                    color: AppColors.success,
-                    height: 28,
+                  child: Text(
+                    status.connectedPort ?? '',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppText.mono.copyWith(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.success,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
                   ),
                 )
-              : Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  decoration: BoxDecoration(
-                    color: AppColors.card,
+              : DropdownButtonHideUnderline(
+                  child: DropdownButton<String>(
+                    value: effectiveSelected,
+                    hint: const Text('Port', style: TextStyle(fontSize: 12.5)),
+                    isDense: true,
+                    isExpanded: true,
                     borderRadius:
                         BorderRadius.circular(AppDimens.radiusSmall),
-                    border: Border.all(color: AppColors.border),
-                  ),
-                  child: DropdownButtonHideUnderline(
-                    child: DropdownButton<String>(
-                      value: effectiveSelected,
-                      hint: const Text('Port', style: TextStyle(fontSize: 12.5)),
-                      isDense: true,
-                      isExpanded: true,
-                      borderRadius:
-                          BorderRadius.circular(AppDimens.radiusSmall),
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 12.5,
                         color: AppColors.foreground,
                         fontWeight: FontWeight.w600,
                         fontFamily: AppText.monoFamily,
                       ),
-                      icon: const Icon(Icons.unfold_more,
+                      icon: Icon(Icons.unfold_more,
                           size: 14, color: AppColors.mutedForeground),
-                      items: ports
-                          .map((p) => DropdownMenuItem(value: p, child: Text(p)))
-                          .toList(),
-                      onChanged: (p) => notifier.setPort(p),
-                    ),
+                    items: ports
+                        .map((p) => DropdownMenuItem(value: p, child: Text(p)))
+                        .toList(),
+                    onChanged: (p) => notifier.setPort(p),
                   ),
                 ),
         ),

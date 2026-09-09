@@ -106,8 +106,8 @@ void workerMain(SendPort mainSendPort) async {
           ));
         }
 
-      case StartRecordingCommand(:final filePath):
-        await recorder.start(filePath);
+      case StartRecordingCommand(:final filePath, :final launch):
+        await recorder.start(filePath, launch: launch);
         pushStatus(status.copyWith(isRecording: true, recordingPath: filePath));
 
       case StopRecordingCommand():

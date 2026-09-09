@@ -25,19 +25,17 @@ void main() {
           frames.indexWhere(test);
       final idle = idxOf((f) => f.fsmState == FsmState.idle);
       final armed = idxOf((f) => f.fsmState == FsmState.armed);
-      final boost = idxOf((f) => f.fsmState == FsmState.boost);
-      final coast = idxOf((f) => f.fsmState == FsmState.coast);
-      final drogue = idxOf((f) => f.fsmState == FsmState.drogue);
-      final main = idxOf((f) => f.fsmState == FsmState.main);
+      final ascent = idxOf((f) => f.fsmState == FsmState.ascent);
+      final apogee = idxOf((f) => f.fsmState == FsmState.apogee);
+      final parachute = idxOf((f) => f.fsmState == FsmState.parachute);
       final landed = idxOf((f) => f.fsmState == FsmState.landed);
 
       expect(idle, greaterThanOrEqualTo(0));
       expect(armed, greaterThan(idle));
-      expect(boost, greaterThan(armed));
-      expect(coast, greaterThan(boost));
-      expect(drogue, greaterThan(coast));
-      expect(main, greaterThan(drogue));
-      expect(landed, greaterThan(main));
+      expect(ascent, greaterThan(armed));
+      expect(apogee, greaterThan(ascent));
+      expect(parachute, greaterThan(apogee));
+      expect(landed, greaterThan(parachute));
     });
 
     test('altitude never goes far below ground and apogee is realistic', () {
@@ -56,26 +54,28 @@ void main() {
       expect(apogee, lessThan(2500));
     });
 
-    test('peak velocity and acceleration occur during boost', () {
+    test('peak velocity and acceleration occur during ascent', () {
       final sim = FlightSimulator(seed: 11);
       final frames = fly(sim, 240);
 
-      final boostFrames =
-          frames.where((f) => f.fsmState == FsmState.boost).toList();
+      final ascentFrames =
+          frames.where((f) => f.fsmState == FsmState.ascent).toList();
       final maxAccel = frames
           .map((f) => f.accelTotal)
           .reduce((a, b) => a > b ? a : b);
-      final maxBoostAccel = boostFrames
+      final maxAscentAccel = ascentFrames
           .map((f) => f.accelTotal)
           .reduce((a, b) => a > b ? a : b);
 
       // Peak specific force happens on the motor (~6.5 g).
-      expect(maxAccel, closeTo(maxBoostAccel, 1.0));
-      expect(maxBoostAccel, greaterThan(50));
-      expect(maxBoostAccel, lessThan(90));
+      expect(maxAccel, closeTo(maxAscentAccel, 1.0));
+      expect(maxAscentAccel, greaterThan(50));
+      expect(maxAscentAccel, lessThan(90));
 
-      final boostSpeed = boostFrames.last.speedVertical;
-      expect(boostSpeed, greaterThan(100)); // ~150 m/s at burnout
+      final peakAscentSpeed = ascentFrames
+          .map((f) => f.speedVertical)
+          .reduce((a, b) => a > b ? a : b);
+      expect(peakAscentSpeed, greaterThan(100)); // ~150 m/s at burnout
     });
 
     test('hall sensor reading jumps at apogee and stays high', () {
@@ -137,16 +137,17 @@ void main() {
         return xs.reduce((a, b) => a + b) / xs.length;
       }
 
-      // Drogue: ~40 m/s down, main: ~6 m/s down (measured away from transitions).
-      final drogueRate =
-          avgSpeed((f) => f.fsmState == FsmState.drogue && f.baroAltitude > 250);
-      final mainRate =
-          avgSpeed((f) => f.fsmState == FsmState.main && f.baroAltitude < 100);
+      // Parachute: ~40 m/s down high up, ~6 m/s down low
+      // (measured away from transitions).
+      final highRate = avgSpeed((f) =>
+          f.fsmState == FsmState.parachute && f.baroAltitude > 250);
+      final lowRate = avgSpeed((f) =>
+          f.fsmState == FsmState.parachute && f.baroAltitude < 100);
 
-      expect(drogueRate, greaterThan(-55));
-      expect(drogueRate, lessThan(-25));
-      expect(mainRate, greaterThan(-10));
-      expect(mainRate, lessThan(-3));
+      expect(highRate, greaterThan(-55));
+      expect(highRate, lessThan(-25));
+      expect(lowRate, greaterThan(-10));
+      expect(lowRate, lessThan(-3));
     });
   });
 }

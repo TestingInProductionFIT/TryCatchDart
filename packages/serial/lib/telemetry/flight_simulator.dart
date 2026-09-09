@@ -292,14 +292,14 @@ class FlightSimulator {
     );
   }
 
+  /// Reported wire state: the internal burn/coast and drogue/main phases
+  /// both collapse into the single ASCENT / PARACHUTE states.
   FsmState get _reportedState => switch (_phase) {
         FlightPhase.coldStart => FsmState.idle,
         FlightPhase.pad => _t >= coldStartSeconds + 2 ? FsmState.armed : FsmState.idle,
-        FlightPhase.boost => FsmState.boost,
-        FlightPhase.coast => FsmState.coast,
+        FlightPhase.boost || FlightPhase.coast => FsmState.ascent,
         FlightPhase.apogee => FsmState.apogee,
-        FlightPhase.drogue => FsmState.drogue,
-        FlightPhase.main => FsmState.main,
+        FlightPhase.drogue || FlightPhase.main => FsmState.parachute,
         FlightPhase.landed => FsmState.landed,
       };
 

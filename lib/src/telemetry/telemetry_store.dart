@@ -98,8 +98,9 @@ class TelemetryStore extends Notifier<TelemetryState> {
   static const int _historyCapacity = 9000; // ~15 min @ 10 Hz
 
   /// Dead reckoning kicks in only after GPS has been silent this long, and
-  /// then updates at most once per second.
-  static const int _drStaleMs = 1000;
+  /// then updates at most once per second. Widgets reuse it to decide when
+  /// the link (as opposed to just the GPS fix) has gone stale.
+  static const int drStaleMs = 1000;
 
   late RingBuffer<TelemetryFrame> _history;
   late RingBuffer<DrPosition> _drHistory;
@@ -163,19 +164,33 @@ class TelemetryStore extends Notifier<TelemetryState> {
     }
 
     _history.push(frame);
-    final dr = _deadReckoning.update(frame);
-    if (dr != null && _shouldPushDr(frame.receivedAtMs)) {
-      _drHistory.push(dr);
-      _lastDrMs = frame.receivedAtMs;
+    // Dead reckoning is a live-only gap filler — replays show the recorded
+    // GPS track as-is (no synthetic estimates).
+    DrPosition? dr;
+    if (!state.replaying) {
+      dr = _deadReckoning.update(frame);
+      if (dr != null && _shouldPushDr(frame.receivedAtMs)) {
+        _drHistory.push(dr);
+        _lastDrMs = frame.receivedAtMs;
+      }
+      _ensureDrTicker();
     }
-    _ensureDrTicker();
 
-    state = _copyWithCurrent(
-      latest: frame,
-      deadReckoning: dr,
-      packetCount: state.packetCount + 1,
-      sourceName: sourceName ?? state.sourceName,
-    );
+    if (state.replaying) {
+      state = _copyWithCurrent(
+        latest: frame,
+        packetCount: state.packetCount + 1,
+        sourceName: sourceName ?? state.sourceName,
+        clearDeadReckoning: true,
+      );
+    } else {
+      state = _copyWithCurrent(
+        latest: frame,
+        deadReckoning: dr,
+        packetCount: state.packetCount + 1,
+        sourceName: sourceName ?? state.sourceName,
+      );
+    }
   }
 
   /// DR is only computed while GPS is stale: with a fresh fix the fix itself
@@ -184,8 +199,8 @@ class TelemetryStore extends Notifier<TelemetryState> {
   /// most one point per second of frame time.
   bool _shouldPushDr(int nowMs) {
     final lastFix = _deadReckoning.lastFixAtMs;
-    if (lastFix == null || nowMs - lastFix < _drStaleMs) return false;
-    return nowMs - _lastDrMs >= _drStaleMs;
+    if (lastFix == null || nowMs - lastFix < drStaleMs) return false;
+    return nowMs - _lastDrMs >= drStaleMs;
   }
 
   /// Keeps extrapolating dead reckoning once per second even when no packets
@@ -202,11 +217,11 @@ class TelemetryStore extends Notifier<TelemetryState> {
     final latest = _history[0];
     final now = DateTime.now().millisecondsSinceEpoch;
     // Data still flowing — the frame path owns DR updates.
-    if (now - latest.receivedAtMs < _drStaleMs) return;
+    if (now - latest.receivedAtMs < drStaleMs) return;
 
     final dr = _deadReckoning.extrapolate(now);
     if (dr == null) return;
-    if (dr.atMs - _lastDrMs < _drStaleMs) return;
+    if (dr.atMs - _lastDrMs < drStaleMs) return;
     _drHistory.push(dr);
     _lastDrMs = dr.atMs;
     _rebuildState();
@@ -260,15 +275,22 @@ class TelemetryStore extends Notifier<TelemetryState> {
   }
 
   /// Rebuilds the state object so widgets watching the provider repaint from
-  /// the (already mutated) ring buffers.
+  /// the (already mutated) ring buffers. Always republishes the estimator's
+  /// current position: during a link loss the 1 Hz extrapolator advances it
+  /// with no new frames, and without this the exposed DR would freeze at the
+  /// last fix (indistinguishable from GPS).
   void _rebuildState() {
-    state = _copyWithCurrent(latest: _history.isEmpty ? null : _history[0]);
+    state = _copyWithCurrent(
+      latest: _history.isEmpty ? null : _history[0],
+      deadReckoning: _deadReckoning.position,
+    );
   }
 
   /// A new state sharing the live buffers, with the given overrides.
   TelemetryState _copyWithCurrent({
     TelemetryFrame? latest,
     DrPosition? deadReckoning,
+    bool clearDeadReckoning = false,
     int? packetCount,
     int? errorCount,
     String? sourceName,
@@ -278,7 +300,8 @@ class TelemetryStore extends Notifier<TelemetryState> {
       history: _history,
       deadReckoningHistory: _drHistory,
       latest: latest ?? state.latest,
-      deadReckoning: deadReckoning ?? state.deadReckoning,
+      deadReckoning:
+          clearDeadReckoning ? null : (deadReckoning ?? state.deadReckoning),
       packetCount: packetCount ?? state.packetCount,
       errorCount: errorCount ?? state.errorCount,
       sourceName: sourceName ?? state.sourceName,
