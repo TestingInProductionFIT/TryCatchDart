@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:serial/serial.dart';
-import 'package:trycatch/src/estimation/dead_reckoning.dart';
-import 'package:trycatch/src/geo/geo.dart';
+import 'package:trycatch/core/dead_reckoning.dart';
+import 'package:trycatch/core/geo.dart';
 
 TelemetryFrame frame({
   required int tMs,

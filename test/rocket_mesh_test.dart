@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trycatch/theme/app_colors.dart';
-import 'package:trycatch/workspaces/widgets/rocket_mesh.dart';
+import 'package:trycatch/ui/tiles/shared/rocket_mesh.dart';
 import 'package:vector_math/vector_math_64.dart';
 
 /// Locks the Raketa.ork proportions (upper tube 0.5 m, fin tube 0.19 m,

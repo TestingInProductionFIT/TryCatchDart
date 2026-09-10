@@ -41,7 +41,7 @@ enum FsmState {
 
   const FsmState(this.id, this.label);
 
-  /// Value carried in the telemetry frame's FSM byte (wire v2).
+  /// Value carried in the telemetry frame's FSM byte.
   final int id;
 
   /// Human-friendly name for UI display.
@@ -68,18 +68,6 @@ enum FsmState {
   /// Maps a wire value to a state, falling back to [unknown].
   static FsmState fromId(int id) =>
       FsmState.values.firstWhere((s) => s.id == id, orElse: () => FsmState.unknown);
-
-  /// Maps a v1 wire id onto the v2 state set (v1: 0 idle, 1 armed, 2 boost,
-  /// 3 coast, 4 apogee, 5 drogue, 6 main, 7 landed, 8 fault).
-  static FsmState fromV1Id(int id) => switch (id) {
-        0 => FsmState.idle,
-        1 => FsmState.armed,
-        2 || 3 => FsmState.ascent,
-        4 => FsmState.apogee,
-        5 || 6 => FsmState.parachute,
-        7 => FsmState.landed,
-        _ => FsmState.unknown,
-      };
 }
 
 /// Bit positions inside the telemetry frame's flags byte.
@@ -109,9 +97,6 @@ abstract final class FrameFlags {
 class TelemetryFrame {
   /// Wall-clock time the frame was parsed (Unix epoch, ms).
   final int receivedAtMs;
-
-  /// Wire format version this frame was decoded from.
-  final int version;
 
   /// Raw flags byte — see [FrameFlags] helpers below.
   final int flags;
@@ -209,7 +194,6 @@ class TelemetryFrame {
 
   const TelemetryFrame({
     this.receivedAtMs = 0,
-    this.version = 1,
     this.flags = 0,
     this.sequence = 0,
     this.latitude = 0,

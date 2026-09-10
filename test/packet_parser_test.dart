@@ -24,7 +24,6 @@ void main() {
       expect(packets.length, 1);
       expect(packets.first.receivedAtMs, customTimestamp);
       expect(packets.first.rawData.length, TelemetryFraming.payloadLength);
-      expect(packets.first.rawData[0], TelemetryLayout.version);
 
       final frame =
           FrameCodec.decode(packets.first.rawData, receivedAtMs: 0)!;

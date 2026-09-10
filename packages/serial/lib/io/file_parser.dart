@@ -1,15 +1,16 @@
 import 'dart:io';
 import 'dart:typed_data';
 
+import '../constants.dart';
 import '../worker/protocol.dart';
 import 'packet_parser.dart';
 import 'recording_file.dart';
 
-/// Handles reading and decoding v1 recording files.
+/// Handles reading and decoding recording files.
 ///
-/// The file must open with a valid [RecordingHeader]: it is skipped and
-/// its framing is authoritative. Files without a valid header yield no
-/// packets — upgrade them once with [finalizeRecordingFile].
+/// The file must open with a valid [RecordingHeader] whose framing matches
+/// [TelemetryFraming.payloadLength]. Files without a valid header yield no
+/// packets.
 class FileParser {
   /// Reads framed binary data from [filePath] and yields parsed [TelemetryPacket]s.
   ///
@@ -25,10 +26,10 @@ class FileParser {
       final header =
           RecordingHeader.decode(await reader.read(recordingHeaderLength));
       if (header == null ||
-          (header.payloadLength != 52 && header.payloadLength != 53)) {
+          header.payloadLength != TelemetryFraming.payloadLength) {
         return;
       }
-      final parser = PacketParser(payloadLength: header.payloadLength);
+      final parser = PacketParser();
 
       while (await reader.position() < fileLength) {
         // Read 12-byte header: Int64 timestamp (bytes 0-7), Uint32 length (bytes 8-11)

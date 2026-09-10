@@ -5,10 +5,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
 
-import 'app/app_shell.dart';
-import 'src/telemetry/telemetry_provider.dart';
-import 'theme/app_colors.dart';
-import 'theme/app_theme.dart';
+import './ui/screens/app_shell.dart';
+import './state/telemetry_provider.dart';
+import './theme/app_colors.dart';
+import './theme/app_theme.dart';
 
 import 'package:serial/serial.dart';
 

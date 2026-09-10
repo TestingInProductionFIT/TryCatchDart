@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import 'app_colors.dart';
+import './app_colors.dart';
 
 /// Builds the global theme ("Precision Light" / dark companion, Material 3).
 ///
@@ -18,7 +18,7 @@ ThemeData buildAppTheme({bool dark = false}) {
           onSurface: AppColors.foreground,
           surfaceContainerHighest: AppColors.muted,
           error: AppColors.destructive,
-          onError: Colors.white,
+          onError: AppColors.primaryForeground,
           outline: AppColors.border,
           outlineVariant: AppColors.border,
         )
@@ -31,7 +31,7 @@ ThemeData buildAppTheme({bool dark = false}) {
           onSurface: AppColors.foreground,
           surfaceContainerHighest: AppColors.muted,
           error: AppColors.destructive,
-          onError: Colors.white,
+          onError: AppColors.primaryForeground,
           outline: AppColors.border,
           outlineVariant: AppColors.border,
         );
@@ -47,10 +47,10 @@ ThemeData buildAppTheme({bool dark = false}) {
       thickness: 1,
       space: 1,
     ),
-    textTheme: _textTheme,
+    textTheme: _buildTextTheme(),
     textSelectionTheme: TextSelectionThemeData(
       cursorColor: AppColors.pinkDeep,
-      selectionColor: Color(0x29FF00A1),
+      selectionColor: AppColors.primary.withValues(alpha: 0.16),
       selectionHandleColor: AppColors.pinkDeep,
     ),
     cardTheme: CardThemeData(
@@ -174,7 +174,7 @@ ThemeData buildAppTheme({bool dark = false}) {
       thumbColor: WidgetStateProperty.resolveWith(
         (states) => states.contains(WidgetState.selected)
             ? AppColors.primaryForeground
-            : Colors.white,
+            : AppColors.mutedForeground,
       ),
       trackColor: WidgetStateProperty.resolveWith(
         (states) => states.contains(WidgetState.selected)
@@ -237,7 +237,7 @@ ThemeData buildAppTheme({bool dark = false}) {
       activeTrackColor: AppColors.primary,
       inactiveTrackColor: AppColors.strongBorder,
       thumbColor: AppColors.primary,
-      overlayColor: Color(0x1FFF00A1),
+      overlayColor: AppColors.primary.withValues(alpha: 0.12),
     ),
     progressIndicatorTheme: ProgressIndicatorThemeData(
       color: AppColors.primary,
@@ -262,8 +262,9 @@ ThemeData buildAppTheme({bool dark = false}) {
 }
 
 /// Compact, high-legibility type scale for dense ground-station UIs.
-/// Non-const: colors resolve the active palette at theme-build time.
-final TextTheme _textTheme = TextTheme(
+/// Built fresh on every theme build: colors resolve the active palette at
+/// theme-build time (a top-level `final` would freeze launch-mode colors).
+TextTheme _buildTextTheme() => TextTheme(
   displaySmall: TextStyle(
     fontSize: 32,
     fontWeight: FontWeight.w600,

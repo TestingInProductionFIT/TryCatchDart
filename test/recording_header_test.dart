@@ -3,7 +3,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:serial/serial.dart';
-import 'package:trycatch/flights/flight_trim.dart';
+import 'package:trycatch/services/flight_trim.dart';
 
 Future<Directory> _tempDir() =>
     Directory.systemTemp.createTemp('rec_header_test');
@@ -34,7 +34,7 @@ void main() {
   group('RecordingHeader codec', () {
     test('round-trips every field', () async {
       const header = RecordingHeader(
-        payloadLength: 53,
+        payloadLength: TelemetryFraming.payloadLength,
         hasLaunchSite: true,
         hasStats: true,
         startMicros: 1700000000000000,
@@ -49,7 +49,7 @@ void main() {
         launchName: 'Prague',
       );
       final back = RecordingHeader.decode(header.encode())!;
-      expect(back.payloadLength, 53);
+      expect(back.payloadLength, TelemetryFraming.payloadLength);
       expect(back.hasLaunchSite, isTrue);
       expect(back.hasStats, isTrue);
       expect(back.startMicros, 1700000000000000);
@@ -98,25 +98,25 @@ void main() {
       expect(RecordingHeader.decode(noMagic), isNull);
     });
 
-    test('body offset skips headers, ignores legacy files', () async {
+    test('body offset skips the header, rejects non-recordings', () async {
       const header = RecordingHeader();
       final headered = [...header.encode(), 1, 2, 3];
       expect(
         recordingBodyOffsetOf(Uint8List.fromList(headered), headered.length),
         recordingHeaderLength,
       );
-      final legacy = Uint8List.fromList(
+      final raw = Uint8List.fromList(
           [0x00, 0x06, 0x0E, 0x4E, 0, 0, 0, 0, 0, 0, 0, 55, 1, 2]);
-      expect(recordingBodyOffsetOf(legacy, legacy.length), 0);
+      expect(recordingBodyOffsetOf(raw, raw.length), 0);
       expect(recordingBodyOffsetOf(Uint8List(0), 0), 0);
     });
 
-    test('tryRead returns null for legacy and missing files', () async {
+    test('tryRead returns null for non-recordings and missing files', () async {
       final dir = await _tempDir();
       try {
-        final legacy = _path(dir, 'legacy.bin');
-        await File(legacy).writeAsBytes([1, 2, 3, 4]);
-        expect(await tryReadRecordingHeader(legacy), isNull);
+        final raw = _path(dir, 'body.bin');
+        await File(raw).writeAsBytes([1, 2, 3, 4]);
+        expect(await tryReadRecordingHeader(raw), isNull);
         expect(
           await tryReadRecordingHeader(_path(dir, 'nope.bin')),
           isNull,
@@ -175,41 +175,71 @@ void main() {
       }
     });
 
-    test('falls back to the first GPS fix without a launch site', () async {
+    test('finalize stamps the required launch site', () async {
       final dir = await _tempDir();
       final recorder = Recorder();
       try {
         final path = _path(dir, 'flight.bin');
-        await recorder.start(path);
+        await recorder.start(
+          path,
+          launch: const LaunchRef(
+            latitude: 49.5,
+            longitude: 16.5,
+            mslM: 378,
+            name: 'Test site',
+          ),
+        );
         recorder.recordBytes(
             _packet(seq: 1, baro: 50, lat: 50.001, lon: 14.001));
         await recorder.stop();
 
         final header = (await tryReadRecordingHeader(path))!;
         expect(header.hasLaunchSite, isTrue);
-        expect(header.launchLatitude, closeTo(50.001, 1e-7));
-        expect(header.launchMslM, closeTo(350, 0.01));
-        expect(header.launchName, isEmpty);
+        expect(header.launchLatitude, closeTo(49.5, 1e-7));
+        expect(header.launchMslM, closeTo(378, 0.01));
+        expect(header.launchName, 'Test site');
       } finally {
         await recorder.stop();
         await dir.delete(recursive: true);
       }
     });
 
-    test('finalize is idempotent and upgrades headerless bodies', () async {
+    test('finalize is idempotent', () async {
       final dir = await _tempDir();
       try {
-        final path = _path(dir, 'legacy.bin');
-        await writeRecordingChunks(path, [
-          RecordingChunk(tsUs: 1000000, payload: _packet(seq: 9, baro: 42)),
-        ]);
-        expect(await tryReadRecordingHeader(path), isNull);
+        final path = _path(dir, 'flight.bin');
+        await writeRecordingFile(
+          path,
+          const RecordingHeader(
+              payloadLength: TelemetryFraming.payloadLength),
+          [
+            RecordingChunk(tsUs: 1000000, payload: _packet(seq: 9, baro: 42)),
+          ],
+        );
 
-        final first = (await finalizeRecordingFile(path))!;
+        final first = (await finalizeRecordingFile(
+          path,
+          launch: const LaunchRef(
+            latitude: 1.0,
+            longitude: 2.0,
+            mslM: 3.0,
+            name: 'Pad',
+          ),
+        ))!;
         expect(first.packetCount, 1);
+        expect(first.hasLaunchSite, isTrue);
+        expect(first.launchName, 'Pad');
         final sizeOnce = await File(path).length();
 
-        final second = (await finalizeRecordingFile(path))!;
+        final second = (await finalizeRecordingFile(
+          path,
+          launch: const LaunchRef(
+            latitude: 1.0,
+            longitude: 2.0,
+            mslM: 3.0,
+            name: 'Pad',
+          ),
+        ))!;
         expect(second.packetCount, 1);
         expect(await File(path).length(), sizeOnce);
 
@@ -227,13 +257,18 @@ void main() {
       final dir = await _tempDir();
       try {
         final src = _path(dir, 'src.bin');
-        await writeRecordingChunks(src, [
-          for (var i = 0; i < 10; i++)
-            RecordingChunk(
-              tsUs: (1000 + i) * 1000000,
-              payload: _packet(seq: i, baro: i * 10.0),
-            ),
-        ]);
+        await writeRecordingFile(
+          src,
+          const RecordingHeader(
+              payloadLength: TelemetryFraming.payloadLength),
+          [
+            for (var i = 0; i < 10; i++)
+              RecordingChunk(
+                tsUs: (1000 + i) * 1000000,
+                payload: _packet(seq: i, baro: i * 10.0),
+              ),
+          ],
+        );
         await finalizeRecordingFile(
           src,
           launch: const LaunchRef(
@@ -266,11 +301,11 @@ void main() {
       }
     });
 
-    test('readers reject headerless bodies, even with valid packets',
+    test('readers reject files without a header, even with valid packets',
         () async {
       final dir = await _tempDir();
       try {
-        final path = _path(dir, 'legacy.bin');
+        final path = _path(dir, 'body.bin');
         await writeRecordingChunks(path, [
           RecordingChunk(
               tsUs: 1700000000000000, payload: _packet(seq: 1, baro: 5)),

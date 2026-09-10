@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:trycatch/src/collections/ring_buffer.dart';
+import 'package:trycatch/core/ring_buffer.dart';
 
 void main() {
   group('RingBuffer', () {

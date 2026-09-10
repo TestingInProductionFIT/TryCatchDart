@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.krychlic.trycatch</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <name>TryCatch</name>
+  <summary>Model rocket ground station</summary>
+  <description>
+    <p>Ground station software for model rockets: live serial telemetry,
+    tiling dashboard, flight recording and replay, channel health monitor.</p>
+  </description>
+  <launchable type="desktop-id">com.krychlic.trycatch.desktop</launchable>
+  <provides>
+    <binary>trycatch</binary>
+  </provides>
+</component>

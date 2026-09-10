@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=TryCatch
+GenericName=Model rocket ground station
+Comment=Live telemetry, tiling dashboard, recording and replay for model rockets
+Exec=trycatch
+Icon=com.krychlic.trycatch
+Terminal=false
+Type=Application
+Categories=Science;Engineering;
+Keywords=rocket;telemetry;serial;ground station;
+StartupWMClass=trycatch
+StartupNotify=true

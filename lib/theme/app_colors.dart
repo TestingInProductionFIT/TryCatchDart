@@ -2,10 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:serial/serial.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../services/prefs_keys.dart';
+
 /// Concrete color palette: every color the app uses, in one place.
 ///
 /// Two instances exist ([AppPalette.light] = "Precision Light",
-/// [AppPalette.dark]). Widgets never touch the palette directly — they read
+/// [AppPalette.dark]). Tiles never touch the palette directly — they read
 /// [AppColors], whose getters resolve through the global [AppThemeMode], so
 /// flipping the toggle re-themes the whole app without touching call sites.
 class AppPalette {
@@ -37,11 +39,11 @@ class AppPalette {
   final Color seriesVelocityVertical;
   final Color seriesAccel;
   final Color seriesBattery;
-  final Color seriesPressure;
   final Color seriesGpsTrack;
   final Color seriesDeadReckoning;
 
   final Color fsmLanded;
+  final Color fsmParachute;
 
   const AppPalette({
     required this.background,
@@ -69,10 +71,10 @@ class AppPalette {
     required this.seriesVelocityVertical,
     required this.seriesAccel,
     required this.seriesBattery,
-    required this.seriesPressure,
     required this.seriesGpsTrack,
     required this.seriesDeadReckoning,
     required this.fsmLanded,
+    required this.fsmParachute,
   });
 
   static const light = AppPalette(
@@ -101,10 +103,10 @@ class AppPalette {
     seriesVelocityVertical: Color(0xFF0E8A63),
     seriesAccel: Color(0xFFC77414),
     seriesBattery: Color(0xFF7C3AED),
-    seriesPressure: Color(0xFF0E7F96),
     seriesGpsTrack: Color(0xFF2260DB),
     seriesDeadReckoning: Color(0xFF7C3AED),
     fsmLanded: Color(0xFF4A4652),
+    fsmParachute: Color(0xFF0D9488),
   );
 
   static const dark = AppPalette(
@@ -133,10 +135,10 @@ class AppPalette {
     seriesVelocityVertical: Color(0xFF34C98E),
     seriesAccel: Color(0xFFE09A3C),
     seriesBattery: Color(0xFFA78BFA),
-    seriesPressure: Color(0xFF4CC3DD),
     seriesGpsTrack: Color(0xFF6B94F5),
     seriesDeadReckoning: Color(0xFFA78BFA),
     fsmLanded: Color(0xFF8E8898),
+    fsmParachute: Color(0xFF2DD4BF),
   );
 }
 
@@ -144,9 +146,9 @@ class AppPalette {
 ///
 /// A [ValueNotifier] (not Riverpod — theming sits below the provider scope):
 /// the app root listens and rebuilds [MaterialApp] on toggle, and every
-/// [AppColors] getter resolves the active palette, so all widgets follow.
+/// [AppColors] getter resolves the active palette, so all tiles follow.
 class AppThemeMode extends ValueNotifier<bool> {
-  static const String _prefsKey = 'trycatch.dark_mode.v1';
+  static const String _prefsKey = PrefsKeys.darkMode;
 
   static final AppThemeMode instance = AppThemeMode._(false);
 
@@ -224,7 +226,6 @@ abstract final class AppColors {
   static Color get seriesVelocityVertical => _p.seriesVelocityVertical;
   static Color get seriesAccel => _p.seriesAccel;
   static Color get seriesBattery => _p.seriesBattery;
-  static Color get seriesPressure => _p.seriesPressure;
   static Color get seriesGpsTrack => _p.seriesGpsTrack;
   static Color get seriesDeadReckoning => _p.seriesDeadReckoning;
 
@@ -234,7 +235,7 @@ abstract final class AppColors {
         FsmState.armed => warning,
         FsmState.ascent => destructive,
         FsmState.apogee => seriesDeadReckoning, // violet
-        FsmState.parachute => const Color(0xFF0D9488), // teal
+        FsmState.parachute => _p.fsmParachute,
         FsmState.landed => _p.fsmLanded,
         // Bench states: unlocked (open airframe) amber, locked blue.
         FsmState.debugUnlocked => warning,

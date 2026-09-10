@@ -1,8 +1,8 @@
 import 'dart:math' as math;
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:trycatch/workspaces/widgets/rocket_3d_widget.dart';
-import 'package:trycatch/workspaces/widgets/rocket_mesh.dart';
+import 'package:trycatch/ui/tiles/rocket_3d_tile.dart';
+import 'package:trycatch/ui/tiles/shared/rocket_mesh.dart';
 import 'package:vector_math/vector_math_64.dart';
 
 /// The attitude viewer must render the rocket centred: the mesh origin sits

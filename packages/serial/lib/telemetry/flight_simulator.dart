@@ -7,6 +7,10 @@ import 'dart:math' as math;
 import 'frame_codec.dart';
 import 'telemetry_frame.dart';
 
+/// Metres per degree of latitude (mirrors the app's `core/geo.dart`
+/// `metresPerDegreeLat` — the serial package cannot import app code).
+const double _metresPerDegreeLat = 111320;
+
 /// Simulated flight phases. Distinct from [FsmState] (the reported rocket
 /// state) because some transitions are internal bookkeeping.
 enum FlightPhase {
@@ -303,8 +307,10 @@ class FlightSimulator {
         FlightPhase.landed => FsmState.landed,
       };
 
-  double _toLat(double northMetres) => latitude + northMetres / 111320;
+  double _toLat(double northMetres) =>
+      latitude + northMetres / _metresPerDegreeLat;
 
-  double _toLon(double eastMetres) =>
-      longitude + eastMetres / (111320 * math.cos(latitude * math.pi / 180));
+  double _toLon(double eastMetres) => longitude +
+      eastMetres /
+          (_metresPerDegreeLat * math.cos(latitude * math.pi / 180));
 }

@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:typed_data';
 
+import '../constants.dart';
 import '../worker/protocol.dart';
 import 'recording_file.dart';
 
@@ -10,10 +11,12 @@ import 'recording_file.dart';
 /// noise, fragmented frames, and corrupted bytes) prepended with a 12-byte framing header
 /// (64-bit microsecond timestamp + 32-bit payload length) for complete diagnostic fidelity.
 ///
-/// On [stop] a fixed [RecordingHeader] (launch site, span, packet/peak stats)
-/// is prepended, turning the file into a self-describing v1 recording. The
-/// finalize pass never throws: on any failure the body is left untouched
-/// (headerless bodies are rejected by readers — rerun finalize to upgrade).
+/// Every file opens with a fixed [RecordingHeader]: [start] writes a
+/// provisional one carrying the launch site (stats filled in on [stop]),
+/// and [stop] replaces it with the computed stats via
+/// [finalizeRecordingFile]. The finalize pass never throws: on any failure
+/// the provisional header is left untouched. Files without the magic are
+/// rejected by every reader.
 class Recorder {
   IOSink? _sink;
   String? _filePath;
@@ -28,17 +31,18 @@ class Recorder {
   String? get filePath => _filePath;
 
   /// Total number of chunk bytes recorded in the current session
-  /// (12-byte framing + payload per chunk — excludes the file header
-  /// prepended on stop).
+  /// (12-byte framing + payload per chunk — excludes the file header).
   int get bytesWritten => _bytesWritten;
 
   /// Starts a recording session targeting [filePath].
   ///
-  /// [launch] stamps the selected launch site into the file header written
-  /// on [stop] (`null` falls back to the first GPS fix in the stream).
+  /// [launch] stamps the launch site into the file header — required, so
+  /// even a crash-interrupted file carries its site (stats are filled in
+  /// on [stop]).
   /// Automatically creates parent directories if they don't exist and opens
-  /// an unbuffered asynchronous write stream.
-  Future<void> start(String filePath, {LaunchRef? launch}) async {
+  /// an unbuffered asynchronous write stream. A provisional header is
+  /// written first so the file is a valid recording from the start.
+  Future<void> start(String filePath, {required LaunchRef launch}) async {
     await stop();
 
     final file = File(filePath);
@@ -49,10 +53,19 @@ class Recorder {
     _launch = launch;
     _bytesWritten = 0;
     _chunksWritten = 0;
+    _sink!.add(RecordingHeader(
+      payloadLength: TelemetryFraming.payloadLength,
+      hasLaunchSite: true,
+      launchLatitude: launch.latitude,
+      launchLongitude: launch.longitude,
+      launchMslM: launch.mslM,
+      launchName: launch.name,
+    ).encode());
   }
 
   /// Stops the active recording session, flushes all buffered bytes to disk,
-  /// prepends the file header, and closes the underlying file handle.
+  /// replaces the provisional header with the computed stats, and closes
+  /// the underlying file handle.
   Future<void> stop() async {
     if (_sink != null) {
       final sink = _sink;
@@ -65,11 +78,17 @@ class Recorder {
       _chunksWritten = 0;
       await sink?.flush();
       await sink?.close();
-      // Header finalize is best-effort: stats pass + rewrite, falling back
-      // to the headerless body (still replayable) on any failure. Empty
-      // sessions (no chunks) stay empty files, as before.
-      if (path != null && chunks > 0) {
-        await finalizeRecordingFile(path, launch: launch);
+      // Header finalize is best-effort: stats pass + rewrite. Empty
+      // sessions (no chunks) stay empty files, as before. The launch is
+      // always set — start() requires it.
+      if (path != null) {
+        if (chunks > 0 && launch != null) {
+          await finalizeRecordingFile(path, launch: launch);
+        } else {
+          try {
+            await File(path).writeAsBytes(const []);
+          } catch (_) {}
+        }
       }
     }
   }

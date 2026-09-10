@@ -32,14 +32,15 @@ void main() {
     Uint8List createTelemetryPacket(int sequence) =>
         FrameCodec.encodePacket(TelemetryFrame(sequence: sequence));
 
-    /// Wraps raw chunk bodies in a v1 file: header + 12-byte chunk framings.
+    /// Wraps raw chunk bodies in a recording file: header + chunk framings.
     Future<void> writeHeaderedFile(
       String path,
       List<(int, Uint8List)> chunks,
     ) async {
       final file = File(path);
       await file.parent.create(recursive: true);
-      const header = RecordingHeader(payloadLength: 53, hasStats: true);
+      const header = RecordingHeader(
+          payloadLength: TelemetryFraming.payloadLength, hasStats: true);
       final builder = BytesBuilder()..add(header.encode());
       for (final (tsUs, payload) in chunks) {
         builder.add((ByteData(12)
@@ -53,7 +54,15 @@ void main() {
     }
 
     test('parses telemetry packets from recorder binary file', () async {
-      await recorder.start(testFilePath);
+      await recorder.start(
+        testFilePath,
+        launch: const LaunchRef(
+          latitude: 50.0,
+          longitude: 14.0,
+          mslM: 300,
+          name: 'Test pad',
+        ),
+      );
 
       recorder.recordBytes(createTelemetryPacket(0x42));
       await recorder.stop();
@@ -121,7 +130,7 @@ void main() {
       expect(packets, isEmpty);
     });
 
-    test('rejects headerless files, even with valid packets inside',
+    test('rejects files without a header, even with valid packets inside',
         () async {
       final file = File(testFilePath);
       await file.parent.create(recursive: true);

@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:trycatch/src/telemetry/packet_rate_tracker.dart';
+import 'package:trycatch/core/packet_rate_tracker.dart';
 
 void main() {
   group('PacketRateTracker', () {

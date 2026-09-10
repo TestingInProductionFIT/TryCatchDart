@@ -1,466 +1,313 @@
 # TryCatchDart — Project Context & Handoff
 
-> Ground station for model rockets ("Testing in Production"). Flutter Windows
-> desktop app, light-mode shadcn-inspired UI. This file compacts all relevant
-> knowledge, decisions and current state. Update it when things change.
+> Ground station for model rockets ("Testing in Production"). Flutter desktop
+> app (Windows x86_64 + ARM64, Linux, macOS — primary dev target Windows),
+> "Precision Light" UI. Compacts all relevant knowledge and decisions.
+> Update it when things change.
 
 ## 1. Stack & conventions
 
-- Flutter (SDK ^3.13), Windows desktop target, run from `C:\Users\wwwho\flutter`.
+- Flutter SDK ^3.13, run from `C:\Users\wwwho\flutter`. Desktop shells
+  scaffolded for Windows, Linux, macOS.
 - **Riverpod 3** (no codegen): `Notifier` / `AsyncNotifier`, `AsyncValue.value`
   (NOT `valueOrNull`), `ProviderScope.overrides` injects the worker in main.
-- `fl_chart` 1.2 (notes: `SideTitleWidget(meta: meta, child:)`,
+- `fl_chart` 1.2 (`SideTitleWidget(meta: meta, child:)`,
   `LineChart(duration: Duration.zero)`, `StrokePattern.dashed`, `BarAreaData`,
   old API `BorderSide.strokeAlignInside` is a double, not an enum).
-- `flutter_map` 8.3 + `latlong2`, `vector_math` 2.4.2
+- `flutter_map` 8.3 + `latlong2`, `vector_math`
   (`transformed(Vector4)`, `transformed3(Vector3)`, `scaleByDouble(x,y,z,w)`),
   `shared_preferences`, `path_provider`, `window_manager`, `tray_manager`,
   `flutter_libserialport`, local package `packages/serial`.
 - No router package (4 flat screens via enum provider). No build_runner/freezed.
-- Theme: `lib/theme/` — **"Precision Light"** design language (2026-09 redesign,
-  chosen from HTML mockups in `design_mockups/`, then **softened after user
-  feedback — "not brutalist, more modern"**): light engineering aesthetic,
-  white cards (radius 12/8) on cool grey `#F5F4F6`, soft hairline borders,
-  faint shadows, monospace micro-labels (Consolas via `AppText`) for anything
-  technical, and the team pink `#FF00A1` as the single accent (neon pink for
-  graphics/live indicators, `pinkDeep #D6008A` for text-safe accents; status
-  stays green/amber/red so pink stays special). `AppColors`, `AppDimens`,
-  `AppText`, `AppCard` (header = pink dot + mono uppercase label + hairline
-  divider — **no tinted band**), `StatusPill` (mono uppercase stadium, soft
-  wash + faint border), `WaitingForData`. Top bar: **no vertical rules** —
-  spacing only, micro-labels (LINK / PACKETS / REC). Workspace tabs: text tabs
-  with a 2.5px pink underline flush on the strip hairline (full-height tab
-  containers, so all tabs align). Series colors: baro alt = pink,
-  GPS/horiz = blue, DR/battery = violet, vert = green, accel = amber,
-  total/ink = foreground. Default font (user declined bundling Inter).
-- **Outside edit mode**: no visible dividers between tiles, and "Add widget"/"Reset"
-  strip buttons are hidden (only "Edit layout" shows). Edit mode reveals
-  dividers, drag-to-swap, per-tile split/remove, Add widget and Reset.
-- **2026-09 "blank tiles in live mode" root cause**: Impeller's OpenGLES
-  backend on Windows ARM64 silently stopped painting the workspace grid
-  (layout verified correct via `[grid]` debug print; no exceptions). Trigger
-  was paint introduced by the redesign — per-card `BoxShadow` +
-  `Clip.antiAlias` on every grid tile. Fix (Impeller stays ON for perf):
-  `AppCard` has **no boxShadow** and uses `Clip.hardEdge` — do not reintroduce
-  card shadows or anti-aliased clips on grid tiles without testing on
-  Windows ARM64. The workspace grid also keeps dividers as (invisible)
-  `Positioned` children in live mode so the Stack's child shape is identical
-  in both modes. Fallback if it ever regresses: `project_.set_impeller_switch(
-  flutter::ImpellerSwitch::Disabled)` in `windows/runner/flutter_window.cpp`
-  switches to Skia.
-- Analyzer must stay clean; `flutter test` green (111 at last green run; see §9 — serial refactor currently breaks compilation).
+- Theme (`lib/theme/`): white/dark cards (radius 12/8) on cool grey, hairline
+  borders, monospace micro-labels (Consolas via `AppText`), team pink `#FF00A1`
+  as the single accent (`pinkDeep` for text-safe accents; status stays
+  green/amber/red). `AppCard` header = pink dot + mono uppercase label +
+  hairline divider (**no tinted band**). `StatusPill` = mono uppercase stadium.
+  Series colors: baro alt = pink, GPS/horiz = blue, DR/battery = violet,
+  vert = green, accel = amber. Default font (user declined bundling Inter).
+- **Dark-mode const rule**: `AppColors`/`AppText.microLabel/monoValue` are
+  getters resolving the active palette — NEVER hold them in a `const`, and
+  NEVER `const`-instantiate a widget that (transitively) reads them
+  (`const AppShell`/`TopBar`/screens froze whole subtrees across flips).
+  Map tiles stay light in both modes.
+- **Impeller/Windows-ARM64 blank-paint bug**: per-card `BoxShadow` +
+  `Clip.antiAlias` on grid tiles silently blanks the workspace grid (layout
+  verified correct, no exceptions). So `AppCard` has **no boxShadow** and uses
+  `Clip.hardEdge` — do not reintroduce either on grid tiles without testing
+  on-device. Grid keeps dividers as (invisible) `Positioned` children in live
+  mode so the Stack child shape is identical in both modes. Fallback:
+  `flutter::ImpellerSwitch::Disabled` in `windows/runner/flutter_window.cpp`.
+- Analyzer clean; `flutter test` green (144 at last green run).
 
-## 2. Serial package (`packages/serial`) — wire format is a MADE-UP placeholder
+## 2. Serial package — single wire format, no versioning
 
-Framing: sync `0xAA55` + payload 53 bytes (includes trailing CRC16). Payload map
-(`telemetry/frame_codec.dart` `TelemetryLayout`, big-endian):
+Framing: sync `0xAA55` + payload 52 bytes (incl. trailing CRC16).
+`telemetry/frame_codec.dart` `TelemetryLayout`, big-endian:
 
 ```
-0  version u8 (=1)      1  flags u8 (bit0 gpsFix, bit1 gpsFix3d)
-2  seq u16              4  gpsLat i32 1e-7deg     8  gpsLon i32 1e-7deg
-12 gpsAlt i32 cm        16 baroAlt i32 cm       20 velN i16 cm/s   22 velE   24 velD
-26 accelX/Y/Z i16 mg    32 gyroX/Y/Z i16 centidps (±327 dps)
-38 heading u16 centideg 40 roll i16 centideg 42 pitch 44 yaw
-46 battery u16 mV       48 hall u16 raw (~2500 intact / ~2950 broken)
-50 fsmState u8          51 crc16-ccitt(u16, init 0xFFFF, poly 0x1021)
+0  flags u8 (bit0 gpsFix, bit1 gpsFix3d)
+1  seq u16              3  gpsLat i32 1e-7deg     7  gpsLon i32 1e-7deg
+11 gpsAlt i32 cm        15 baroAlt i32 cm       19 velN i16 cm/s   21 velE   23 velD
+25 accelX/Y/Z i16 mg    31 gyroX/Y/Z i16 centidps (±327 dps)
+37 heading u16 centideg 39 roll i16 centideg 41 pitch 43 yaw
+45 battery u16 mV       47 hall u16 raw (~2500 intact / ~2950 broken)
+49 fsmState u8          50 crc16-ccitt (init 0xFFFF, poly 0x1021)
 ```
 
-- Units: WGS84 deg, metres, NED velocity (Down positive), body-frame specific
-  force (+9.81 at rest), gyro deg/s, **rocket-oriented attitude**:
-  pitch = tilt from vertical, yaw = compass heading, roll = spin about axis.
-- `FsmState` ids (wire v2): idle 0, armed 1, ascent 2, apogee 3,
-  parachute 4, landed 5, debug-unlocked 6, debug-locked 7, unknown 255.
-  Each state carries its airframe config (`hasNosecone`: idle/armed/ascent/
-  debug-locked; `hasParachute`: parachute only) — the 3D views render from
-  these flags. v1 payloads (same layout, old ids) still decode with the
-  state translated (`fromV1Id`: boost/coast→ascent, apogee→apogee,
-  drogue/main→parachute, landed→landed, fault→unknown).
-- `FrameCodec.decode` auto-detects generation by length: 53 = current,
-  **52 = legacy** (hall was u8 0/1@48, fsm@49, crc@50; mapped to 2500/2950).
-  The ancient **31-byte format is random bytes, unsupported** (no CRC).
-- CRC16-CCITT check vector: `"123456789"` → 0x29B1.
-- `PacketParser(payloadLength: …)` — framing parametrizable for streams;
-  file framing always comes from the v1 header.
-- **Recording file format v1** (`packages/serial/lib/io/recording_file.dart`,
-  2026-09): 112-byte header + the historical chunk stream. Header (all
-  big-endian): magic `TCRC` u32, version u16 (=1), headerLength u16 (=112),
-  payloadLength u16 (53/52, else 0 = probe), flags u16 (bit0 launch site,
-  bit1 stats), start/end micros i64, packetCount u64, max baro/speed/accel
-  f32, launch lat/lon i32 1e-7deg, launch MSL f32, launch name 48 B UTF-8
-  NUL-padded (rune-safe truncated), CRC16-CCITT over bytes 0..107, reserved.
-  `Recorder.stop` prepends it (launch = selected site, else first 3D fix;
-  stats from a decode pass; never throws — on failure the body is left
-  headerless). Readers require a valid header (framing/stats trusted only
-  on valid CRC); headerless bodies are rejected everywhere except
-  `finalizeRecordingFile`, which upgrades them in place (also used by trim
-  and once for the pre-v1 capture already on disk).
-- **FlightSimulator** (`telemetry/flight_simulator.dart`, seeded/deterministic):
-  coldStart 2 s (no fix) → pad 6 s (armed after 2 s) → boost 2.8 s @ 55 m/s² →
-  coast (drag 4e-4) → apogee ~1058 m + hall break → drogue (~40 m/s) →
-  main @150 m (~6 m/s, chute accel clamped 40 m/s²) → landed (pitch 85°).
-  Internal phases keep those names; the reported wire states collapse them:
-  boost/coast→ascent, drogue/main→parachute (idle/armed/apogee/landed direct).
-  GPS random-walk error, eastward wind drift under canopy, battery 8.4 V →
-  −2.5 mV/s. Launch site Prague (50.0755, 14.4378). `MockSerialPort` runs it
-  at 10 Hz through `FrameCodec.encodePacket`, plus a 20 s cyclic interference
-  pattern (12 s clean / 4 s light ~150 B/s noise / 4 s heavy ~500 B/s noise +
-  periodic bit-flipped clones for CRC errors — `mockPhaseForTick`, tested) so
-  the channel-health monitor sweeps all three verdicts with no hardware.
-- Worker isolate (`worker/`): typed commands/events over SendPort.
-  Commands: Connect/Disconnect/ListPorts/StartRecording/StopRecording/
-  **SendBytesCommand(bytes)** (control panel). Events: PacketReceived/
-  PortList/StatusChanged/Error. Recorder dumps raw chunks with 12-byte header
-  (i64 µs big-endian + u32 len); FileParser streams them back with original
-  timestamps.
+Units: WGS84 deg, metres, NED velocity (Down+), body-frame specific force
+(+9.81 at rest), gyro deg/s, rocket-oriented attitude (pitch = tilt from
+vertical, yaw = compass heading, roll = spin). `FsmState` ids: idle 0, armed 1,
+ascent 2, apogee 3, parachute 4, landed 5, debug-unlocked 6, debug-locked 7,
+unknown 255 — with airframe flags (`hasNosecone` on
+idle/armed/ascent/debug-locked; `hasParachute` on parachute only) that the 3D
+views render from. CRC check vector `"123456789"` → 0x29B1. `PacketParser`
+has fixed framing.
+
+Recording files (`io/recording_file.dart`): 108-byte header + chunk stream.
+Header (big-endian): magic `TCRC` u32, payloadLength u16 (=52), flags u16
+(launch site / stats), start/end micros i64, packetCount u64, max
+baro/speed/accel f32, launch lat/lon i32 1e-7deg, launch MSL f32, launch name
+48 B UTF-8 NUL-padded, CRC16 over bytes 0..103, reserved. Launch site is
+mandatory: `start` requires it (the provisional header already carries it,
+so even crash-interrupted files have a site) and `stop` finalizes with it
+via `finalizeRecordingFile` (never throws; idempotent). No first-GPS-fix
+fallback anywhere — siteless files are legacy and rejected (replay errors,
+trim throws).
+Readers require a valid header; magic-less files rejected everywhere.
+`FlightSimulator` (seeded): coldStart 2 s → pad 6 s (armed after 2 s) →
+boost 2.8 s @55 m/s² → coast (drag 4e-4) → apogee ~1058 m + hall break →
+drogue (~40 m/s) → main @150 m (~6 m/s) → landed (pitch 85°); GPS random-walk,
+eastward wind drift, battery 8.4 V −2.5 mV/s; Prague pad. `MockSerialPort`
+runs it at 10 Hz plus a 20 s interference cycle (12 s clean / 4 s light /
+4 s heavy + bit-flipped clones) so the channel monitor sweeps all verdicts.
+Worker isolate: typed commands (Connect/Disconnect/ListPorts/StartRecording/
+StopRecording/SendBytes) and events (Packet/PortList/Status/Error) over
+SendPort. Chunks carry a 12-byte header (i64 µs + u32 len).
 
 ## 3. App architecture
 
 ```
 lib/
-  main.dart                 worker spawn → ProviderScope override → AppShell (fullscreen, tray, preventClose)
-  app/                      AppShell, router (enum), TopBar (replay-aware), BrandMark,
-                            SerialControls, PacketRateIndicator, RecordingControls, PlaybackBar, MonitorScreen
-  theme/                    app_colors, app_theme (buildAppTheme), widgets/{app_card,status_pill,waiting_for_data}
-  src/telemetry/            telemetry_provider (worker providers + SerialConfigNotifier incl. sendBytes)
-                            telemetry_store (THE ingestion point), packet_rate_tracker
-  src/estimation/           dead_reckoning (ground-side DR; only extrapolates while GPS is stale)
-  src/geo/geo.dart          haversine, offsetLatLon, metresPerDegreeLat
-  src/collections/          ring_buffer ([i]=NEWEST, getChronological(i)=oldest-first, newestFirst() lazy)
-  workspaces/               layout_tree (KD-tree), workspace_models, widget_registry,
-                            workspace_controller, workspace_grid, dashboard_screen, widgets/*
-  flights/                  replay_controller, recordings_screen
-  settings/                 launch_site_store, settings_screen
-  components/               channel_health_monitor (live frequency scan:
-                            unmatched bytes/s graph + clear/activity/
-                            interference verdict)
+  main.dart          worker spawn → ProviderScope override → AppShell
+  ui/screens/        AppShell, router, TopBar, dashboard (tabs + grid),
+                     recordings (+orbit previews), monitor, settings
+  ui/components/     BrandMark, SerialControls, PacketRateIndicator,
+                     ChannelHealthPill, RecordingControls, PlaybackBar,
+                     AppCard, StatusPill, ToolFab, WaitingForData,
+                     CenteredValue, CopyButton
+  ui/tiles/          14 telemetry tiles; shared/ = TimeSeriesChart,
+                     ChartValueHeader, flight scene/painters/shell,
+                     rocket mesh, orbit camera, map/satellite tile I/O
+  state/             telemetry_store (THE ingestion point),
+                     telemetry_provider (streams + serial config),
+                     replay_controller, tile_registry, layout_tree,
+                     workspace_models, workspace_controller,
+                     launch_site_store, router, orbit camera
+  services/          flight_trim, prefs_keys
+  core/              pure logic (no Flutter/Riverpod): geo, dead_reckoning,
+                     ring_buffer, channel_health, packet_rate_tracker, format
+  theme/             app_colors (palette + AppThemeMode + tokens), app_theme
 ```
 
-- **TelemetryStore** (`telemetryStoreProvider`): single ingestion point, decodes
-  packets, DR estimator, ring buffers (9000 ≈ 15 min @10 Hz), error counts,
-  auto-reset on port change, skips live ingestion while replaying,
-  `notifyThrottled()` (80 ms) for replay pumping. `TelemetryState.history` and
-  `.deadReckoningHistory` are **live ring-buffer views** (zero-copy); iterate
-  them, don't copy.
-- **Dead reckoning is a gap filler, not a parallel track** (2026-09): DR points
-  enter `deadReckoningHistory` only while GPS has been silent ≥1 s, at 1 Hz
-  spacing; with a fresh fix nothing is computed (the fix is the estimate). A
-  1 Hz wall-clock timer in the store keeps extrapolating from the last known
-  velocity during total link loss (live only, not during replay).
-  `DrPosition.atMs` carries the estimate time (used by the flight-3D merge).
-- **Persisted keys** (shared_preferences): `trycatch.workspaces.v1`,
-  `trycatch.launch_sites.v1`.
+`TelemetryStore`: decode, DR estimator, ring buffers (9000 ≈ 15 min @10 Hz),
+auto-reset on port change, skips live ingestion while replaying, 80 ms
+throttle. `history`/`deadReckoningHistory` are zero-copy live views.
+DR is gap filler only: points enter history while GPS is silent ≥1 s (1 Hz);
+a 1 Hz timer extrapolates through total link loss (live only).
+`drStaleMs` (1000) is the shared stale threshold. Persisted keys
+(`services/prefs_keys.dart`, no version suffixes): `trycatch.workspaces`,
+`trycatch.launch_sites`, `trycatch.dark_mode`.
 
-## 4. Workspace layout = KD-tree (hyprland-style)
+## 4. Workspace layout = KD-tree
 
-`layout_tree.dart`: `SplitNode{id (stable — ratio updates are by id, not
-identity), vertical, ratio, a, b}` | `LeafNode{widgetId, typeId}`. Every widget
-type has a **pixel min size** (registry); `layoutTree()` clamps each split so
-both subtrees keep their minimums. Ops (pure): `insertLeaf` (splits largest
-leaf; orientation from last-known shape via `updateKnownRects` — the renderer
-feeds it), `removeLeaf` (collapses), `swapLeaves` (drag-onto),
-`treeFromOrder` (migration/factory), `SplitNode.flipOrientation` (user can
-**double-click a divider in edit mode** to flip a split between horizontal
-and vertical — via `workspaceProvider.toggleSplitOrientation`; orientation is
-persisted in the tree JSON, so splits are not strictly alternating).
-JSON: `{type:'split',id,vertical,ratio,a,b}` /
-`{type:'leaf',widgetId,typeId}`; old grid `placements` JSON is migrated
-(sorted y,x → balanced tree).
+`SplitNode{id (stable), vertical, ratio, a, b}` | `LeafNode{tileId, tileType}`.
+Every tile type has a pixel min size; `layoutTree()` clamps splits to
+minimums. Pure ops: `insertLeaf` (splits largest leaf, orientation from
+last-known shape), `removeLeaf`, `swapLeaves`, `treeFromOrder` (factory
+default), `SplitNode.flipOrientation` (double-click a divider in edit mode).
+JSON: `{type:'split',id,vertical,ratio,a,b}` / `{type:'leaf',tileId,tileType}`.
+Controller: addTile/removeTile/swapTiles/setRatio/setActive/create/duplicate/
+rename/delete/resetToDefaults/persistActive (drags mutate with
+`persist:false`, persist on release). Grid memoizes layout by root identity +
+size. Edit mode: dividers draggable, drag-to-swap, per-tile split/remove,
+tile content in `AbsorbPointer`. Dashboard: tabs (Ctrl+1..9, right-click
+menu, tooltips), Edit layout toggle, Add-tile picker (`showTilePicker`,
+also used for per-tile split), Reset with confirm. Tile registry is
+data-driven — new tile = one class + one descriptor entry (id, title,
+description, minSize, immersive, builder).
 
-Controller (`workspaceProvider`, AsyncNotifier): addWidget / removeWidget /
-swapWidgets / setRatio(nodeId) / setActive / create / duplicate / rename /
-delete / resetToDefaults / persistActive(). Drag gestures mutate with
-`persist: false` and call `persistActive()` on release.
+## 5. Tiles
 
-Grid renders the tree (memoized by root identity + size), dividers are
-positioned `MouseRegion`+`GestureDetector` **only in edit mode** (outside it
-they are plain static lines — ratios are not editable during live viewing);
-edit mode adds drag-to-swap (pointer badge + target highlight), a per-tile
-**split button** (`Icons.call_split` → widget picker → `splitLeaf` splits that
-specific tile, `addWidget(typeId, splitWidgetId:)`), and per-widget remove,
-and wraps widget content in `AbsorbPointer`. Dashboard adds workspace
-tabs (Ctrl+1..9, right-click menu, double-click rename), Edit layout toggle,
-Add-widget picker (always enabled; `showWidgetPicker` is shared), Reset with
-confirm dialog.
+Shared pieces: `TimeSeriesChart` (below), `ChartValueHeader` (big readout for
+battery/hall), `CenteredValue` (centred headline + sublabel; pins a tight
+LayoutBuilder box so FittedBox actually shrinks — unbounded Column height
+used to defeat scaleDown and stripe tiles), `Flight3dShell` (camera-state
+mixin + gesture canvas/tool column/readout), `tile_io.dart` (Esri URLs,
+download, image check, shared disk cache), `CopyButton`, format helpers,
+`PrefsKeys`. Rocket attitude view reuses `paintRocketMesh`/`paintCompass`.
 
-Widget registry = data-driven (12 widgets). Adding a widget = one class + one
-descriptor entry (id, title, description, minSize px, builder).
-
-## 5. Widgets (all content-only; grid wraps them in `AppCard(fillChild:true)`)
-
-- **time_series_chart.dart — THE shared chart.** `TimeSeriesConfig{unit,
-  series(List<SeriesSpec{label,color,value,dashed}>), window=60 s, yMin/yMax,
-  showLegend, showLeftAxis}`. 200 ms ticker; "now" = wall clock live,
-  `firstPacketMs + replay.positionMs` during replay. **Raw data, isCurved=false,
-  no filtering** (decimation ≤400 pts, bucketed by *absolute* packet time so
-  the sampled set is stable while the window slides — no flicker at the left
-  edge). Y bounds snapped to 1-2-5 steps incl. zero baseline; flat data (hall
-  on the pad) opens the axis around the value instead of a zero-height range
-  (this was the `FlGridData.horizontalInterval couldn't be zero` crash).
-  **Replay mode:** with ≥2 pre-decoded frames the chart switches to
-  whole-flight view — x axis 0…duration counting up, y bounds fixed to the
-  full recording (cached by frames-list identity), played segment full
-  opacity + not-yet-played remainder at 25% alpha (same hue, no area fill).
-  Area fill under single-series played segment only. 3D trail stays
-  played-only (no future preview there).
-- Thin charts: altitude, pressure (static hPa derived from baro alt via ISA,
-  anchored at the selected site's MSL), velocity (horiz/vert-dashed/total), acceleration
-  (horiz/total), battery (voltage readout + charged/under load/low pill @7.9/7.5 V),
-  hall (big raw number + wire intact/broken pill, threshold 2700,
-  `showLegend: false`). ALL share the chart.
-- fsm_widget: current state fills the tile (bigger name, centred both ways,
-  time-in-state under it, no dot), pipeline grid + progress bar pinned to the
-  bottom; `WaitingForData` when empty. max_altitude_widget: same centred
-  language (big max, small NOW under it).
-- map_widget (`map_tiles.dart`): street = Esri World Street Map (bright,
-  worldwide, no key — OSM-FR renders patchy 404s and OSM.org is
-  policy-restricted), satellite = Esri (overzoom past native 18 → no blanks);
-  both ride
-  flutter_map's built-in 1 GB disk cache, and `precacheLaunchSites`
-  (zooms 13–17, ~1 km radius, same URL keys incl. subdomain rotation) fills it
-  around saved sites — auto on preset save, manual Preload button in settings
-  with progress. DR freezes at the touchdown floor (lowest fix − 2 m) with
-  zeroed velocity — the frozen point is the landing estimate; a fresh
-  airborne fix unfreezes. FSM time-in-state ticks via a 1 s ticker past the
-  last frame when the link is silent (live only — replay uses the playhead,
-  wall clock would be hours off). Rocket livery: pink body, black nose
-  tip + fin cage + cap, 4 fins. Workspace tabs rename via right-click menu
-  only (no double-click); top bar RESET cell resets the flight context. OSM/Esri-satellite toggle, follow FAB, zoom ± FABs, GPS track
-  (solid blue) vs per-gap DR segments (dashed violet, each rooted at its last
-  known fix; live-only — hidden + legend row hidden during replay),
-  site flag marker, legend overlay, plain attribution text. Polylines only
-  rendered when >1 point (empty LatLngBounds crash guard). DR marker follows
-  the store's extrapolated position, so a silent link shows the violet
-  estimate drifting.
-- stats_widget (title **Position**, centred cards like FSM/max-alt): GPS card
-  (big coords, alt + from-site line, COPY button writing plain `lat, lon` to
-  the clipboard); DR card the same. Replay shows the GPS card only. DR card
-  reads "extrapolating" + GPS "STALE" on a silent link; DR alt clamps at the
-  site MSL.
-  max_altitude_widget: big peak value centred (no headline — the card header
-  says it) + small NOW under it, pink.
-- rocket_3d_widget: software renderer on vector_math (parametric mesh:
-  pink tube, black ogive nose tip, black fin cage (longer than the fins) +
-  cap, 4 double-sided fins; tube butts onto the cage with no overlapping
-  shells; fin sheets are view-culled so the coplanar pair can't flicker);
-  perspective, painter's algorithm by view-space z with mesh-order tiebreak +
-  degenerate-triangle skip, flat shading with camera
-  headlight, hairline strokes against seams). Drag orbits the shared camera;
-  corner compass shows
-  N/E/U in the flight view's colours (E amber, U green, N blue — same world:
-  X east, Y up, Z south, so both 3D views agree); axes pointing away are
-  dimmed and shorten.
-  Airframe config comes from the FSM state flags (`hasNosecone` on
-  idle/armed/ascent/debug-locked, `hasParachute` on parachute only): the
-  cone hides from apogee on, the red/white canopy hangs above the open
-  tube under parachute. `WaitingForData` when no frames.
-- flight_3d_widget: 3D flight path on the same renderer approach. Metric scene
-  (east/up/south metres, origin = launch site or first fix), trail = GPS fixes
-  bucket-decimated only (DR renders as a single violet ring+dot at the rocket,
-  never a trail), drop line under the rocket,
-  gridded ground plane (1-2-5 spacing) with projected N (+Z, blue) / E (+X,
-  amber) ground labels, corner N/E/U compass gizmo derived from the live view
-  matrix (dimmed when pointing away — rotates together with the scene),
-  launch-site flag + pad ring + label,
-  altitude/downrange readout, chute icon. Cameras: chase rocket / orbit field
-  (auto-rotates) / free orbit; drag orbits (rotation kept across mode
-  switches), wheel zooms (scroll up = zoom in), +/− buttons, double-tap
-  resets zoom; switching modes resets zoom to 1×. All three 3D views
-  (rocket, flight, satellite) share `orbitCameraProvider` angles — dragging
-  one rotates all; zoom/mode stay local. Elevation capped at 80°
-  (straight-down is degenerate for an up-vector orbit camera — a map-style
-  N-up/E-right reading is geometrically impossible there for a true
-  perspective camera, so it is not offered).
-  Shows the pad scene immediately (rocket at site + baro alt before first fix).
-  A silent link (>1 s no packets, `TelemetryStore.drStaleMs`) moves the rocket
-  to the violet DR estimate, like a stale fix does.
-- flight_3d_widget + flight_3d_satellite_widget share `flight_3d_common.dart`
-  (scene, cameras, painters, N/E/U compass). Satellite drapes Esri World
-  Imagery (`satellite_ground.dart`: slippy fetch/stitch/cache, drawVertices
-  perspective drape, plain fallback offline, Esri credit) around the anchor;
-  ~1280 px across at zoom ≤19 with parent-tile fallback for missing levels.
-  Imagery goes through flutter_map's shared disk cache, so settings precache
-  warms the 3D view too (and the 3D view backfills it). Always renders
-  ≥5 km² (`satMinHalfMeters`). Failures yield `null` (plain-ground fallback)
-  and are NOT cached, so later calls retry; the widget also retries
-  imageless fetches with a 15 s backoff. The drape is a screen-space mesh:
-  one node per ~21 px ray-cast onto the ground plane (`rayGroundHit`,
-  tested) for exact UVs, so triangles are small on screen by construction
-  and affine UV interpolation cannot twist — world-space subdivision could
-  never promise that (cells near the camera project huge; that was the
-  close-to-ground twisting). Rays missing the plane (sky) or landing outside
-  the patch (far terrain shows through) subdivide to pin the boundary, then
-  drop. Single path every frame, no fitting, nothing to flap between. This
-  deliberately avoids `Canvas.transform` with a perspective matrix: that
-  path silently paints nothing on Impeller/OpenGLES (the pre-fix flicker was
-  the renderer flapping between mesh frames showing imagery and transform
-  frames drawing blank; the sky-bleed was the unclipped transform draw
-  mirroring behind-camera ground above the horizon). Do not reintroduce a
-  transform-based drape without testing on-device. No grid lines on imagery
-  (labels stay); fully-behind views fall back to the plain ground. Plain
-  Flight 3D
-  deliberately has no sky (as-was); satellite keeps the procedural 3-stop
-  sky + huge far ring (45 km, past the horizon) tinted from the patch's mean
-  imagery color (`averageColor`, so fields stay green and cities stay grey)
-  with a subtle horizon haze band. All world
-  lines use clip-space near-plane clipping, so receding lines survive low
-  camera angles.
-- **World frame is X east / Y up / Z south (E×U=S, right-handed).** +Z north
-  was left-handed and mirrored east/west on screen; `orientationMatrix` now
-  yields a proper rotation (back = right×nose) with matching compass
-  (nose→−Z on yaw 0, +X on yaw 90). Locked by `flight_3d_scene_test.dart`.
-- parachute_widget: centred icon + label (OPEN orange / STOWED faint),
-  in Flight/Prep/Replay factory layouts.
-- Top bar: no micro-labels; link is one box (borderless dropdown, green port
-  name when connected, fixed 104+104 skeleton); fixed 32px hamburger;
-  RESET cell; shared `formatMinSec` with playback/recordings/trim.
-- control_panel_widget: icon-over-label centred tiles (min 54px rows);
-  `RocketCommands` catalog — bytes are MADE-UP
-  (`'TC' 0x54 0x43` + cmd + 0x00): arm 01, disarm 02, fire chute 03
-  (04 retired with the drogue/main split), beep 05, reset FSM 06.
-  Two-click confirm (3 s timeout), sent
-  feedback, disabled when disconnected or during replay (placeholder tile).
-  **Must be aligned with real firmware.**
+- **Chart**: raw data, no smoothing; 60 s rolling window (replay: whole
+  flight, fixed y bounds, played full opacity + remainder 25%); 1-2-5 y
+  steps with zero baseline; flat data opens the axis (was the
+  `horizontalInterval = 0` crash); decimation ≤400 pts by absolute packet
+  time (no left-edge flicker); legend collapses under ~120 px tile height.
+  Thin wrappers: altitude, velocity (horiz/vert-dashed/total), acceleration
+  (horiz/total), battery (+discharge rate line, hidden when short), hall
+  (no legend, threshold 2700 colors the readout).
+- **FSM**: big state + time-in-state (1 s ticker past last frame when silent;
+  replay uses playhead), progress bar + pipeline/debug chip grids (debug row,
+  then progress bar, shed when short); two-click send mirrors the control
+  panel. **Max alt**: peak + NOW. **Parachute**: icon + OPEN/STOWED
+  (icon shrinks when short). **Position**: GPS + DR cards (copy buttons hide
+  when short; replay shows GPS only; DR clamps at site MSL, STALE past 1 s).
+- **Map** (immersive, edge-to-edge): Esri street (bright, no key) /
+  satellite (overzoom past 18); flutter_map 1 GB disk cache; precache
+  zooms 13–17 ~1 km around saved sites (auto on save + settings button).
+  GPS solid blue vs per-gap dashed violet DR rooted at last fix (live only);
+  follow/satellite/zoom ToolFabs; legend hides when small; polylines only
+  with >1 point.
+- **3D** (all immersive): metric scene east/up/south metres, origin = site or
+  first fix; GPS trail only, DR as single violet point; drop line; 1-2-5
+  ground grid with N/E labels; N/E/U compass (dimmed when pointing away);
+  chase/orbit-field/free cameras (shared angles, local zoom/mode, 80° cap);
+  wheel zoom, double-tap reset. Satellite drapes Esri imagery as a
+  screen-space mesh (one node per ~21 px ray-cast — affine UV can't twist;
+  parent-tile fallback; ≥5 km²; failures uncached + 15 s backoff) with
+  procedural sky tinted from patch mean color. **Never** a
+  `Canvas.transform` perspective drape — silently paints nothing on
+  Impeller/OpenGLES. World frame X east / Y up / Z south (right-handed;
+  locked by `flight_3d_scene_test.dart`). Airframe from FSM flags
+  (cone pops at apogee, canopy under parachute).
+- **Control panel**: `RocketCommands` catalog — bytes are MADE-UP and
+  **must be aligned with real firmware before flight**. Two-click confirm
+  (3 s), sent feedback, disabled disconnected/during replay.
+- **Top bar** (fixed skeleton, nothing shifts): brand · link group (port
+  dropdown incl. Rescan item + Connect, packet rate, channel pill) · hairline
+  · session (Record) · menu. Slots keep constant width in every state
+  (channel pill reserves 96 px, shows OFFLINE muted while disconnected).
+  Launch-site button (flag + site name, amber SET SITE when unset) opens the
+  site dialog: preset list (tap selects), manual name/lat/lon/alt entry
+  (Save as preset / Use), and save-current-rocket-position-as-site (needs a
+  live GPS fix, precaches tiles). A site is always selected (no Clear;
+  deleting the active preset falls through to another or keeps its values);
+  Record stays disabled until one is set. Reset lives in the menu
+  (destructive item, confirm dialog, disabled without data / during replay).
+  Replay replaces live zones with: REPLAY badge + filename + play + time +
+  flexible slider + speed popup + Back to live.
+- **Channel health**: anything plotted is NOT our rocket. Verdicts on
+  unmatched B/s: clear <50, activity <400, else interference. Screen =
+  verdict banner (pill + rate + hint) + chart card + 3 key numbers.
+  Replay buckets chunks into 500 ms bins at load; verdict follows playhead.
+  Top-bar pill mirrors the verdict (pulsing red on interference, tap opens
+  the screen).
 
 ## 6. Replay & recordings
 
-`replayProvider`: play(path) parses the v1 recording (`FileParser` requires
-a valid header and treats its framing as authoritative; headerless files
-hit the "expected a v1 file" error) and stores the header's launch site on
-the state; while such a replay is active the map flag, 3D origin,
-from-site distances and pressure reference all anchor to the file's site
-(`effectiveLaunchSiteProvider` — file site wins, else the selected site).
-The whole flight is also
-pre-decoded into `ReplayState.frames` once so charts can fix their axes;
-50 ms ticker ingests packets ≤ virtual clock × speed (MAX = dump all);
-`seek()` replays 0→target through the store; auto-pauses
-at end. DR is disabled during replay (store skips the estimator, map/3D hide
-DR, position shows the GPS card only). **While replaying the top bar replaces serial/recording groups with
-the PlaybackBar** (play/pause, seek, speed, "Back to live"; turns green
-"Replay finished — back to live" at the end). Recordings screen lists
-`Documents/TryCatch/recordings/*.bin` with duration (chunk-header walk) and
-delete; hitting replay there switches to the **Replay** workspace (if present)
-and navigates to the dashboard automatically
-(load errors stay on the recordings screen). Factory workspaces: Flight view,
-Prep, Replay (large Flight 3D left + map/charts/position right, no control
-panel); persisted states migrate by appending Replay when missing.
-Recordings screen: responsive card grid with orbiting 3D track previews
-(`orbit_preview.dart`: own equirectangular project + orbit camera, no tiles
-so cards stay cheap/offline; sparkline fallback without fixes), stats
-(duration, packets, max alt, size, date — all three come straight from the
-112-byte header during the scan), open-folder shortcut, Trim dialog
-with altitude graph + kept-window highlight saving a time slice as a new
-`.bin` (`flight_trim.dart`, tested — the clip gets a fresh header with kept
-stats and the source's launch site). Chunks are raw stream fragments, so
-previews decode via `decodeRecordingFrames` (PacketParser 53→52 fallback —
-decoding chunks directly yields nothing and a flat preview); each card
-decodes its own file concurrently after the stat-only scan renders the grid
-(spinner meanwhile), with a session cache (path+size+mtime) so refreshes
-skip unchanged files; the trim dialog self-heals a stale profile on open.
-Imported real flight: `Documents/TryCatch/recordings/crc_real_flight.bin`
-(converted 2026-09 from the old web visualizer
-`CRCVisualization/flight_data.js` via `tools/convert_crc_flight.py` —
-3660 packets @25 Hz, 146.36 s, apogee 488.6 m, launch ~49.79945 N 16.69290 E;
-re-emitted 2026-09 with a v1 header carrying those stats + the pad as the
-launch site, verified through the real header/chunk/CRC path).
-Mapping: alt→baro+GPS alt, vel(up+)→velD, velN/E from GPS-track derivative
-(±1 s window, old GPS is ~1 Hz vs 25 Hz telemetry), accel(G)→m/s²,
-ARMED→armed, FLIGHT pre-apogee→ascent, apogee + post-apogee FLIGHT→apogee,
-CHUTE_DEPLOYED→parachute, touchdown (alt≤0.5 m, ~t=140 s)→landed, wire v2,
-hall 2500→2950 at chute deploy, heading/yaw = course-over-ground, pitch 85
-when landed; pressure/tribo/ky/temp dropped (no wire fields — the old tribo
-chart has no counterpart widget). Battery kept as 1S ~4 V, so the battery
-widget reads LOW against its 2S thresholds. Verified 3660/3660 decode via
-the real FileParser/PacketParser/FrameCodec path. Cards use fixed heights only (an
-Expanded child explodes on the grid's unbounded height pass). Raw monitor:
-newest packets on top, top-anchored, max-1100 block centred. RESET unfocuses
-first (Windows AXTree engine quirk on mass tree churn); SwitchListTile got
-its own Material (ListTile splash assert).
+`replayProvider`: `play(path)` parses (valid header required), stores header
+site; file site wins via `effectiveLaunchSiteProvider`. Siteless files are
+rejected with an error (launch site is mandatory in the current format).
+Whole flight
+pre-decoded once for fixed chart axes; 50 ms ticker × speed (MAX = dump);
+`seek()` replays 0→target; auto-pauses at end. No DR during replay.
+Recordings screen: stat-first scan (108-byte header) + per-card concurrent
+preview decode (session cache by path+size+mtime); orbit-preview 3D cards
+(offline, sparkline fallback); open-folder; Trim dialog (altitude graph,
+fresh header, kept stats + source site). Factory workspaces: Flight view,
+Prep, Replay (no control panel). `crc_real_flight.bin` on disk is stale
+(pre-dates de-versioning) — re-convert from `flight_data.js` before use.
+Windows AXTree quirk: RESET unfocuses first on mass tree churn;
+adjacent Tooltips in grids need `Semantics(container:true)`.
 
-## 7. Channel health monitor
+## 7. Decisions & prefs
 
-Live frequency scan (hamburger → Channel health): the worker's `PacketParser`
-keeps cumulative byte counters (total/matched/garbage/CRC-error) and pushes
-`LinkStats` snapshots ~2 Hz (plus a 500 ms heartbeat so the graph decays in
-silence); the UI diffs them into bytes/s via `ChannelHealthTracker`
-(`lib/src/telemetry/channel_health.dart`, tested). Rolling 60 s graph of
-ours/unmatched/total B/s, verdict banner (clear <50, activity <400, else
-interference unmatched B/s), stat tiles, live-radio-only placeholder when
-disconnected. Replaces the old raw hex packet viewer (deleted 2026-09).
-Replay shows the whole flight like the other charts: `ReplayController` buckets
-the recording's raw chunks into 500 ms `ChannelBin`s at load
-(`buildChannelProfile`, tested), the chart plots 0…duration with the played
-segment full opacity + remainder dimmed, and verdict/totals follow the
-playhead. No connection needed to replay channel history.
+- Wire format is placeholder; CRC keeps it honest. Single format, no
+  versioning — when real firmware lands, replace the layout wholesale.
+- Tiling only: everything fits the viewport, no page scroll, no holes.
+- Charts show raw data, one shared code path. Modular/data-driven tiles.
+- Debug builds are janky — evaluate with `flutter run -d <os> --release`.
+- Do not start the app yourself; ask the user for screenshots/descriptions.
+- Weak points (known, out of scope): `AppThemeMode` singleton outside
+  Riverpod; `ref.listen` in `build` (channel tile/pill, packet-rate);
+  `ref.read(workspaceProvider).value` staleness in places; `TelemetryStore`
+  god-store with bidirectional `ReplayController` coupling (sync `seek()`
+  janks large files); global orbit camera; `SerialConfigNotifier` mixes
+  UI/IO/FS.
 
-## 8. Decisions & user preferences (important!)
+## 8. Session log (2026-09)
 
-- Wire format is a placeholder until the real firmware format exists; version
-  byte + CRC keep it evolvable. Payload 52→53 change happened when hall became
-  u16; old 52-byte payloads still decode. Wire v2 (2026-09) redesigned the
-  FSM set; v1 payloads decode with the state translated (fromV1Id), so both
-  recordings on disk keep replaying.
-- Layout must be tiling (KD-tree), everything fits the viewport, no page
-  scroll, no holes, min sizes respected.
-- Dead reckoning is computed **ground-side**, decoupled module (like serial).
-  Live-only; the store's 1 Hz extrapolator keeps it advancing through a total
-  link loss and `_rebuildState` republishes it (otherwise widgets freeze DR at
-  the last fix). `TelemetryStore.drStaleMs` (1000) is the shared stale
-  threshold (store, 3D view, position panel). Map draws one dashed segment per
-  gap rooted at the last known fix (>3 s DR silence splits); readouts clamp DR
-  altitude at the site MSL and the 3D rocket stands on its tail (base lift
-  0.62 model units) so nothing sinks through the plane.
-- Top bar has a RESET button (confirm dialog) clearing history, DR, max
-  values and the battery average — recordings on disk are kept; hidden in replay.
-- Workspace grid has outer padding (`AppDimens.outerPadding`) so tiles never
-  touch the window edge; all custom buttons use the pointer cursor.
-- Charts display raw data — no smoothing/filtering; all share one code path.
-- Keep the codebase modular/data-driven; one-file + one-registry-entry to add
-  widgets; shared `TimeSeriesChart`.
-- **Dark mode** (settings → Appearance, persisted `trycatch.dark_mode.v1`):
-  `AppPalette` light/dark + `AppThemeMode` notifier; `AppColors` are getters
-  resolving the active palette, so NEVER hold them in a `const` (analyzer
-  enforces) — and NEVER `const`-instantiate a widget that (transitively)
-  reads them (`const AppShell`/`TopBar`/screens/`Center(WaitingForData)`
-  froze whole subtrees across flips). `AppText.microLabel/monoValue` are
-  getters for the same reason. Map tiles stay light in both modes.
-  (2026-09). Team color is pink `#FF00A1`; design direction "D — Precision
-  Light" from the `design_mockups/` HTML mockups (A dark was rejected;
-  B2/C2 were the runners-up).
-- **Do not start the app yourself** — the user runs it. Do not take
-  screenshots; ask the user for screenshots/descriptions instead.
-- Debug builds are janky; for smoothness checks suggest `flutter run -d
-  windows --release`. Perf fixes so far: zero-copy ring-buffer history views,
-  memoized tree layout.
-
-## 9. State / next steps
-
-- Analyzer clean, 111 tests green (`flutter test`) at last full green run.
-  NOTE (2026-09-09): suite is currently red — an in-progress serial-package
-  `RecordingHeader` refactor (uncommitted) leaves `file_parser.dart`
-  referencing a `PacketParser(payloadLength:)` that doesn't exist yet, so
-  every test importing `package:serial` fails to compile. Unrelated to the
-  3D-widget work; finish the refactor to go green again. Nothing committed
-  to git yet
-  — the whole UI rework **including the Precision Light redesign** is
-  uncommitted working-tree changes; consider a commit.
-- 2026-09 redesign sweep awaiting user verification: segmented top bar cells,
-  card header strips, pink accents everywhere (connect button, active toggles,
-  drag handles, dividers while dragging, FABs, tab underline, launch-site
-  flag, drag badge), mono micro-labels on stats/pills/legends/axes, FSM
-  segmented pipeline chips, restyled recordings/settings/raw monitor. Run
-  `flutter run -d windows --release` and check every screen.
-- 2026-09 fix batch awaiting user verification: dividers only draggable in edit
-  mode; hall-chart zero-interval crash; chart flicker once data reaches the
-  left edge; replay charts (whole flight, fixed y bounds, 0-counting axis);
-  axis gizmo while orbiting; DR only during GPS-stale gaps (note: the
-  simulator always has a fix after cold start, so DR stays empty there by
-  design — recordings with GPS dropouts will show it); raw monitor centering;
-  replay auto-navigation; the new Flight 3D widget (in the Add-widget picker
-  and the factory flight layout — existing persisted workspaces need
-  "Add widget" or Reset to see it).
-- Wait for user verification of: KD-tree editor feel, new rocket renderer,
-  unified charts, top-bar playback, raw monitor.
-- Possible future work: offline map tile cache; real firmware format swap-in;
-  ground-side attitude estimation slot (`src/estimation/`) if firmware sends
-  raw IMU only; serial port auto-reconnect; keyboard shortcuts polish;
-  satellite imagery under the 3D flight view (the "Google Earth" wish).
+- Structure refactor: de-versioned wire (52 B) + header (108 B, provisional
+  header at start / finalize at stop); dropped legacy decoders, migrations,
+  converter; extracted shared UI; moved to `ui/state/services/core/theme`;
+  `widget→tile` rename. Old `.bin`/prefs orphaned (no release existed).
+- UI/UX pass: dropped pressure; fixed dark-mode leaks; immersive map/3D;
+  responsive shedding + honest min sizes; workflow guidance everywhere.
+- Overflow pass: bounded `CenteredValue`; dropped battery/hall pills;
+  trimmed channel numbers; topbar regrouped + REPLAY badge/filename/speed
+  popup.
+- Topbar rethink: rescan folded into port dropdown, Reset moved to menu,
+  fixed-width skeleton (channel slot reserves 96 px), replay slider single
+  Expanded. Channel screen rewritten in plain language ("not ours" /
+  "good to fly" / "change frequency").
+- AXTree spam fix: Windows accessibility bridge spammed
+  "Failed to update ui::AXTree ... Nodes left pending" because desktop
+  semantics are always on and dozens of live Text nodes repaint at
+  telemetry rate. Policy now: display-only live readouts carry
+  ExcludeSemantics (inside CenteredValue, ChartValueHeader,
+  TimeSeriesChart, channel charts, 3D readout, packet-rate + rec-timer +
+  playhead clocks, battery discharge line, map legend/attribution);
+  interactive controls (buttons, chips, sliders, dropdowns, menus, fields,
+  copy) keep full semantics. Zero visual change. If spam persists, prime
+  suspects left: replay Slider value semantics at 20 Hz, tooltip nodes in
+  10 Hz-rebuilding tiles (FSM chips, ToolFabs, copy buttons).
+- AXTree spam investigation (user hypothesis: ListView+Tooltip): confirmed
+  upstream mechanism (flutter/flutter#182444 — adjacent bare anchors in one
+  scrollable item merge, dropping overlay-portal identifiers; verified fix
+  is Semantics(container:true) per anchor). Audited our tree: FSM/control
+  grids already container'd; every other list tooltip is button/InkWell-backed
+  (own node) or single-per-item. New test walks the real dashboard semantics
+  tree and pins one tooltip node per tab. Three speculative container:true
+  wrappers added mid-investigation were REVERTED after the test proved the
+  tabs never merged. Kept: replay filename badge hoisted behind a
+  path-only watch (was a bare tooltip rebuilding at 20 Hz) + ExcludeSemantics
+  on display-only live readouts (reduces bridge traffic, zero visual
+  change). Test-harness finding: widget tests cannot cover FS-backed screens
+  — initState always runs in the fake-async zone (verified zone identity
+  differs even inside runAsync), where path_provider + Directory.list stall
+  permanently. If spam persists, suspect hover+rebuild overlay dynamics or
+  teardown races; check whether Narrator/screen reader is running.
+- Launch-site flow redo (saved-only): selection is always one of the saved
+  presets — store normalizes on load (stray selections adopted, dupes
+  collapsed, null falls through to first), "Use without saving" removed from
+  dialog + settings, deleting the last preset clears to the add-a-site empty
+  state. Fixed the settings dropdown assertion crash (value not in items)
+  with the invariant + a defensive value. Port-switcher overflow was the
+  BoxDecoration border insetting the child 2 px (fixed 128+1+32 children in
+  a 161 box) — picker segment now flexes; pinned by widget tests in all
+  states incl. long names. Channel screen: tooltip "Ns ago" (axis kept),
+  top chip uses a 1 px vertical rule + click cursor, TOTAL series dropped
+  from UI and backend (`ChannelSample/ChannelBin.totalBps` removed;
+  `LinkStats.totalBytes` stays — worker reset detection needs it). Battery /
+  altitude charts lost their single-line legends. FSM debug states always
+  render (merged into the pipeline grid) with an arithmetic fit check
+  replacing the fixed hide thresholds. BrandMark uses `assets/icon.png`
+  (the real badge); the wordmark theme freeze   was const-identity wrappers
+  in TopBar (`const Padding` around BrandMark/_NavMenu) — de-consted, pinned
+  by TopBar + BrandMark theme tests. Max-altitude tile is peak-only.
+- Sites dialog redo: saved list (tap selects, per-row edit/remove), Add on
+  top (name, then current-position fill or manual coords; rename deletes the
+  original first). Sites removed from settings (offline maps + appearance +
+  about remain). Tile coverage check: `tileCacheCoverage` probes the exact
+  precache URL set per site via `getTile` (the cache backend exposes no
+  size/count stats) — settings Offline Maps shows per-site cached/total with
+  progress bars plus a Check button next to Preload (button row wraps).
+- Mandatory launch site: a site is always selected (settings Clear removed;
+  `select()` non-nullable; deleting the active preset falls through). New
+  top-bar `LaunchSiteButton` (fixed slot, amber SET SITE when unset) opens a
+  dialog with presets, manual entry and save-current-rocket-position
+  (live GPS fix + name → preset + tile precache). Record is disabled without
+  a site; `startRecording` no-ops. Wire side: `StartRecordingCommand.launch`,
+  `Recorder.start` and `finalizeRecordingFile` all require the site;
+  provisional header carries it; first-fix fallback deleted; siteless
+  recordings rejected at replay and trim. Tests updated (fake files now
+  carry a site).

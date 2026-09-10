@@ -16,12 +16,12 @@ import '../worker/protocol.dart';
 /// channel health: bytes that arrived on the frequency but never decoded
 /// into one of our packets (other transmitters, noise).
 ///
-/// [payloadLength] defaults to the current wire format; pass another value to
-/// parse recordings made with a previous framing.
+/// [TelemetryFraming.payloadLength] is the single fixed framing; there are
+/// no previous framings to parse.
 class PacketParser {
-  final int payloadLength;
+  int get payloadLength => TelemetryFraming.payloadLength;
 
-  PacketParser({this.payloadLength = TelemetryFraming.payloadLength});
+  PacketParser();
 
   int get _totalPacketLength =>
       TelemetryFraming.startWordLength + payloadLength;

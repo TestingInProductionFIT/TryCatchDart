@@ -47,3 +47,9 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# MSIX signing private key - NEVER commit the .pfx or its base64 export.
+# The public trycatch-signing.cer is safe to commit/share.
+*.pfx
+b64.txt
+base64.txt

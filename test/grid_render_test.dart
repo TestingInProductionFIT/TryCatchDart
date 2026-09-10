@@ -4,10 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:trycatch/workspaces/dashboard_screen.dart';
-import 'package:trycatch/workspaces/widget_registry.dart';
+import 'package:trycatch/ui/screens/dashboard_screen.dart';
+import 'package:trycatch/state/tile_registry.dart';
 
-/// Reproduction for "widgets only render in edit mode when a view has 2+".
+/// Reproduction for "tiles only render in edit mode when a view has 2+".
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -20,7 +20,7 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  WidgetDescriptor fakeWidget(String id, String label) => WidgetDescriptor(
+  TileDescriptor fakeTile(String id, String label) => TileDescriptor(
         id: id,
         title: label,
         description: 'test',
@@ -33,7 +33,7 @@ void main() {
   testWidgets('two-widget workspace renders outside edit mode',
       (tester) async {
     SharedPreferences.setMockInitialValues({
-      'trycatch.workspaces.v1': jsonEncode({
+      'trycatch.workspaces': jsonEncode({
         'activeId': 'ws1',
         'workspaces': [
           {
@@ -44,23 +44,23 @@ void main() {
               'id': 's1',
               'vertical': false,
               'ratio': 0.5,
-              'a': {'type': 'leaf', 'widgetId': 'l1', 'typeId': 'w1'},
-              'b': {'type': 'leaf', 'widgetId': 'l2', 'typeId': 'w2'},
+              'a': {'type': 'leaf', 'tileId': 'l1', 'tileType': 'w1'},
+              'b': {'type': 'leaf', 'tileId': 'l2', 'tileType': 'w2'},
             },
           },
         ],
       }),
     });
 
-    final saved = List<WidgetDescriptor>.from(WidgetRegistry.all);
-    WidgetRegistry.all.clear();
-    WidgetRegistry.all.addAll([
-      fakeWidget('w1', 'One'),
-      fakeWidget('w2', 'Two'),
+    final saved = List<TileDescriptor>.from(TileRegistry.all);
+    TileRegistry.all.clear();
+    TileRegistry.all.addAll([
+      fakeTile('w1', 'One'),
+      fakeTile('w2', 'Two'),
     ]);
     addTearDown(() {
-      WidgetRegistry.all.clear();
-      WidgetRegistry.all.addAll(saved);
+      TileRegistry.all.clear();
+      TileRegistry.all.addAll(saved);
     });
 
     await pumpDashboard(tester);
@@ -81,24 +81,24 @@ void main() {
   testWidgets('single-widget workspace renders outside edit mode',
       (tester) async {
     SharedPreferences.setMockInitialValues({
-      'trycatch.workspaces.v1': jsonEncode({
+      'trycatch.workspaces': jsonEncode({
         'activeId': 'ws1',
         'workspaces': [
           {
             'id': 'ws1',
             'name': 'Test',
-            'root': {'type': 'leaf', 'widgetId': 'l1', 'typeId': 'w1'},
+            'root': {'type': 'leaf', 'tileId': 'l1', 'tileType': 'w1'},
           },
         ],
       }),
     });
 
-    final saved = List<WidgetDescriptor>.from(WidgetRegistry.all);
-    WidgetRegistry.all.clear();
-    WidgetRegistry.all.addAll([fakeWidget('w1', 'One')]);
+    final saved = List<TileDescriptor>.from(TileRegistry.all);
+    TileRegistry.all.clear();
+    TileRegistry.all.addAll([fakeTile('w1', 'One')]);
     addTearDown(() {
-      WidgetRegistry.all.clear();
-      WidgetRegistry.all.addAll(saved);
+      TileRegistry.all.clear();
+      TileRegistry.all.addAll(saved);
     });
 
     await pumpDashboard(tester);

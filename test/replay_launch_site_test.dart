@@ -1,8 +1,8 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:serial/serial.dart';
-import 'package:trycatch/flights/replay_controller.dart';
-import 'package:trycatch/settings/launch_site_store.dart';
+import 'package:trycatch/state/replay_controller.dart';
+import 'package:trycatch/state/launch_site_store.dart';
 
 const _fileSite = LaunchSite(
   name: 'Pad',
@@ -78,13 +78,13 @@ void main() {
       );
     });
 
-    test('falls back to the selected site without a file site', () {
+    test('shows no site during replay without a file site', () {
       expect(
         _effective(
           replay: const ReplayState(filePath: 'a.bin'),
           selected: _selected,
         ),
-        _selected,
+        isNull,
       );
     });
 

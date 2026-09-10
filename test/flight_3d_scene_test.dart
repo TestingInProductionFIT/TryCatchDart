@@ -2,12 +2,12 @@ import 'dart:math' as math;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:serial/serial.dart';
-import 'package:trycatch/src/collections/ring_buffer.dart';
-import 'package:trycatch/src/estimation/dead_reckoning.dart';
-import 'package:trycatch/src/geo/geo.dart';
-import 'package:trycatch/src/telemetry/telemetry_store.dart';
-import 'package:trycatch/workspaces/widgets/flight_3d_common.dart';
-import 'package:trycatch/workspaces/widgets/rocket_mesh.dart';
+import 'package:trycatch/core/ring_buffer.dart';
+import 'package:trycatch/core/dead_reckoning.dart';
+import 'package:trycatch/core/geo.dart';
+import 'package:trycatch/state/telemetry_store.dart';
+import 'package:trycatch/ui/tiles/shared/flight_3d_common.dart';
+import 'package:trycatch/ui/tiles/shared/rocket_mesh.dart';
 import 'package:vector_math/vector_math_64.dart';
 
 /// Locks the right-handed world frame (X east, Y up, Z south): a previous

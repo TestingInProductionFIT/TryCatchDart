@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:trycatch/settings/launch_site_store.dart';
-import 'package:trycatch/workspaces/widgets/map_tiles.dart';
+import 'package:trycatch/state/launch_site_store.dart';
+import 'package:trycatch/ui/tiles/shared/map_tiles.dart';
 
 void main() {
   group('tile URL builders', () {

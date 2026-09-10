@@ -1,0 +1,215 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:serial/serial.dart';
+
+import '../../theme/app_colors.dart';
+import '../../state/telemetry_provider.dart';
+
+/// Compact connection control for the top bar: port picker and link action
+/// fused into one pill — the segments share the outer border with square
+/// inner corners, so they read as a single button.
+///
+/// The port segment opens a popup (ports + rescan); the link segment is an
+/// icon-only connect/disconnect. The outer width is fixed so the bar never
+/// shifts when the link comes up.
+class SerialControls extends ConsumerWidget {
+  /// Sentinel menu value that triggers a port rescan instead of a pick.
+  static const _rescanValue = '__rescan__';
+
+  /// Nominal segment widths: the outer slot is fixed (same connected or
+  /// not, so siblings never shift) while the picker segment flexes into
+  /// whatever the border and link segment leave over.
+  static const double pickerWidth = 128;
+  static const double actionWidth = 32;
+
+  const SerialControls({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final ports = ref.watch(availablePortsProvider).value ?? const [];
+    final config = ref.watch(serialConfigProvider);
+    final status =
+        ref.watch(serialStatusProvider).value ?? const SerialWorkerStatus();
+    final notifier = ref.read(serialConfigProvider.notifier);
+
+    final selected = config.selectedPort;
+    final effectiveSelected = selected ??
+        (ports.contains(status.connectedPort) ? status.connectedPort : null);
+    final connected = status.isConnected;
+    final canConnect = !connected && effectiveSelected != null;
+
+    return Container(
+      // Total slot stays fixed so siblings never shift; the border paints
+      // inside these bounds (insetting the child by 1 px each side), so the
+      // picker segment flexes into whatever remains instead of exact-fitting.
+      width: pickerWidth + actionWidth + 1,
+      height: 32,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(AppDimens.radiusSmall),
+        border: Border.all(
+          color: connected
+              ? AppColors.success.withValues(alpha: 0.5)
+              : AppColors.strongBorder,
+        ),
+      ),
+      child: Row(
+        children: [
+          // Port segment: popup when disconnected, static green name when
+          // connected (disconnect first to switch ports).
+          Expanded(
+            child: SizedBox(
+              height: 32,
+              child: MouseRegion(
+                cursor: connected
+                    ? SystemMouseCursors.basic
+                    : SystemMouseCursors.click,
+                child: connected
+                    ? Tooltip(
+                        message:
+                            'Connected to ${status.connectedPort ?? ''} — disconnect to switch ports',
+                        child: _SegmentLabel(
+                          text: status.connectedPort ?? '',
+                          textColor: AppColors.success,
+                          icon: Icons.lock,
+                        ),
+                      )
+                    : PopupMenuButton<String>(
+                        tooltip: ports.isEmpty
+                            ? 'No serial ports found — plug in the radio'
+                            : 'Select a serial port',
+                        borderRadius:
+                            BorderRadius.circular(AppDimens.radiusSmall),
+                        padding: EdgeInsets.zero,
+                        onSelected: (p) {
+                          if (p == _rescanValue) {
+                            notifier.refreshPorts();
+                            return;
+                          }
+                          notifier.setPort(p);
+                        },
+                        itemBuilder: (context) => [
+                          for (final p in ports)
+                            PopupMenuItem(
+                              value: p,
+                              child: Text(
+                                p,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          const PopupMenuItem(
+                            value: _rescanValue,
+                            child: Row(
+                              children: [
+                                Icon(Icons.refresh, size: 14),
+                                SizedBox(width: 6),
+                                Text('Rescan'),
+                              ],
+                            ),
+                          ),
+                        ],
+                        child: _SegmentLabel(
+                          text: effectiveSelected ??
+                              (ports.isEmpty ? 'No ports' : 'Port'),
+                          textColor: effectiveSelected == null
+                              ? AppColors.mutedForeground
+                              : AppColors.foreground,
+                          icon: Icons.arrow_drop_down,
+                        ),
+                      ),
+              ),
+            ),
+          ),
+          // Inner hairline joining the two segments.
+          Container(
+            width: 1,
+            height: 18,
+            color: AppColors.border,
+          ),
+          // Link segment: icon-only connect/disconnect.
+          SizedBox(
+            width: actionWidth,
+            height: 32,
+            child: Tooltip(
+              message: connected
+                  ? 'Disconnect ${status.connectedPort ?? ''}'
+                  : (effectiveSelected == null
+                      ? 'Select a port first'
+                      : 'Connect to $effectiveSelected'),
+              child: MouseRegion(
+                cursor: (connected || canConnect)
+                    ? SystemMouseCursors.click
+                    : SystemMouseCursors.basic,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: connected
+                      ? notifier.disconnect
+                      : (canConnect ? notifier.connect : null),
+                  child: Container(
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.horizontal(
+                        right: Radius.circular(AppDimens.radiusSmall),
+                      ),
+                      color: canConnect
+                          ? AppColors.primary.withValues(alpha: 0.12)
+                          : Colors.transparent,
+                    ),
+                    child: Icon(
+                      connected ? Icons.link_off : Icons.link,
+                      size: 17,
+                      color: connected
+                          ? AppColors.mutedForeground
+                          : (canConnect
+                              ? AppColors.primary
+                              : AppColors.faint),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Label half of the pill: port text + trailing glyph, no own border.
+class _SegmentLabel extends StatelessWidget {
+  final String text;
+  final Color textColor;
+  final IconData icon;
+
+  const _SegmentLabel({
+    required this.text,
+    required this.textColor,
+    required this.icon,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 10, right: 4),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              text,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: AppText.mono.copyWith(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: textColor,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+            ),
+          ),
+          const SizedBox(width: 2),
+          Icon(icon, size: 16, color: AppColors.mutedForeground),
+        ],
+      ),
+    );
+  }
+}

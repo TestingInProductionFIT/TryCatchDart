@@ -1,0 +1,60 @@
+import './layout_tree.dart';
+
+/// A named workspace: an independent tile arrangement (a layout tree).
+class Workspace {
+  final String id;
+  final String name;
+
+  /// Root of the layout tree; `null` while the workspace is empty.
+  final LayoutNode? root;
+
+  const Workspace({
+    required this.id,
+    required this.name,
+    required this.root,
+  });
+
+  Workspace copyWith({String? name, LayoutNode? root}) => Workspace(
+        id: id,
+        name: name ?? this.name,
+        root: root ?? this.root,
+      );
+
+  /// The tile leaf with [tileId], or `null`.
+  LeafNode? leafOf(String tileId) {
+    for (final leaf in root?.leaves ?? const <LeafNode>[]) {
+      if (leaf.tileId == tileId) return leaf;
+    }
+    return null;
+  }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'root': root?.toJson(),
+      };
+
+  factory Workspace.fromJson(Map<String, dynamic> json) {
+    final rootJson = json['root'];
+    final LayoutNode? root = rootJson == null
+        ? null
+        : LayoutNode.fromJson(rootJson as Map<String, dynamic>);
+
+    return Workspace(
+      id: json['id'] as String,
+      name: json['name'] as String,
+      root: root,
+    );
+  }
+}
+
+/// Monotonic id generator (no external dependency).
+class GridIds {
+  static int _counter = 0;
+
+  static String next() {
+    _counter++;
+    return '${DateTime.now().microsecondsSinceEpoch.toRadixString(36)}'
+        '_${_counter.toRadixString(36)}';
+  }
+}

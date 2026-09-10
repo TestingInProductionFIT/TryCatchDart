@@ -22,7 +22,7 @@ abstract final class TelemetryFraming {
   ///
   /// Includes the trailing 2-byte CRC16 — see `TelemetryLayout` in
   /// `telemetry/frame_codec.dart` for the byte-by-byte payload map.
-  static const int payloadLength = 53;
+  static const int payloadLength = 52;
 
   /// Total packet length in bytes (sync word + payload).
   static const int totalPacketLength = startWordLength + payloadLength;

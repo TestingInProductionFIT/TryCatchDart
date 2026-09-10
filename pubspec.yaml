@@ -36,6 +36,7 @@ dev_dependencies:
         sdk: flutter
 
     flutter_lints: ^6.0.0
+    msix: ^3.18.0
 
 flutter:
     uses-material-design: true
@@ -52,3 +53,15 @@ flutter_launcher_icons:
     macos:
         generate: true
         image_path: "assets/icon.png"
+
+# Windows MSIX installer (package:msix). Architecture, version, certificate
+# and output name are supplied by CI (.github/workflows/release.yml);
+# publisher CN must match the signing certificate subject.
+msix_config:
+    display_name: TryCatch
+    publisher_display_name: Testing in Production
+    identity_name: com.krychlic.trycatch
+    publisher: CN=Testing in Production
+    logo_path: assets/icon.png
+    capabilities: internetClient
+    execution_alias: trycatch

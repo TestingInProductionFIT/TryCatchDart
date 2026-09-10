@@ -3,7 +3,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:serial/serial.dart';
-import 'package:trycatch/src/telemetry/channel_health.dart';
+import 'package:trycatch/core/channel_health.dart';
 
 Uint8List validPacket(int sequence) => FrameCodec.encodePacket(
       TelemetryFrame(sequence: sequence),
@@ -71,8 +71,7 @@ void main() {
       final sample =
           tracker.addSnapshot(snap(2000, 210, 110, 2, garbage: 100));
       expect(sample, isNotNull);
-      expect(sample!.totalBps, 110.0);
-      expect(sample.matchedBps, 55.0);
+      expect(sample!.matchedBps, 55.0);
       // 55 matched of 110 total → 55 unmatched.
       expect(sample.unmatchedBps, 55.0);
       expect(sample.packetRate, 1.0);

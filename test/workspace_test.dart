@@ -1,21 +1,21 @@
 import 'dart:ui' show Size;
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:trycatch/workspaces/layout_tree.dart';
-import 'package:trycatch/workspaces/widget_registry.dart';
-import 'package:trycatch/workspaces/workspace_models.dart';
+import 'package:trycatch/state/layout_tree.dart';
+import 'package:trycatch/state/tile_registry.dart';
+import 'package:trycatch/state/workspace_models.dart';
 
-Size _minOf(String typeId) => WidgetRegistry.minSizeOf(typeId);
+Size _minOf(String tileType) => TileRegistry.minSizeOf(tileType);
 
-LeafNode leaf(String typeId) =>
-    LeafNode(widgetId: 'w_$typeId', typeId: typeId);
+LeafNode leaf(String tileType) =>
+    LeafNode(tileId: 'w_$tileType', tileType: tileType);
 
 void main() {
   group('layout tree', () {
     test('treeFromOrder keeps every widget exactly once', () {
       final root = treeFromOrder(
           ['a', 'b', 'c', 'd', 'e'].map(leaf).toList());
-      expect(root.leaves.map((l) => l.typeId), ['a', 'b', 'c', 'd', 'e']);
+      expect(root.leaves.map((l) => l.tileType), ['a', 'b', 'c', 'd', 'e']);
     });
 
     test('minSize combines children correctly per orientation', () {
@@ -51,9 +51,9 @@ void main() {
 
       final a = result.leafRects['w_map']!;
       final b = result.leafRects['w_hall_sensor']!;
-      expect(a.width, greaterThanOrEqualTo(WidgetRegistry.minSizeOf('map').width));
+      expect(a.width, greaterThanOrEqualTo(TileRegistry.minSizeOf('map').width));
       expect(b.width,
-          greaterThanOrEqualTo(WidgetRegistry.minSizeOf('hall_sensor').width));
+          greaterThanOrEqualTo(TileRegistry.minSizeOf('hall_sensor').width));
       expect(a.left + a.width + dividerWidth, b.left);
       expect(result.dividers.length, 1);
     });
@@ -64,8 +64,8 @@ void main() {
 
       final leaves = result.root.leaves;
       expect(leaves.length, 3);
-      expect(leaves.where((l) => l.typeId == 'fsm').length, 1);
-      expect(result.widgetId, 'new1');
+      expect(leaves.where((l) => l.tileType == 'fsm').length, 1);
+      expect(result.tileId, 'new1');
     });
 
     test('removeLeaf collapses its split', () {
@@ -77,7 +77,7 @@ void main() {
       );
 
       final after = removeLeaf(root, 'w_stats');
-      expect(after!.leaves.map((l) => l.typeId).toSet(), {'map', 'fsm'});
+      expect(after!.leaves.map((l) => l.tileType).toSet(), {'map', 'fsm'});
       expect(removeLeaf(root, 'w_map')!.leaves.length, 2);
     });
 
@@ -86,10 +86,10 @@ void main() {
       final swapped = swapLeaves(original, 'w_map', 'w_stats')!;
 
       expect(swapped.leaves.length, 2);
-      final types = swapped.leaves.map((l) => l.typeId).toSet();
+      final types = swapped.leaves.map((l) => l.tileType).toSet();
       expect(types, {'map', 'stats'});
       // The leaf positions changed: map now sits where stats was.
-      expect(swapped.leaves.first.typeId, 'stats');
+      expect(swapped.leaves.first.tileType, 'stats');
     });
 
     test('splitLeaf splits the named tile, not the largest one', () {
@@ -97,15 +97,15 @@ void main() {
       final result =
           splitLeaf(root, 'w_stats', 'flight_3d', 'w_new', _minOf)!;
 
-      expect(result.widgetId, 'w_new');
-      final types = result.root.leaves.map((l) => l.typeId).toSet();
+      expect(result.tileId, 'w_new');
+      final types = result.root.leaves.map((l) => l.tileType).toSet();
       expect(types, {'map', 'stats', 'flight_3d'});
 
       // The new leaf sits next to stats inside the split that replaced it.
       final split = result.root as SplitNode;
       final subtreeTypes = <String>[
-        ...split.a.leaves.map((l) => l.typeId),
-        ...split.b.leaves.map((l) => l.typeId),
+        ...split.a.leaves.map((l) => l.tileType),
+        ...split.b.leaves.map((l) => l.tileType),
       ];
       expect(subtreeTypes, containsAll(['stats', 'flight_3d']));
     });
@@ -128,35 +128,38 @@ void main() {
       expect(restored.id, 'root1');
       expect(restored.vertical, isTrue);
       expect(restored.ratio, 0.7);
-      expect(restored.leaves.map((l) => l.typeId), ['map', 'fsm']);
+      expect(restored.leaves.map((l) => l.tileType), ['map', 'fsm']);
     });
 
-    test('migrates persisted grid layouts', () {
+    test('ignores unknown persisted fields', () {
       final workspace = Workspace.fromJson({
         'id': 'ws1',
         'name': 'Flight view',
+        'root': {
+          'type': 'leaf',
+          'tileId': 'a',
+          'tileType': 'map',
+        },
         'placements': [
-          {'widgetId': 'a', 'typeId': 'map', 'x': 0, 'y': 0, 'w': 5, 'h': 6},
-          {'widgetId': 'b', 'typeId': 'stats', 'x': 5, 'y': 0, 'w': 3, 'h': 4},
+          {'tileId': 'b', 'tileType': 'stats', 'x': 5, 'y': 0, 'w': 3, 'h': 4},
         ],
       });
 
       expect(workspace.root, isNotNull);
-      expect(workspace.root!.leaves.map((l) => l.typeId).toList(),
-          ['map', 'stats']);
+      expect(workspace.root!.leaves.map((l) => l.tileType).toList(), ['map']);
     });
   });
 
   group('default layouts', () {
-    test('use known widget types and lay out without empty leaves', () {
+    test('use known tile types and lay out without empty leaves', () {
       for (final ws in [
-        WidgetRegistry.defaultFlightLayout(),
-        WidgetRegistry.defaultPrepLayout(),
-        WidgetRegistry.defaultReplayLayout(),
+        TileRegistry.defaultFlightLayout(),
+        TileRegistry.defaultPrepLayout(),
+        TileRegistry.defaultReplayLayout(),
       ]) {
         expect(ws.root, isNotNull);
         for (final l in ws.root!.leaves) {
-          expect(WidgetRegistry.byId(l.typeId), isNotNull);
+          expect(TileRegistry.byId(l.tileType), isNotNull);
         }
         // Layout is computable at a realistic dashboard size.
         final result = layoutTree(

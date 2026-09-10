@@ -26,7 +26,15 @@ void main() {
     test('records framed binary data with 12-byte headers per chunk', () async {
       final beforeMicros = DateTime.now().microsecondsSinceEpoch;
 
-      await recorder.start(testFilePath);
+      await recorder.start(
+        testFilePath,
+        launch: const LaunchRef(
+          latitude: 50.0,
+          longitude: 14.0,
+          mslM: 300,
+          name: 'Test pad',
+        ),
+      );
       expect(recorder.isRecording, isTrue);
 
       final chunk1 = Uint8List.fromList([
@@ -48,8 +56,9 @@ void main() {
       recorder.recordBytes(chunk3);
 
       // 3 chunks * 12-byte header + (4 + 4 + 2) payload bytes = 46 bytes
-      // of body; stop() prepends the 112-byte file header (garbage chunks
-      // decode to nothing, so the header carries zero stats).
+      // of body; the file opens with the 108-byte provisional header
+      // (garbage chunks decode to nothing, so finalize leaves it in place
+      // with zero stats — but it already carries the launch site).
       expect(recorder.bytesWritten, 46);
 
       await recorder.stop();
@@ -61,18 +70,19 @@ void main() {
       expect(await file.exists(), isTrue);
 
       final savedBytes = await file.readAsBytes();
-      expect(savedBytes.length, 112 + 46);
+      expect(savedBytes.length, 108 + 46);
 
       // Verify file header.
       final fileHeader =
-          RecordingHeader.decode(savedBytes.sublist(0, 112))!;
-      expect(fileHeader.hasStats, isTrue);
-      expect(fileHeader.hasLaunchSite, isFalse);
+          RecordingHeader.decode(savedBytes.sublist(0, 108))!;
+      expect(fileHeader.hasStats, isFalse);
+      expect(fileHeader.hasLaunchSite, isTrue);
+      expect(fileHeader.launchRef!.name, 'Test pad');
       expect(fileHeader.packetCount, 0);
-      expect(fileHeader.payloadLength, 0);
+      expect(fileHeader.payloadLength, TelemetryFraming.payloadLength);
 
-      // Verify Frame 1 (body starts past the 112-byte file header).
-      var offset = 112;
+      // Verify Frame 1 (body starts past the 108-byte file header).
+      var offset = 108;
       var header1 = ByteData.sublistView(savedBytes, offset, offset + 12);
       var ts1 = header1.getInt64(0, Endian.big);
       var len1 = header1.getUint32(8, Endian.big);
@@ -103,7 +113,15 @@ void main() {
     });
 
     test('ignores empty byte chunks', () async {
-      await recorder.start(testFilePath);
+      await recorder.start(
+        testFilePath,
+        launch: const LaunchRef(
+          latitude: 50.0,
+          longitude: 14.0,
+          mslM: 300,
+          name: 'Test pad',
+        ),
+      );
       recorder.recordBytes(Uint8List(0));
       expect(recorder.bytesWritten, 0);
       await recorder.stop();

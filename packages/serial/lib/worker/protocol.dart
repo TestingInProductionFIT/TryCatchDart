@@ -40,11 +40,11 @@ class SendBytesCommand extends SerialCommand {
 class StartRecordingCommand extends SerialCommand {
   final String filePath;
 
-  /// Launch site to stamp into the recording file header (`null` when no
-  /// site is selected — the recorder then falls back to the first GPS fix).
-  final LaunchRef? launch;
+  /// Launch site stamped into the recording file header. Required — every
+  /// recording carries its site (a site must be selected before recording).
+  final LaunchRef launch;
 
-  const StartRecordingCommand({required this.filePath, this.launch});
+  const StartRecordingCommand({required this.filePath, required this.launch});
 }
 
 /// Stop the current recording session and flush to disk.

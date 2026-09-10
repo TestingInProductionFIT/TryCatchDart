@@ -3,12 +3,12 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:serial/serial.dart';
-import 'package:trycatch/flights/flight_trim.dart';
+import 'package:trycatch/services/flight_trim.dart';
 
 Future<Directory> _tempDir() =>
     Directory.systemTemp.createTemp('flight_trim_test');
 
-/// Builds a fake v1 recording: header + 10 chunks, 1 s apart.
+/// Builds a fake recording: header + 10 chunks, 1 s apart.
 Future<String> _writeFake(String dir) async {
   final chunks = [
     for (var i = 0; i < 10; i++)
@@ -16,7 +16,14 @@ Future<String> _writeFake(String dir) async {
           tsUs: (1000 + i) * 1000000, payload: Uint8List.fromList([i])),
   ];
   final path = '$dir${Platform.pathSeparator}flight.bin';
-  const header = RecordingHeader();
+  const header = RecordingHeader(
+    payloadLength: TelemetryFraming.payloadLength,
+    hasLaunchSite: true,
+    launchLatitude: 50.0,
+    launchLongitude: 14.0,
+    launchMslM: 300,
+    launchName: 'Test pad',
+  );
   await writeRecordingFile(path, header, chunks);
   return path;
 }
@@ -136,9 +143,22 @@ void main() {
           frag++;
         }
         final path = '${dir.path}${Platform.pathSeparator}raw.bin';
-        await writeRecordingChunks(path, chunks);
-        // Bodies gain their header via finalize (as the recorder does).
-        await finalizeRecordingFile(path);
+        await writeRecordingFile(
+          path,
+          const RecordingHeader(
+              payloadLength: TelemetryFraming.payloadLength),
+          chunks,
+        );
+        // The provisional header gains real stats via finalize.
+        await finalizeRecordingFile(
+          path,
+          launch: const LaunchRef(
+            latitude: 1.0,
+            longitude: 2.0,
+            mslM: 3.0,
+            name: 'Pad',
+          ),
+        );
 
         // Decoding raw chunks directly yields nothing (they are stream
         // fragments, not packets) — the preview must go via the parser.
