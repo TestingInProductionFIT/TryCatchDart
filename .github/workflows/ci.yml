@@ -1,8 +1,10 @@
 name: CI
 
+# Manual only: tests no longer run on every push - they gate releases instead
+# (see the `test` job in release.yml). Run this by hand from the Actions tab
+# when you want a check outside a release.
 on:
-  push:
-  pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}

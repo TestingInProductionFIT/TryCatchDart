@@ -1,5 +1,5 @@
-# Release: tag `vX.Y.Z` -> builds on free GitHub-hosted runners ->
-# one GitHub Release with installable artifacts.
+# Release: tag `vX.Y.Z` -> analyze+test gate -> builds on free GitHub-hosted
+# runners -> one GitHub Release with installable artifacts.
 #
 # Outputs:
 #   Windows x64   : trycatch-<ver>-windows-x64.msix (+ .cer) + portable .zip
@@ -61,9 +61,31 @@ jobs:
           echo "msix_version=$MSIX" >> "$GITHUB_OUTPUT"
           echo "Release $BUILD_NAME+$BUILD_NUMBER (msix $MSIX)"
 
+  test:
+    name: Analyze + test (release gate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Test
+        run: flutter test
+
   windows-x64:
     name: Windows x64 (MSIX + zip)
-    needs: version
+    needs: [version, test]
     runs-on: windows-latest
     env:
       BUILD_NAME: ${{ needs.version.outputs.build_name }}
@@ -127,7 +149,7 @@ jobs:
 
   windows-arm64:
     name: Windows ARM64 (MSIX + zip)
-    needs: version
+    needs: [version, test]
     # Native ARM runner: free for public repos, longer queues expected.
     runs-on: windows-11-arm
     env:
@@ -189,7 +211,7 @@ jobs:
 
   linux:
     name: Linux (AppImage + tar.gz)
-    needs: version
+    needs: [version, test]
     runs-on: ubuntu-22.04 # old glibc -> runs on Cachy/Arch + Ubuntu/Fedora
     env:
       BUILD_NAME: ${{ needs.version.outputs.build_name }}
@@ -248,7 +270,7 @@ jobs:
 
   macos:
     name: macOS arm64 (DMG + zip)
-    needs: version
+    needs: [version, test]
     runs-on: macos-14 # free M1 runner; arm64-only build (Intel runs via Rosetta)
     env:
       BUILD_NAME: ${{ needs.version.outputs.build_name }}
