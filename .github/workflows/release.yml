@@ -16,8 +16,12 @@
 # Caveats (see release notes body below):
 #   - Self-signed MSIX: users install trycatch-signing.cer once, need App
 #     Installer enabled; SmartScreen warns.
-#   - windows-11-arm runners queue longer; image migrates VS2022->VS2026
-#     through Sept 2026 - if ARM builds break, check actions/runner-images.
+#   - windows-11-arm: subosito/flutter-action has no windows-arm64 SDK
+#     manifest, so the SDK is git-cloned manually (cached). Runners queue
+#     longer; image migrates VS2022->VS2026 through Sept 2026 - if ARM
+#     builds break, check actions/runner-images.
+#   - If some builders fail, the release still publishes with whatever was
+#     built (publish job runs unless the workflow is cancelled).
 #   - Linux built on ubuntu-22.04 for old-glibc compat with Cachy/Arch;
 #     needs FUSE to run the AppImage; serial HW needs `uucp` group or the
 #     udev rules in packaging/linux.
@@ -136,13 +140,17 @@ jobs:
           }
 
       - name: Portable zip (x64)
+        if: ${{ !cancelled() }}
         shell: pwsh
         run: |
+          New-Item -ItemType Directory -Force build\dist | Out-Null
           if (Test-Path build\windows\x64\runner\Release) { $src = 'build\windows\x64\runner\Release\*' }
-          else { $src = 'build\windows\runner\Release\*' }
+          elseif (Test-Path build\windows\runner\Release) { $src = 'build\windows\runner\Release\*' }
+          else { Write-Output '::warning::No Windows build output found - skipping portable zip.'; exit 0 }
           Compress-Archive -Path $src -DestinationPath "build\dist\trycatch-$env:BUILD_NAME-windows-x64-portable.zip" -Force
 
       - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
         with:
           name: windows-x64
           path: build/dist/*
@@ -151,6 +159,9 @@ jobs:
     name: Windows ARM64 (MSIX + zip)
     needs: [version, test]
     # Native ARM runner: free for public repos, longer queues expected.
+    # NOTE: subosito/flutter-action cannot resolve a windows-arm64 SDK
+    # ("Unable to determine Flutter version ... architecture: arm64"),
+    # so the SDK is installed manually here. Pinned via FLUTTER_VERSION.
     runs-on: windows-11-arm
     env:
       BUILD_NAME: ${{ needs.version.outputs.build_name }}
@@ -158,12 +169,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
+      - name: Cache Flutter SDK (ARM64)
+        uses: actions/cache@v4
         with:
-          channel: stable
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
+          path: ${{ runner.temp }}/flutter
+          key: flutter-arm64-${{ env.FLUTTER_VERSION }}-v1
+
+      - name: Install Flutter (manual, ARM64)
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "$env:RUNNER_TEMP\flutter\bin\flutter.bat")) {
+            git clone --depth 1 --branch "$env:FLUTTER_VERSION" https://github.com/flutter/flutter.git "$env:RUNNER_TEMP\flutter"
+          }
+          Add-Content $env:GITHUB_PATH "$env:RUNNER_TEMP\flutter\bin"
+          flutter --version
 
       - name: Stamp version + get packages
         shell: pwsh
@@ -198,13 +217,17 @@ jobs:
           }
 
       - name: Portable zip (ARM64)
+        if: ${{ !cancelled() }}
         shell: pwsh
         run: |
+          New-Item -ItemType Directory -Force build\dist | Out-Null
           if (Test-Path build\windows\arm64\runner\Release) { $src = 'build\windows\arm64\runner\Release\*' }
-          else { $src = 'build\windows\runner\Release\*' }
+          elseif (Test-Path build\windows\runner\Release) { $src = 'build\windows\runner\Release\*' }
+          else { Write-Output '::warning::No Windows build output found - skipping portable zip.'; exit 0 }
           Compress-Archive -Path $src -DestinationPath "build\dist\trycatch-$env:BUILD_NAME-windows-arm64-portable.zip" -Force
 
       - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
         with:
           name: windows-arm64
           path: build/dist/*
@@ -234,7 +257,8 @@ jobs:
 
       - name: Stamp version + get packages
         run: |
-          python3 -c "import re,p; p='pubspec.yaml'; s=open(p).read(); open(p,'w').write(re.sub(r'^version: .*', 'version: ${BUILD_NAME}+${BUILD_NUMBER}', s, count=1, flags=re.M)))"
+          sed -i.bak -E "s/^version: .*/version: $BUILD_NAME+$BUILD_NUMBER/" pubspec.yaml
+          rm -f pubspec.yaml.bak
           flutter pub get
 
       - name: Build Linux
@@ -264,6 +288,7 @@ jobs:
           (cd dist && sha256sum * > SHA256SUMS-linux.txt)
 
       - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
         with:
           name: linux
           path: dist/*
@@ -287,7 +312,8 @@ jobs:
 
       - name: Stamp version + get packages
         run: |
-          python3 -c "import re; p='pubspec.yaml'; s=open(p).read(); open(p,'w').write(re.sub(r'^version: .*', 'version: ${BUILD_NAME}+${BUILD_NUMBER}', s, count=1, flags=re.M)))"
+          sed -i.bak -E "s/^version: .*/version: $BUILD_NAME+$BUILD_NUMBER/" pubspec.yaml
+          rm -f pubspec.yaml.bak
           flutter pub get
 
       - name: Build macOS
@@ -314,12 +340,16 @@ jobs:
           (cd dist && shasum -a 256 * > SHA256SUMS-macos.txt)
 
       - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
         with:
           name: macos
           path: dist/*
 
   publish:
     name: Publish GitHub Release
+    # Partial releases: runs even when some builders failed, attaching
+    # whatever was produced. Skipped only on manual cancellation.
+    if: ${{ !cancelled() }}
     needs: [version, windows-x64, windows-arm64, linux, macos]
     runs-on: ubuntu-latest
     env:
@@ -335,6 +365,10 @@ jobs:
           cd dist
           # Drop per-OS checksum files, produce one global file.
           rm -f SHA256SUMS-*.txt
+          if [ -z "$(ls -A .)" ]; then
+            echo "::error::No artifacts were produced - all builders failed. Nothing to release."
+            exit 1
+          fi
           sha256sum * > SHA256SUMS.txt
           ls -la
 
@@ -359,4 +393,5 @@ jobs:
 
             ### Caveats
             - MSIX publisher must stay `CN=Testing in Production`; the wire format + command bytes are placeholders (see README).
+            - This release attaches every platform that built successfully. If a file above is missing, that builder failed - check the workflow run.
             - Verify integrity with `SHA256SUMS.txt`.

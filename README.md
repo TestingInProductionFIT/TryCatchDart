@@ -1,105 +1,102 @@
-# {TryCatch}
+# TryCatch
 
 Ground station for model rockets — _Testing in Production_.
 
-A Flutter desktop app that receives telemetry from a rocket over a
-serial link, displays it live on a fully tileable dashboard, records flights
-to disk and replays them, and sends commands back to the rocket.
+A Flutter desktop app that receives live telemetry from a rocket over a serial link, displays it on a tileable dashboard, records flights to disk and replays them, and sends commands back to the rocket.
 
-## Platforms
+No hardware? The built-in **MOCK** port runs a full-flight simulator (pad → ascent → apogee → parachute → landed), so the whole app works without a rocket.
 
-Windows (x86_64 + ARM64), Linux and macOS — all three desktop shells are
-scaffolded (`windows/`, `linux/`, `macos/`). Primary dev target is Windows.
+## What it can do
 
-## Features
+- **Live telemetry** — 10 Hz serial frames, parsed and CRC-checked in a background isolate.
+- **Tiling dashboard** — hyprland-style workspaces with drag-to-resize splits, drag-to-swap tiles, and per-workspace persistence. Factory presets: Flight view, Prep, Replay.
+- **Telemetry tiles** — altitude / velocity / acceleration / battery / hall-sensor charts, GPS + dead-reckoning map, 3D rocket attitude, 3D flight path (plain + satellite), flight-state machine, position, max altitude, parachute status, and a command panel.
+- **Recording & replay** — one-click recording to `Documents/TryCatch/recordings/*.bin`, with seek + speed control on replay. Recordings carry launch site, time span, packet count and peaks in the file header.
+- **GPS gap filling** — ground-side dead reckoning bridges GPS outages so tracks stay connected.
+- **Channel health** — checks whether your frequency is free before launch (clear / activity / interference), mirrored live in the top bar.
+- **Command uplink** — send commands to the rocket with two-click confirmation for arming/pyro.
 
-- **Live telemetry** — 10 Hz frames over a serial port, parsed and CRC-checked
-  in a background isolate. No hardware? The built-in **MOCK** port runs a
-  deterministic full-flight simulator (pad → ascent → apogee → parachute →
-  landed), so the whole app is demoable without a rocket.
-- **Tiling dashboard** — hyprland-style workspaces backed by a KD-tree layout
-  tree. Every split keeps its tiles' minimum sizes; drag dividers to resize,
-  double-click a divider (in edit mode) to flip a split between horizontal and
-  vertical, drag tiles onto each other to swap them. Workspaces are persisted.
-- **14 tile types** — time-series charts (altitude, velocity,
-  acceleration, battery, hall sensor), map with GPS + dead-reckoning tracks, 3D rocket
-  attitude view, 3D flight path (plain + satellite), flight-state machine, position, and a two-click
-  command panel. Adding a tile = one class + one `TileRegistry` entry.
-- **Raw data, no smoothing** — every chart shares one code path and plots the
-  raw telemetry.
-- **Recording & replay** — raw serial chunks are dumped to
-  `Documents/TryCatch/recordings/*.bin` (files open with a 108-byte
-  header: launch site, time span, packet count and peaks, so the grid lists
-  stats without decoding; files without a header are rejected) and can be replayed
-  with seek and speed control.
-- **Ground-side dead reckoning** — a decoupled estimation module fills GPS
-  gaps (≥1 s of silence) so tracks and the 3D flight view stay connected.
-- **Channel health** — a live monitor of bytes/s on the
-  frequency that are not our packets, with an all-clear/activity/
-  interference verdict, for checking the frequency is free before launch.
-  A pill in the top bar mirrors the verdict live.
+> ⚠️ The wire format and command bytes are **placeholders** until the real flight software exists. They are CRC-checked, but **must be aligned with the real firmware before flight**. See `packages/serial/lib/telemetry/frame_codec.dart`.
 
-## Getting started
+## Install (recommended)
 
-Prerequisites: [Flutter](https://docs.flutter.dev/get-started/install) (SDK ^3.13)
-with desktop support for your OS.
+Download the latest release from **GitHub Releases**. One release contains all platforms:
+
+| OS                  | Files                                                                         | How to install                                                                                                                                                                                                                                                                                                   |
+| ------------------- | ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Windows x64 / ARM64 | `trycatch-<ver>-windows-*.msix` (+ `trycatch-signing.cer`) or `-portable.zip` | MSIX: install `trycatch-signing.cer` once (double-click → Install Certificate → Local Machine → Trusted People, App Installer must be enabled), then install the matching `.msix`. SmartScreen will warn on first run (expected, self-signed). No cert / unsigned? Extract the `-portable.zip` and run directly. |
+| Linux x64           | `TryCatch-<ver>-x86_64.AppImage` or `trycatch-<ver>-linux-x64.tar.gz`         | `chmod +x TryCatch-*.AppImage && ./TryCatch-*.AppImage` (needs FUSE). For real serial hardware: `sudo usermod -aG uucp $USER` then log out/in; optional udev rules (`69-trycatch-serial.rules`) ship with the release.                                                                                           |
+| macOS arm64         | `TryCatch-<ver>-macos-arm64.dmg` or `.zip`                                    | Open the DMG, drag to Applications, first launch via Right-click → Open (ad-hoc signed, no paid Apple account). Intel Macs run through Rosetta.                                                                                                                                                                  |
+
+Verify downloads with `SHA256SUMS.txt` in the release.
+
+## Quick start / how to use
+
+1. **Connect** — pick a port in the top bar and hit **Connect**. Use `MOCK` for the simulator, or the rocket's serial port for real hardware.
+2. **Set a launch site** — click the flag / `SET SITE` button in the top bar and pick a saved site (or save the rocket's current GPS as one). Recording stays disabled until a site is set.
+3. **Arrange the dashboard** — toggle **Edit layout** to drag dividers, swap tiles by dragging them onto each other, double-click a divider to flip horizontal/vertical, or use Add-tile / per-tile split. Tabs (`Ctrl+1..9`) are separate workspaces.
+4. **Record** — hit **Record** in the top bar during a live session. Files land in `Documents/TryCatch/recordings/`.
+5. **Replay** — open the Recordings screen, pick a flight (stat grid + 3D previews), hit play. Use the playback bar for seek/speed, **Back to live** to exit.
+6. **Check the channel** — open the Monitor screen before launch. If it says interference, change frequency.
+7. **Send commands** — use the command panel tile (disabled while disconnected or replaying). Arming/pyro need a second confirm click within 3 s.
+
+Tips:
+
+- Charts show a 60 s rolling window live, the whole flight on replay.
+- Map/3D tiles are immersive — use the tool buttons for follow, satellite, zoom, and camera mode.
+- Dark mode, offline-map preload, and saved sites live in Settings.
+
+## Run from source
+
+Prerequisites: [Flutter](https://docs.flutter.dev/get-started/install) (stable, see `FLUTTER_VERSION` in `.github/workflows/ci.yml`) with desktop support for your OS, plus on Linux: `ninja-build libgtk-3-dev pkg-config cmake clang liblzma-dev`.
 
 ```powershell
 flutter pub get
-flutter run -d windows   # or -d linux / -d macos
+flutter run -d windows --release   # or -d linux / -d macos
 ```
 
-Then pick the `MOCK` port in the top bar and hit **Connect** — no radio
-hardware required. To use real hardware, select the rocket's serial port instead
-(baud rate and framing live in `packages/serial`).
+Use `--release` — debug builds are janky and misrepresent performance. Then pick the `MOCK` port and hit **Connect**.
 
-Debug builds are janky; use `flutter run -d windows --release` when evaluating
-feel and performance.
-
-## The wire format is a placeholder
-
-The serial frame format (52-byte payload: GPS, barometer, IMU, attitude,
-battery, hall sensor, FSM state + CRC16-CCITT) is **made up** until the real
-flight software exists. It is CRC-checked so corruption is caught; there is
-a single format with no versioning. The command panel's byte catalog is
-likewise a placeholder and **must be aligned with the real firmware before
-flight** — arming and pyro commands require a two-click confirmation.
-
-See `packages/serial/lib/telemetry/frame_codec.dart` for the layout.
+Baud rate and framing live in `packages/serial`.
 
 ## Project layout
 
 ```
 lib/
   ui/screens/     app chrome + screens (shell, dashboard, recordings, settings, monitor)
-  ui/components/  shared chrome (top bar, cards, pills, buttons, placeholders)
+  ui/components/  shared chrome (top bar, cards, pills, buttons)
   ui/tiles/       telemetry tiles + shared/ (charts, 3D scene, tile I/O)
   state/          Riverpod stores (telemetry, replay, workspaces, launch sites, router)
   services/       app services (recording trim, prefs keys)
   core/           pure logic (geo, dead reckoning, ring buffer, formats)
-  theme/          "Precision Light" design system (colors, text, theme)
+  theme/          "Precision Light" design system
 packages/serial/  framing, codec, worker isolate, mock simulator
-test/             unit + widget tests (144)
-design_mockups/   HTML mockups from the design exploration (reference only)
+test/             unit + widget tests
+packaging/        linux desktop/udev files; windows MSIX via package:msix
 ```
 
-## Design
+Deep-dive on architecture, wire format, and decisions: [HANDOFF.md](HANDOFF.md).
 
-**"Precision Light"** (plus a dark companion): cards on a cool grey desk, hairline
-borders, monospace micro-labels for anything technical, and the team pink
-`#FF00A1` as the single accent (status colors stay green/amber/red). Platform
-notes — including why card shadows/anti-aliased clips are
-avoided on Windows ARM64 (Impeller/OpenGLES blank-paint bug) — are documented
-in [HANDOFF.md](HANDOFF.md), which doubles as the deep-dive: architecture
-decisions, tile registry, replay pipeline, and current state.
+## Contributing
 
-## Development
+Issues and PRs welcome.
 
-```powershell
-flutter analyze   # keep it clean
-flutter test      # 144 tests, keep them green
-```
+1. Fork, branch off `main`, open a PR against `main`.
+2. Keep it focused — one feature/fix per PR, describe how you tested it.
+3. Keep the checks green:
 
-Riverpod 3 (no codegen), no router package, no build_runner. Adding a
-dashboard tile is one class plus one `TileRegistry` entry — min size,
-title and builder included.
+    ```powershell
+    flutter analyze
+    flutter test
+    ```
+
+    CI runs the same two steps; releases are gated on them too.
+
+4. Follow existing conventions:
+    - Riverpod 3, no codegen, no router package, no `build_runner`.
+    - Keep tiles data-driven — a new dashboard tile is one class + one `TileRegistry` entry (id, title, description, min size, builder).
+    - Charts plot raw data through the shared `TimeSeriesChart` path — no per-tile smoothing.
+    - Match the Precision Light theme (`AppCard`, `AppText`, pink `#FF00A1` accent only; status stays green/amber/red).
+5. If you touch the wire format (`packages/serial`), update the codec, the mock simulator, recording header handling, and tests together — there is a single format with no versioning, by design.
+
+Releases are cut by pushing a `vX.Y.Z` tag (see `.github/workflows/release.yml`).
