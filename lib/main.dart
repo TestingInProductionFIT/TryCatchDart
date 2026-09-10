@@ -25,7 +25,7 @@ void main() async {
     size: Size(1280, 800),
     minimumSize: Size(1024, 600),
     center: true,
-    title: '{TryCatch}',
+    title: 'TryCatch',
   );
 
   windowManager.waitUntilReadyToShow(windowOptions, () async {
@@ -93,25 +93,68 @@ class _AppLifecycleWrapperState extends State<AppLifecycleWrapper>
   }
 
   Future<void> _setupSystemTray() async {
-    try {
-      await trayManager.setToolTip('{TryCatch}');
-
-      await trayManager.setIcon(
-        Platform.isWindows ? 'assets/icon.ico' : 'assets/icon.png',
-      );
-
+    // NOTE: tray_manager's Linux backend only implements destroy / setIcon /
+    // setTitle / setContextMenu (no setToolTip, no popUpContextMenu — the
+    // AppIndicator shows its registered menu by itself). Every call is
+    // guarded individually so one unsupported method can never abort the
+    // rest of the setup (a single shared try/catch around setToolTip used
+    // to skip setIcon + setContextMenu on Linux, leaving no tray at all).
+    await _trayGuard('setIcon', () async {
+      final iconPath = _resolveTrayIconPath();
+      if (iconPath != null) {
+        await trayManager.setIcon(iconPath);
+      } else {
+        debugPrint('System tray: no icon file found, skipping setIcon');
+      }
+    });
+    if (Platform.isLinux) {
+      // Closest Linux equivalent of a tooltip: the indicator label.
+      await _trayGuard('setTitle', () => trayManager.setTitle('TryCatch'));
+    } else {
+      await _trayGuard('setToolTip', () => trayManager.setToolTip('TryCatch'));
+    }
+    await _trayGuard('setContextMenu', () async {
       await trayManager.setContextMenu(
         Menu(
           items: [
-            MenuItem(key: 'show_app', label: 'Show {TryCatch}'),
+            MenuItem(key: 'show_app', label: 'Show TryCatch'),
             MenuItem.separator(),
-            MenuItem(key: 'quit_app', label: 'Quit {TryCatch}'),
+            MenuItem(key: 'quit_app', label: 'Quit TryCatch'),
           ],
         ),
       );
+    });
+  }
+
+  Future<void> _trayGuard(String what, Future<void> Function() call) async {
+    try {
+      await call();
     } catch (e) {
-      debugPrint('Failed to initialize system tray: $e');
+      debugPrint('System tray: $what failed: $e');
     }
+  }
+
+  /// Absolute tray-icon path: `flutter run` uses the repo-relative asset
+  /// (CWD is the project root), while an installed/built bundle resolves
+  /// next to the executable under `data/flutter_assets/`. Returns `null`
+  /// when neither exists so the caller can skip `setIcon` (AppIndicator
+  /// needs a real file, not a bundled asset key).
+  String? _resolveTrayIconPath() {
+    final fileName = Platform.isWindows ? 'icon.ico' : 'icon.png';
+    // Dev: repo root is the working directory.
+    final dev = File('assets/$fileName');
+    if (dev.existsSync()) return dev.absolute.path;
+    // Installed bundle: <exeDir>/data/flutter_assets/assets/<file>.
+    try {
+      final exeDir = File(Platform.resolvedExecutable).parent.path;
+      final sep = Platform.pathSeparator;
+      final bundled =
+          File('$exeDir${sep}data${sep}flutter_assets${sep}assets$sep$fileName');
+      if (bundled.existsSync()) return bundled.path;
+    } catch (_) {
+      // Fall through to null.
+    }
+    return null;
   }
 
   // Called whenever the user clicks the window close (X) button
@@ -131,7 +174,13 @@ class _AppLifecycleWrapperState extends State<AppLifecycleWrapper>
 
   @override
   void onTrayIconRightMouseDown() {
-    trayManager.popUpContextMenu();
+    // Linux/AppIndicator shows the menu registered via setContextMenu by
+    // itself — popUpContextMenu is not implemented there and would only
+    // throw MissingPluginException.
+    if (Platform.isLinux) return;
+    _trayGuard('popUpContextMenu', () async {
+      await trayManager.popUpContextMenu();
+    });
   }
 
   @override

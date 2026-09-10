@@ -19,6 +19,26 @@
   `shared_preferences`, `path_provider`, `window_manager`, `tray_manager`,
   `flutter_libserialport`, local package `packages/serial`.
 - No router package (4 flat screens via enum provider). No build_runner/freezed.
+- Linux native shell (`linux/runner/my_application.cc`): GtkHeaderBar only
+  on GNOME-like desktops (env `*DESKTOP*` has gnome/unity/pantheon/budgie,
+  or X11 WM is GNOME Shell/Mutter); KDE Plasma (kde/plasma markers or
+  `KDE_SESSION_VERSION`, any backend) and all other WMs fall back to a
+  traditional title bar so KWin/the compositor draws native decorations.
+  Native title is `TryCatch` (matches `WindowOptions`/tray); X11 window icon
+  resolves `linux/assets/icon.png` (dev) then `assets/icon.png` (bundle).
+  On Wayland the icon NEVER comes from `gtk_window_set_icon` — it comes from
+  the hicolor theme via the .desktop entry, so: full 16–512 px set in
+  `packaging/linux/icons/hicolor/*/apps/com.krychlic.trycatch.png` (generated
+  from `assets/icon.png`; release workflow copies the whole tree into the
+  AppDir), and `StartupWMClass=com.krychlic.trycatch` must equal the Wayland
+  app_id or the compositor shows a generic icon. For `flutter run`,
+  `tool/install-linux-desktop-entry.sh` installs the entry + icons to
+  `~/.local/share`.
+- `tray_manager` 0.5.3 still calls the deprecated `app_indicator_new()`
+  (upstream has not moved to `ayatana_app_indicator_new`), and our
+  `APPLY_STANDARD_SETTINGS` adds `-Werror` — so `linux/CMakeLists.txt` adds
+  a targeted `-Wno-deprecated-declarations` to the `tray_manager_plugin`
+  target only (guarded by `if(TARGET …)`); our own code keeps `-Werror`.
 - Theme (`lib/theme/`): white/dark cards (radius 12/8) on cool grey, hairline
   borders, monospace micro-labels (Consolas via `AppText`), team pink `#FF00A1`
   as the single accent (`pinkDeep` for text-safe accents; status stays
@@ -96,7 +116,7 @@ lib/
                      ChannelHealthPill, RecordingControls, PlaybackBar,
                      AppCard, StatusPill, ToolFab, WaitingForData,
                      CenteredValue, CopyButton
-  ui/tiles/          14 telemetry tiles; shared/ = TimeSeriesChart,
+   ui/tiles/          15 telemetry tiles (incl. channel health); shared/ = TimeSeriesChart,
                      ChartValueHeader, flight scene/painters/shell,
                      rocket mesh, orbit camera, map/satellite tile I/O
   state/             telemetry_store (THE ingestion point),
@@ -198,6 +218,9 @@ download, image check, shared disk cache), `CopyButton`, format helpers,
 - **Channel health**: anything plotted is NOT our rocket. Verdicts on
   unmatched B/s: clear <50, activity <400, else interference. Screen =
   verdict banner (pill + rate + hint) + chart card + 3 key numbers.
+  Dashboard tile (`channel_health`, in Flight + Prep defaults) = compact
+  verdict row (dot + CLEAR/ACTIVITY/INTERFERENCE + ours/other B/s) + the
+  same rolling/replay chart; short tiles shed to a headline number.
   Replay buckets chunks into 500 ms bins at load; verdict follows playhead.
   Top-bar pill mirrors the verdict (pulsing red on interference, tap opens
   the screen).
@@ -309,5 +332,16 @@ adjacent Tooltips in grids need `Semantics(container:true)`.
   a site; `startRecording` no-ops. Wire side: `StartRecordingCommand.launch`,
   `Recorder.start` and `finalizeRecordingFile` all require the site;
   provisional header carries it; first-fix fallback deleted; siteless
-  recordings rejected at replay and trim. Tests updated (fake files now
-  carry a site).
+   recordings rejected at replay and trim. Tests updated (fake files now
+   carry a site).
+- Linux tray never worked: tray_manager's Linux backend only implements
+  destroy/setIcon/setTitle/setContextMenu, but `_setupSystemTray` called
+  `setToolTip` first inside one shared try/catch — the
+  MissingPluginException aborted setup before setIcon/setContextMenu ran.
+  Now every tray call has its own guard, Linux uses `setTitle` instead of
+  `setToolTip`, `popUpContextMenu` is skipped on Linux (the AppIndicator
+  shows the registered menu itself), and the icon resolves to an absolute
+  path (repo `assets/` in dev, `<exe>/data/flutter_assets/assets/` in a
+  bundle). Runtime side is fine (plugin .so bundled, ayatana libs present);
+  on Plasma the icon appears via the AppIndicator→SNI bridge in the panel
+  system tray.

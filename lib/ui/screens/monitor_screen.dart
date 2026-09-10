@@ -14,7 +14,7 @@ class MonitorScreen extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Expanded(child: ChannelHealthTile()),
+        Expanded(child: ChannelHealthMonitor()),
       ],
     );
   }
