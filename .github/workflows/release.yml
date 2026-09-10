@@ -182,7 +182,9 @@ jobs:
             git clone --depth 1 --branch "$env:FLUTTER_VERSION" https://github.com/flutter/flutter.git "$env:RUNNER_TEMP\flutter"
           }
           Add-Content $env:GITHUB_PATH "$env:RUNNER_TEMP\flutter\bin"
-          flutter --version
+          # NOTE: GITHUB_PATH takes effect only in later steps, so use the full
+          # path here to precache/verify the SDK within this step.
+          & "$env:RUNNER_TEMP\flutter\bin\flutter.bat" --version
 
       - name: Stamp version + get packages
         shell: pwsh
@@ -253,7 +255,8 @@ jobs:
         run: |
           sudo apt-get update -y
           sudo apt-get install -y ninja-build libgtk-3-dev pkg-config cmake clang \
-            liblzma-dev file desktop-file-utils appstream fuse
+            liblzma-dev file desktop-file-utils appstream fuse \
+            libayatana-appindicator3-dev
 
       - name: Stamp version + get packages
         run: |
@@ -315,6 +318,10 @@ jobs:
           sed -i.bak -E "s/^version: .*/version: $BUILD_NAME+$BUILD_NUMBER/" pubspec.yaml
           rm -f pubspec.yaml.bak
           flutter pub get
+
+      - name: Install CocoaPods build tools
+        # libserialport pod compiles from source via autotools during `pod install`.
+        run: brew install automake libtool
 
       - name: Build macOS
         run: flutter build macos --release --build-name "$BUILD_NAME" --build-number "$BUILD_NUMBER"
