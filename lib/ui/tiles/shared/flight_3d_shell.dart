@@ -1,12 +1,14 @@
 import 'dart:async';
 
-import 'package:flutter/gestures.dart' show PointerScrollEvent;
+import 'package:flutter/gestures.dart'
+    show PointerPanZoomUpdateEvent, PointerScrollEvent;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../components/tool_button.dart';
 import './flight_3d_common.dart';
 import './orbit_camera.dart';
+import './trackpad_zoom.dart' show scrollZoomFactor;
 
 /// Shared camera state for the 3D flight views (plain + satellite): chase /
 /// orbit-field / free-orbit mode, wheel-zoom, and the slow auto-rotation
@@ -55,7 +57,14 @@ mixin Flight3dShellState<T extends ConsumerStatefulWidget> on ConsumerState<T> {
 /// Shared chrome around both 3D flight painters: gesture canvas (drag orbits,
 /// wheel zooms, double-tap resets) and the camera-mode + zoom tool column.
 /// Satellite-only extras (imagery credit) go in [extraOverlays].
-class Flight3dShell extends StatelessWidget {
+///
+/// Trackpad gestures arrive as pointer pan/zoom events rather than wheel
+/// scrolls, and the framework routes their swipe component to drag
+/// recognizers — without suppression a two-finger swipe would both zoom
+/// (here) and tilt (via [onOrbit]). While a trackpad gesture is active the
+/// swipe/pinch zooms and drag-orbit is ignored; a real press always clears
+/// the flag so a lost gesture-end can never wedge orbiting off.
+class Flight3dShell extends StatefulWidget {
   final CustomPainter painter;
   final FlightCameraMode mode;
   final ValueChanged<FlightCameraMode> onMode;
@@ -76,6 +85,22 @@ class Flight3dShell extends StatelessWidget {
   });
 
   @override
+  State<Flight3dShell> createState() => _Flight3dShellState();
+}
+
+class _Flight3dShellState extends State<Flight3dShell> {
+  bool _trackpadZooming = false;
+  double _lastScale = 1.0;
+
+  void _trackpadZoom(PointerPanZoomUpdateEvent event) {
+    _trackpadZooming = true;
+    final factor =
+        scrollZoomFactor(event.panDelta.dy) * (event.scale / _lastScale);
+    _lastScale = event.scale;
+    if (factor != 1.0) widget.onZoomBy(factor);
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Stack(
       fit: StackFit.expand,
@@ -84,14 +109,24 @@ class Flight3dShell extends StatelessWidget {
           onPointerSignal: (event) {
             if (event is! PointerScrollEvent) return;
             // Scroll up zooms in, scroll down zooms out.
-            onZoomBy(event.scrollDelta.dy > 0 ? 1 / 1.1 : 1.1);
+            widget.onZoomBy(event.scrollDelta.dy > 0 ? 1 / 1.1 : 1.1);
           },
+          onPointerPanZoomStart: (_) {
+            _trackpadZooming = true;
+            _lastScale = 1.0;
+          },
+          onPointerPanZoomUpdate: _trackpadZoom,
+          onPointerPanZoomEnd: (_) => _trackpadZooming = false,
+          onPointerDown: (_) => _trackpadZooming = false,
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
-            onPanUpdate: (details) => onOrbit(details.delta),
-            onDoubleTap: onResetZoom,
+            onPanUpdate: (details) {
+              if (_trackpadZooming) return;
+              widget.onOrbit(details.delta);
+            },
+            onDoubleTap: widget.onResetZoom,
             child: CustomPaint(
-              painter: painter,
+              painter: widget.painter,
               child: const SizedBox.expand(),
             ),
           ),
@@ -108,8 +143,8 @@ class Flight3dShell extends StatelessWidget {
                   child: ToolFab(
                     icon: m.icon,
                     tooltip: m.label,
-                    active: mode == m,
-                    onTap: () => onMode(m),
+                    active: widget.mode == m,
+                    onTap: () => widget.onMode(m),
                   ),
                 ),
               const SizedBox(height: 2),
@@ -117,19 +152,19 @@ class Flight3dShell extends StatelessWidget {
                 icon: Icons.add,
                 tooltip: 'Zoom in',
                 active: false,
-                onTap: () => onZoomBy(1.25),
+                onTap: () => widget.onZoomBy(1.25),
               ),
               const SizedBox(height: 6),
               ToolFab(
                 icon: Icons.remove,
                 tooltip: 'Zoom out',
                 active: false,
-                onTap: () => onZoomBy(1 / 1.25),
+                onTap: () => widget.onZoomBy(1 / 1.25),
               ),
             ],
           ),
         ),
-        ...extraOverlays,
+        ...widget.extraOverlays,
       ],
     );
   }

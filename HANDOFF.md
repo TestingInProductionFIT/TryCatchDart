@@ -34,6 +34,20 @@
   app_id or the compositor shows a generic icon. For `flutter run`,
   `tool/install-linux-desktop-entry.sh` installs the entry + icons to
   `~/.local/share`.
+- Pointer input, desktop: a precision-touchpad two-finger swipe arrives as
+  `PointerPanZoom` events, NOT wheel scrolls. flutter_map ignores those for
+  zoom (and its drag recognizers ignore pure swipes too — a swipe did
+  nothing on the map), while the framework routes the swipe to drag
+  recognizers (a swipe tilted the 3D views via `onPanUpdate`). So every
+  map/3D view handles both paths: wheel (`scrollWheelZoom` flag /
+  `Listener.onPointerSignal`) plus an explicit `onPointerPanZoomUpdate`
+  handler. Map zooms swipes with the wheel velocity, cursor-anchored via
+  `focusedZoomCenter`, and skips updates carrying scale (flutter_map's own
+  pinch-zoom owns those — handling both would double-zoom). The 3D shell +
+  rocket tile zoom from swipe (`scrollZoomFactor`, ×1.1 per 120 units, same
+  curve as the wheel) and pinch scale ratio, and suppress drag-orbit while
+  a trackpad gesture is active (a real press clears the flag, so a lost
+  gesture-end can't wedge orbiting off). Pinned by `scroll_zoom_test.dart`.
 - `tray_manager` 0.5.3 still calls the deprecated `app_indicator_new()`
   (upstream has not moved to `ayatana_app_indicator_new`), and our
   `APPLY_STANDARD_SETTINGS` adds `-Werror` — so `linux/CMakeLists.txt` adds
