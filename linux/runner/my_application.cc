@@ -1,11 +1,109 @@
 #include "my_application.h"
 
+#include <string.h>
+
 #include <flutter_linux/flutter_linux.h>
 #ifdef GDK_WINDOWING_X11
 #include <gdk/gdkx.h>
 #endif
 
 #include "flutter/generated_plugin_registrant.h"
+
+// Set to the user-visible app name (matches the .desktop Name= and the
+// Flutter WindowOptions title) so GNOME, KDE and task managers agree.
+static const char* kAppTitle = "TryCatch";
+
+// --- Desktop-environment detection ------------------------------------------
+//
+// The stock Flutter template only enables the GNOME-style GtkHeaderBar on
+// GNOME/X11 and assumes it works everywhere on Wayland. On KDE Plasma that
+// leaves a GNOME-looking client-side header bar (or an unthemed GTK3
+// titlebar) where KWin should be drawing native Breeze decorations.
+//
+// Policy: use the header bar only on GNOME-like desktops; everywhere else
+// (KDE Plasma in particular, on both X11 and Wayland) fall back to a
+// traditional title bar and let the window manager/compositor decorate.
+
+static gboolean env_value_contains(const char* env_name,
+                                   const char* needle) {
+  const gchar* value = g_getenv(env_name);
+  if (value == nullptr || needle == nullptr) {
+    return FALSE;
+  }
+  gchar* lower = g_ascii_strdown(value, -1);
+  gboolean found = strstr(lower, needle) != nullptr;
+  g_free(lower);
+  return found;
+}
+
+static gboolean env_any_contains(const char* needle) {
+  return env_value_contains("XDG_CURRENT_DESKTOP", needle) ||
+         env_value_contains("XDG_SESSION_DESKTOP", needle) ||
+         env_value_contains("DESKTOP_SESSION", needle);
+}
+
+static gboolean is_kde_desktop() {
+  if (env_any_contains("kde") || env_any_contains("plasma")) {
+    return TRUE;
+  }
+  // KDE exports KDE_SESSION_VERSION even when the XDG vars are minimal.
+  return g_getenv("KDE_SESSION_VERSION") != nullptr;
+}
+
+static gboolean is_gnome_like_desktop() {
+  return env_any_contains("gnome") || env_any_contains("unity") ||
+         env_any_contains("pantheon") || env_any_contains("budgie");
+}
+
+static gboolean should_use_header_bar(GtkWindow* window) {
+  // KDE Plasma first: never force the GNOME header bar there — KWin draws
+  // native Breeze decorations on X11, and on Wayland a plain title keeps
+  // the Breeze-GTK styling instead of the GNOME CSD look.
+  if (is_kde_desktop()) {
+    return FALSE;
+  }
+  if (is_gnome_like_desktop()) {
+    return TRUE;
+  }
+#ifdef GDK_WINDOWING_X11
+  GdkScreen* screen = gtk_window_get_screen(window);
+  if (GDK_IS_X11_SCREEN(screen)) {
+    const gchar* wm_name = gdk_x11_screen_get_window_manager_name(screen);
+    // GNOME Shell / Mutter (covers Ubuntu) get the header bar; every other
+    // X11 WM (KWin, Xfwm, Muffin, Openbox, i3, …) keeps server decorations.
+    if (g_strcmp0(wm_name, "GNOME Shell") == 0 ||
+        g_strcmp0(wm_name, "Mutter") == 0) {
+      return TRUE;
+    }
+    return FALSE;
+  }
+#endif
+  // Wayland (or unknown backend) on a non-GNOME desktop: let the compositor
+  // decorate instead of imposing the GNOME header bar.
+  return FALSE;
+}
+
+static void set_window_icon(GtkWindow* window) {
+  // Candidates in priority order: dev-time tree (`flutter run` from the
+  // repo root) first, then the installed bundle layout (CMake installs
+  // linux/assets/ to <bundle>/assets/).
+  const char* candidates[] = {
+      "linux/assets/icon.png",
+      "assets/icon.png",
+      nullptr,
+  };
+  for (int i = 0; candidates[i] != nullptr; i++) {
+    g_autoptr(GError) icon_error = nullptr;
+    GdkPixbuf* icon =
+        gdk_pixbuf_new_from_file(candidates[i], &icon_error);
+    if (icon != nullptr) {
+      gtk_window_set_icon(window, icon);
+      g_object_unref(icon);
+      return;
+    }
+  }
+  g_warning("Failed to load application icon (tried linux/assets/icon.png)");
+}
 
 struct _MyApplication {
   GtkApplication parent_instance;
@@ -25,45 +123,25 @@ static void my_application_activate(GApplication* application) {
   GtkWindow* window =
       GTK_WINDOW(gtk_application_window_new(GTK_APPLICATION(application)));
 
-  // Use a header bar when running in GNOME as this is the common style used
-  // by applications and is the setup most users will be using (e.g. Ubuntu
-  // desktop).
-  // If running on X and not using GNOME then just use a traditional title bar
-  // in case the window manager does more exotic layout, e.g. tiling.
-  // If running on Wayland assume the header bar will work (may need changing
-  // if future cases occur).
-  gboolean use_header_bar = TRUE;
-#ifdef GDK_WINDOWING_X11
-  GdkScreen* screen = gtk_window_get_screen(window);
-  if (GDK_IS_X11_SCREEN(screen)) {
-    const gchar* wm_name = gdk_x11_screen_get_window_manager_name(screen);
-    if (g_strcmp0(wm_name, "GNOME Shell") != 0) {
-      use_header_bar = FALSE;
-    }
-  }
-#endif
-  if (use_header_bar) {
+  // GNOME-like desktops get the GtkHeaderBar; KDE Plasma (and every other
+  // non-GNOME setup) keeps a traditional title bar so KWin/the compositor
+  // draws native decorations instead of an out-of-place GNOME header bar.
+  if (should_use_header_bar(window)) {
     GtkHeaderBar* header_bar = GTK_HEADER_BAR(gtk_header_bar_new());
     gtk_widget_show(GTK_WIDGET(header_bar));
-    gtk_header_bar_set_title(header_bar, "trycatch");
+    gtk_header_bar_set_title(header_bar, kAppTitle);
     gtk_header_bar_set_show_close_button(header_bar, TRUE);
     gtk_window_set_titlebar(window, GTK_WIDGET(header_bar));
   } else {
-    gtk_window_set_title(window, "trycatch");
+    gtk_window_set_title(window, kAppTitle);
+    // Make sure the WM/compositor decorates the window (relevant on KDE:
+    // KWin draws Breeze SSD on X11 from this).
+    gtk_window_set_decorated(window, TRUE);
   }
 
   gtk_window_set_default_size(window, 1280, 720);
 
-  // --- SET LINUX WINDOW & DOCK ICON ---
-  g_autoptr(GError) icon_error = nullptr;
-  GdkPixbuf* icon = gdk_pixbuf_new_from_file("linux/assets/app_icon.png", &icon_error);
-  if (icon != nullptr) {
-    gtk_window_set_icon(window, icon);
-    g_object_unref(icon);
-  } else {
-    g_warning("Failed to load application icon: %s", icon_error->message);
-  }
-  // ------------------------------------
+  set_window_icon(window);
 
   g_autoptr(FlDartProject) project = fl_dart_project_new();
   fl_dart_project_set_dart_entrypoint_arguments(

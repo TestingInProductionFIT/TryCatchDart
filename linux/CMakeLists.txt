@@ -42,6 +42,8 @@ endif()
 function(APPLY_STANDARD_SETTINGS TARGET)
   target_compile_features(${TARGET} PUBLIC cxx_std_14)
   target_compile_options(${TARGET} PRIVATE -Wall -Werror)
+  # tray_manager calls app_indicator_new, deprecated in newer libayatana-appindicator.
+  target_compile_options(${TARGET} PRIVATE -Wno-error=deprecated-declarations)
   target_compile_options(${TARGET} PRIVATE "$<$<NOT:$<CONFIG:Debug>>:-O3>")
   target_compile_definitions(${TARGET} PRIVATE "$<$<NOT:$<CONFIG:Debug>>:NDEBUG>")
 endfunction()
@@ -73,6 +75,15 @@ set_target_properties(${BINARY_NAME}
 # Generated plugin build rules, which manage building the plugins and adding
 # them to the application.
 include(flutter/generated_plugins.cmake)
+
+# tray_manager 0.5.3 still calls app_indicator_new(), which the
+# ayatana-appindicator headers mark deprecated (upstream has not migrated to
+# ayatana_app_indicator_new). Our APPLY_STANDARD_SETTINGS adds -Werror, so the
+# deprecation notice fails the build. Silence it for that third-party target
+# only — our own code keeps -Werror. Safe if the plugin is absent/renamed.
+if(TARGET tray_manager_plugin)
+  target_compile_options(tray_manager_plugin PRIVATE -Wno-deprecated-declarations)
+endif()
 
 
 # === Installation ===

@@ -9,7 +9,7 @@ import '../../state/telemetry_provider.dart';
 import '../../theme/app_colors.dart';
 import '../screens/router.dart';
 
-/// Combined link-stats button for the top bar: packet rate + unmatched
+/// Combined link-stats button for the top bar: packet rate + unknown
 /// bytes/s in one fixed-width slot.
 ///
 /// Replaces the separate packet-rate readout and channel-health pill. The
@@ -83,7 +83,7 @@ class _LinkStatsButtonState extends ConsumerState<LinkStatsButton> {
           : '${_rate.getAveragePacketsPerSecond().toStringAsFixed(1)} pkt/s';
       channelPart = _channel.latest == null ? '··· B/s' : formatBps(unmatched);
       tip =
-          'Packet rate and undecodable traffic on this frequency. '
+          'Packet rate and unknown traffic on this frequency (ours vs unknown). '
           'Open Channel health.';
     }
     final textColor = connected

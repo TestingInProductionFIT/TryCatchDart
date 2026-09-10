@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart' show PointerPanZoomUpdateEvent;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -28,6 +29,12 @@ class _MapWidgetState extends ConsumerState<MapTile> {
 
   static final _satelliteTiles = buildSatelliteLayer();
 
+  static const _interactionOptions = InteractionOptions(
+    flags: InteractiveFlag.drag |
+        InteractiveFlag.scrollWheelZoom |
+        InteractiveFlag.pinchZoom,
+  );
+
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(telemetryStoreProvider);
@@ -57,20 +64,20 @@ class _MapWidgetState extends ConsumerState<MapTile> {
       builder: (context, constraints) {
         return Stack(
           children: [
-            FlutterMap(
-              mapController: _mapController,
-              options: MapOptions(
-                initialCenter: initialCenter,
-                initialZoom: 15,
-                minZoom: 3,
-                maxZoom: 19,
-                interactionOptions: const InteractionOptions(
-                  flags:
-                      InteractiveFlag.drag |
-                      InteractiveFlag.scrollWheelZoom |
-                      InteractiveFlag.pinchZoom,
+            Listener(
+              // Trackpad swipe arrives as pointer pan/zoom events rather
+              // than wheel scrolls (which flutter_map ignores), so without
+              // this a two-finger swipe does nothing on the map.
+              onPointerPanZoomUpdate: _trackpadZoom,
+              child: FlutterMap(
+                mapController: _mapController,
+                options: MapOptions(
+                  initialCenter: initialCenter,
+                  initialZoom: 15,
+                  minZoom: 3,
+                  maxZoom: 19,
+                  interactionOptions: _interactionOptions,
                 ),
-              ),
               children: [
                 _satellite ? _satelliteTiles : _streetTiles,
                 PolylineLayer(
@@ -156,6 +163,7 @@ class _MapWidgetState extends ConsumerState<MapTile> {
                   ],
                 ),
               ],
+              ),
             ),
             // Controls: follow, satellite toggle, zoom.
             Positioned(
@@ -259,6 +267,28 @@ class _MapWidgetState extends ConsumerState<MapTile> {
   void _zoomBy(double delta) {
     final camera = _mapController.camera;
     _mapController.move(camera.center, (camera.zoom + delta).clamp(3.0, 19.0));
+  }
+
+  /// Trackpad two-finger swipe → zoom. Precision touchpads report swipes as
+  /// pointer pan/zoom events rather than wheel scrolls, which flutter_map
+  /// ignores — without this a swipe does nothing on the map. Mirrors the
+  /// wheel path exactly (same velocity, same cursor anchoring).
+  ///
+  /// The pinch (scale) component is deliberately skipped: flutter_map's own
+  /// pinch-zoom owns it, so handling scale here too would double-zoom every
+  /// pinch.
+  void _trackpadZoom(PointerPanZoomUpdateEvent event) {
+    if ((event.scale - 1.0).abs() >= 0.001) return;
+    final dy = event.panDelta.dy;
+    if (dy == 0) return;
+    final camera = _mapController.camera;
+    final newZoom =
+        (camera.zoom - dy * _interactionOptions.scrollWheelVelocity)
+            .clamp(3.0, 19.0);
+    _mapController.move(
+      camera.focusedZoomCenter(event.localPosition, newZoom),
+      newZoom,
+    );
   }
 
   /// Dead-reckoning track split into one segment per GPS gap. Points within a

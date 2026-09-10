@@ -42,7 +42,19 @@ class TopBar extends ConsumerWidget {
           // theme flips (this is what stuck the wordmark in one palette).
           Padding(
             padding: const EdgeInsets.only(left: 16, right: 4),
-            child: BrandMark(),
+            child: MouseRegion(
+              cursor: SystemMouseCursors.click,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => ref
+                    .read(appRouterProvider.notifier)
+                    .go(AppScreen.dashboard),
+                child: Tooltip(
+                  message: 'Back to Dashboard',
+                  child: BrandMark(),
+                ),
+              ),
+            ),
           ),
           if (replaying)
             Expanded(

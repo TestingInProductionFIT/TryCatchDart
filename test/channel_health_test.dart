@@ -31,7 +31,7 @@ void main() {
           garbage.length + TelemetryFraming.totalPacketLength);
     });
 
-    test('counts CRC-failed frames as unmatched', () {
+    test('counts CRC-failed frames as unknown', () {
       final parser = PacketParser();
       final bad = validPacket(9)..[10] ^= 0xFF;
       expect(parser.feed(bad), isEmpty);
@@ -72,12 +72,12 @@ void main() {
           tracker.addSnapshot(snap(2000, 210, 110, 2, garbage: 100));
       expect(sample, isNotNull);
       expect(sample!.matchedBps, 55.0);
-      // 55 matched of 110 total → 55 unmatched.
+      // 55 matched (ours) of 110 total → 55 unknown.
       expect(sample.unmatchedBps, 55.0);
       expect(sample.packetRate, 1.0);
     });
 
-    test('foreign traffic shows up as unmatched rate', () {
+    test('unknown traffic shows up as unknown rate', () {
       final tracker = ChannelHealthTracker();
       tracker.addSnapshot(snap(1000, 100, 55, 1, garbage: 45));
       // 1000 extra bytes arrived but nothing new matched.
@@ -125,7 +125,7 @@ void main() {
       expect(mockInterferenceBytes(160, random)!.length, 50);
     });
 
-    test('mock noise decodes as unmatched bytes, never as packets', () {
+    test('mock noise decodes as unknown bytes, never as packets', () {
       final random = math.Random(7);
       final parser = PacketParser();
       // A full heavy-phase second: 10 valid packets + 10 noise bursts.
@@ -137,7 +137,7 @@ void main() {
       expect(parser.matchedPackets, greaterThanOrEqualTo(10));
       expect(parser.matchedBytes,
           greaterThanOrEqualTo(10 * TelemetryFraming.totalPacketLength));
-      // ...and the noise shows up as ~500 unmatched bytes.
+      // ...and the noise shows up as ~500 unknown bytes.
       expect(parser.unmatchedBytes, greaterThan(400));
     });
   });
@@ -165,7 +165,7 @@ void main() {
       expect(buildChannelProfile(const []), isEmpty);
     });
 
-    test('buckets matched and unmatched bytes per bin', () {
+    test('buckets ours and unknown bytes per bin', () {
       final profile = buildChannelProfile(chunksWithGarbage(), binMs: 500);
       expect(profile.length, 2);
       expect(profile[0].startMs, 0);

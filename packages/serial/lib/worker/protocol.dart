@@ -65,9 +65,9 @@ class PacketReceivedEvent extends SerialEvent {
 
 /// Cumulative byte counters describing what the parser saw on the wire.
 ///
-/// `matchedBytes` decoded into our packets; `garbageBytes` never contained
+/// `matchedBytes` (ours) decoded into our packets; `garbageBytes` never contained
 /// a sync word and `crcErrorBytes` framed but failed CRC — together they are
-/// "traffic on our frequency that isn't ours" (other teams, noise).
+/// unknown traffic on our frequency (not ours: unknown transmitters, noise).
 /// Counters reset on every (re)connect; the UI derives bytes/s from deltas.
 class LinkStats {
   final int timestampMs;
@@ -88,7 +88,7 @@ class LinkStats {
     this.crcErrors = 0,
   });
 
-  /// Bytes that arrived but never became one of our packets.
+  /// Bytes that arrived but never became one of our packets (unknown).
   int get unmatchedBytes => garbageBytes + crcErrorBytes;
 
   static const empty = LinkStats(timestampMs: 0);

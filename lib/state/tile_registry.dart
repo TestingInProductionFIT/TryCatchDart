@@ -4,6 +4,7 @@ import './layout_tree.dart';
 import '../ui/tiles/acceleration_chart_tile.dart';
 import '../ui/tiles/altitude_chart_tile.dart';
 import '../ui/tiles/battery_chart_tile.dart';
+import '../ui/tiles/channel_health_tile.dart';
 import '../ui/tiles/control_panel_tile.dart';
 import '../ui/tiles/flight_3d_satellite_tile.dart';
 import '../ui/tiles/flight_3d_tile.dart';
@@ -151,6 +152,13 @@ abstract final class TileRegistry {
       builder: (context) => HallSensorTile(),
     ),
     TileDescriptor(
+      id: 'channel_health',
+      title: 'Channel health',
+      description: 'Undecodable traffic on this frequency',
+      minSize: const Size(260, 180),
+      builder: (context) => ChannelHealthTile(),
+    ),
+    TileDescriptor(
       id: 'control_panel',
       title: 'Control panel',
       description: 'Two-click commands to the rocket',
@@ -189,6 +197,7 @@ abstract final class TileRegistry {
           'battery_chart',
           'hall_sensor',
           'acceleration_chart',
+          'channel_health',
           'control_panel',
         ])),
       );
@@ -205,6 +214,7 @@ abstract final class TileRegistry {
           'max_alt',
           'battery_chart',
           'hall_sensor',
+          'channel_health',
         ])),
       );
 

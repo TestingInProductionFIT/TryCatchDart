@@ -274,11 +274,11 @@ jobs:
           test -x "$BUNDLE/trycatch"
           rm -rf AppDir dist && mkdir -p dist AppDir/usr/bin \
             AppDir/usr/share/applications \
-            AppDir/usr/share/icons/hicolor/512x512/apps \
             AppDir/usr/share/metainfo
           cp -a "$BUNDLE/." AppDir/usr/bin/
           cp packaging/linux/com.krychlic.trycatch.desktop AppDir/usr/share/applications/
-          cp linux/assets/icon.png AppDir/usr/share/icons/hicolor/512x512/apps/com.krychlic.trycatch.png
+          cp -a packaging/linux/icons/hicolor AppDir/usr/share/icons/
+          test -f AppDir/usr/share/icons/hicolor/512x512/apps/com.krychlic.trycatch.png
           cp packaging/linux/com.krychlic.trycatch.metainfo.xml AppDir/usr/share/metainfo/
           desktop-file-validate AppDir/usr/share/applications/com.krychlic.trycatch.desktop
           curl -L -o linuxdeploy https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
