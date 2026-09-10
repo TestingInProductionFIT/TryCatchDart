@@ -5,8 +5,8 @@ import 'dart:typed_data';
 import '../telemetry/flight_simulator.dart';
 import '../telemetry/frame_codec.dart';
 
-/// Foreign-traffic phase of the mock's 20 s interference cycle (@10 Hz):
-/// 12 s clean air, 4 s light stray bytes (~150 B/s, "activity"), 4 s heavy
+/// Unknown-traffic phase of the mock's 20 s interference cycle (@10 Hz):
+/// 12 s clean air, 4 s light unknown bytes (~150 B/s, "activity"), 4 s heavy
 /// noise + periodic CRC-corrupted clones (~500+ B/s, "interference").
 ///
 /// The cycle lets the channel-health monitor demo every verdict without any
@@ -83,7 +83,7 @@ class MockSerialPort {
       final packet = FrameCodec.encodePacket(frame);
       _byteStreamController.add(packet);
 
-      // Cyclic foreign traffic so the channel-health monitor has something
+      // Cyclic unknown traffic so the channel-health monitor has something
       // to show (see [mockPhaseForTick]).
       final noise = mockInterferenceBytes(_tick, _random);
       if (noise != null) _byteStreamController.add(noise);

@@ -96,7 +96,7 @@ class _ChannelHealthTileState extends ConsumerState<ChannelHealthTile> {
             child: CenteredValue(
               value: formatBps(unmatchedBps),
               valueColor: _verdictColor(verdict),
-              sublabel: '${_verdictLabel(verdict)} · NOT OURS',
+              sublabel: '${_verdictLabel(verdict)} · UNKNOWN',
             ),
           );
         }
@@ -153,7 +153,7 @@ class _TileReplayBody extends StatelessWidget {
             child: CenteredValue(
               value: formatBps(cursor?.unmatchedBps ?? 0.0),
               valueColor: _verdictColor(verdict),
-              sublabel: '${_verdictLabel(verdict)} · NOT OURS',
+              sublabel: '${_verdictLabel(verdict)} · UNKNOWN',
             ),
           );
         }
@@ -184,7 +184,7 @@ class _TileReplayBody extends StatelessWidget {
 }
 
 /// Single-line verdict header for the tile: colored dot + verdict name on
-/// the left, ours-vs-unidentified rates on the right (ellipsized in narrow
+/// the left, ours-vs-unknown rates on the right (ellipsized in narrow
 /// tiles).
 class _TileVerdictRow extends StatelessWidget {
   final ChannelVerdict verdict;
@@ -221,7 +221,7 @@ class _TileVerdictRow extends StatelessWidget {
           Expanded(
             child: Text(
               '${matchedBps.round()} ours · '
-              '${unmatchedBps.round()} other B/s',
+              '${unmatchedBps.round()} unknown B/s',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               textAlign: TextAlign.right,
@@ -252,7 +252,7 @@ String _verdictLabel(ChannelVerdict verdict) => switch (verdict) {
     };
 
 /// Channel-health monitor: shows how much radio traffic on our frequency
-/// does NOT decode as our packets (other teams, noise).
+/// is unknown — does NOT decode as our packets (unknown transmitters, noise).
 ///
 /// Full-screen body behind the Channel health screen (and the replay view).
 /// For the dashboard tile see [ChannelHealthTile].
@@ -460,7 +460,7 @@ class _VerdictBanner extends StatelessWidget {
         child: ExcludeSemantics(
           child: Text(
             '${matchedBps.round()} B/s ours vs '
-            '${unmatchedBps.round()} B/s unidentified',
+            '${unmatchedBps.round()} B/s unknown',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             textAlign: TextAlign.center,
@@ -483,7 +483,7 @@ class _Legend extends StatelessWidget {
       children: [
         _swatch(AppColors.success, 'OURS'),
         const SizedBox(width: 10),
-        _swatch(AppColors.destructive, 'NOT OURS'),
+        _swatch(AppColors.destructive, 'UNKNOWN'),
       ],
     );
   }
@@ -556,7 +556,7 @@ class _RateChart extends StatelessWidget {
         touchData: chartTouchData(
           entries: [
             ('OURS', AppColors.success),
-            ('NOT OURS', AppColors.destructive),
+            ('UNKNOWN', AppColors.destructive),
           ],
           unit: 'B/s',
           formatX: (value) =>
@@ -636,9 +636,9 @@ class _ReplayChart extends StatelessWidget {
         touchData: chartTouchData(
           entries: [
             ('OURS', AppColors.success),
-            ('NOT OURS', AppColors.destructive),
+            ('UNKNOWN', AppColors.destructive),
             ('OURS', AppColors.success),
-            ('NOT OURS', AppColors.destructive),
+            ('UNKNOWN', AppColors.destructive),
           ],
           unit: 'B/s',
           formatX: (value) => '${value.toStringAsFixed(0)}s',

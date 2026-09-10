@@ -229,11 +229,12 @@ download, image check, shared disk cache), `CopyButton`, format helpers,
   (destructive item, confirm dialog, disabled without data / during replay).
   Replay replaces live zones with: REPLAY badge + filename + play + time +
   flexible slider + speed popup + Back to live.
-- **Channel health**: anything plotted is NOT our rocket. Verdicts on
-  unmatched B/s: clear <50, activity <400, else interference. Screen =
+- **Channel health**: ours vs unknown. Anything plotted as unknown is NOT our
+  rocket. Verdicts on unknown B/s: clear <50, activity <400, else
+  interference. Screen =
   verdict banner (pill + rate + hint) + chart card + 3 key numbers.
   Dashboard tile (`channel_health`, in Flight + Prep defaults) = compact
-  verdict row (dot + CLEAR/ACTIVITY/INTERFERENCE + ours/other B/s) + the
+  verdict row (dot + CLEAR/ACTIVITY/INTERFERENCE + ours/unknown B/s) + the
   same rolling/replay chart; short tiles shed to a headline number.
   Replay buckets chunks into 500 ms bins at load; verdict follows playhead.
   Top-bar pill mirrors the verdict (pulsing red on interference, tap opens
@@ -284,7 +285,7 @@ adjacent Tooltips in grids need `Semantics(container:true)`.
   popup.
 - Topbar rethink: rescan folded into port dropdown, Reset moved to menu,
   fixed-width skeleton (channel slot reserves 96 px), replay slider single
-  Expanded. Channel screen rewritten in plain language ("not ours" /
+  Expanded. Channel screen rewritten in plain language ("unknown" /
   "good to fly" / "change frequency").
 - AXTree spam fix: Windows accessibility bridge spammed
   "Failed to update ui::AXTree ... Nodes left pending" because desktop

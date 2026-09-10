@@ -7,9 +7,9 @@ import '../../theme/app_colors.dart';
 import '../screens/router.dart';
 import './status_pill.dart';
 
-/// Live channel-health pill for the top bar: dot + unmatched bytes/s.
+/// Live channel-health pill for the top bar: dot + unknown bytes/s.
 ///
-/// Green while the frequency is clear, amber on stray activity, pulsing red
+/// Green while the frequency is clear, amber on unknown activity, pulsing red
 /// on interference — the top-bar alert for a degrading channel. Tapping it
 /// opens the Channel health screen.
 ///
@@ -56,14 +56,14 @@ class _ChannelHealthPillState extends ConsumerState<ChannelHealthPill> {
             ChannelVerdict.activity => (
               formatBps(_tracker.latest!.unmatchedBps),
               AppColors.warning,
-              'Stray signals on this frequency — watch it before launch. '
+              'Unknown signals on this frequency — watch it before launch. '
                   'Open Channel health.',
               false,
             ),
             ChannelVerdict.interference => (
               formatBps(_tracker.latest!.unmatchedBps),
               AppColors.destructive,
-              'Interference — another transmitter is active here. '
+              'Interference — unknown transmitter is active here. '
                   'Open Channel health.',
               true,
             ),

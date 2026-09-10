@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../tiles/channel_health_tile.dart';
 
-/// Channel-health screen: is anyone else talking on our frequency?
+/// Channel-health screen: ours vs unknown on our frequency.
 /// Check this screen reads clear before launch. Live radio only —
 /// unaffected by replay.
 class MonitorScreen extends StatelessWidget {

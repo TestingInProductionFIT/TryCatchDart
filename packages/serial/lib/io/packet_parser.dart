@@ -14,7 +14,7 @@ import '../worker/protocol.dart';
 /// The parser also keeps cumulative byte counters ([totalBytes],
 /// [matchedBytes], [garbageBytes], [crcErrorBytes]) so the UI can report
 /// channel health: bytes that arrived on the frequency but never decoded
-/// into one of our packets (other transmitters, noise).
+/// into one of our packets (unknown transmitters, noise).
 ///
 /// [TelemetryFraming.payloadLength] is the single fixed framing; there are
 /// no previous framings to parse.
@@ -37,7 +37,7 @@ class PacketParser {
   /// Bytes consumed as valid packets (sync word + payload each).
   int matchedBytes = 0;
 
-  /// Bytes discarded while hunting for the sync word ( чужой traffic/noise).
+  /// Bytes discarded while hunting for the sync word (unknown traffic/noise).
   int garbageBytes = 0;
 
   /// Frames dropped on CRC mismatch.
@@ -46,7 +46,7 @@ class PacketParser {
   /// Bytes consumed by CRC-failed frames (whole packet length each).
   int crcErrorBytes = 0;
 
-  /// Bytes that arrived but never became one of our packets.
+  /// Bytes that arrived but never became one of our packets (unknown).
   int get unmatchedBytes => garbageBytes + crcErrorBytes;
 
   /// Feed a raw byte chunk from the serial stream into the parser.
@@ -65,7 +65,7 @@ class PacketParser {
 
       if (start == -1) {
         // Retain only the last byte in case the start word was split across chunks.
-        // Everything else is unmatched traffic on this frequency.
+        // Everything else is unknown traffic on this frequency.
         garbageBytes += _buf.length - 1;
         final last = _buf.last;
         _buf.clear();

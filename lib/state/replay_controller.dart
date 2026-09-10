@@ -59,7 +59,7 @@ class ReplayState {
   /// carries none). Visuals anchor to this while the replay is active.
   final LaunchSite? launchSite;
 
-  /// Whole-flight channel profile (matched/unmatched bytes per 500 ms bin),
+  /// Whole-flight channel profile (ours/unknown bytes per 500 ms bin),
   /// rebuilt from the recording's raw chunks so the channel-health monitor
   /// shows the same picture the live view did. Empty outside a replay.
   final List<ChannelBin> channelProfile;

@@ -18,21 +18,21 @@ class ChannelSample {
   });
 }
 
-/// Verdict on whether the frequency looks free for our link.
+/// Verdict on whether the frequency looks free for our link (ours vs unknown).
 enum ChannelVerdict {
-  /// Almost no undecodable traffic — safe to fly.
+  /// Almost no unknown traffic — safe to fly.
   clear,
 
-  /// Some stray bytes — keep an eye on it before launch.
+  /// Some unknown bytes — keep an eye on it before launch.
   activity,
 
-  /// Sustained undecodable traffic — someone else is on this frequency.
+  /// Sustained unknown traffic — an unknown transmitter is on this frequency.
   interference,
 }
 
-/// Thresholds (unmatched bytes/s) separating the verdicts. Our own link at
-/// 10 Hz × 55 B ≈ 550 B/s matched; anything undecodable above a few hundred
-/// B/s sustained is another transmitter, not noise.
+/// Thresholds (unknown bytes/s) separating the verdicts. Our own link at
+/// 10 Hz × 55 B ≈ 550 B/s ours; anything unknown above a few hundred
+/// B/s sustained is an unknown transmitter, not noise.
 abstract final class ChannelThresholds {
   static const double activityBps = 50;
   static const double interferenceBps = 400;
@@ -132,7 +132,7 @@ class ChannelBin {
 
 /// Buckets raw recording [chunks] into fixed-width bins by feeding them
 /// through a [PacketParser] with the same framing as the live path, so a
-/// replay shows the same unmatched-bytes/s picture the live monitor did.
+/// replay shows the same unknown-bytes/s picture the live monitor did.
 ///
 /// Gaps with no chunks become zero bins, keeping the time axis continuous.
 List<ChannelBin> buildChannelProfile(
