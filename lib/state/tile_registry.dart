@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import './default_layouts.dart';
 import '../ui/tiles/acceleration_chart_tile.dart';
 import '../ui/tiles/altitude_chart_tile.dart';
 import '../ui/tiles/battery_chart_tile.dart';
@@ -19,7 +18,6 @@ import '../ui/tiles/dead_reckoning_tile.dart';
 import '../ui/tiles/events_tile.dart';
 import '../ui/tiles/stats_tile.dart';
 import '../ui/tiles/velocity_chart_tile.dart';
-import './workspace_models.dart';
 
 /// Broad category used by the tile picker's filter chips.
 enum TileCategory {
@@ -273,10 +271,4 @@ abstract final class TileRegistry {
       min.height > absoluteFloor.height ? min.height : absoluteFloor.height,
     );
   }
-
-  /// Factory layouts — delegates to [DefaultLayouts].
-  static Workspace defaultFlightLayout() => DefaultLayouts.flight();
-  static Workspace defaultPrepLayout() => DefaultLayouts.prep();
-  static Workspace defaultRecoveryLayout() => DefaultLayouts.recovery();
-  static Workspace defaultReplayLayout() => DefaultLayouts.replay();
 }

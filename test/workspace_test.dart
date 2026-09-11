@@ -153,12 +153,10 @@ void main() {
 
   group('default layouts', () {
     test('use known tile types and lay out without empty leaves', () {
-      for (final ws in [
-        TileRegistry.defaultFlightLayout(),
-        TileRegistry.defaultPrepLayout(),
-        TileRegistry.defaultRecoveryLayout(),
-        TileRegistry.defaultReplayLayout(),
-      ]) {
+      final all = DefaultLayouts.all();
+      expect(all, isNotEmpty);
+      for (final ws in all) {
+        expect(ws.name, isNotEmpty);
         expect(ws.root, isNotNull);
         for (final l in ws.root!.leaves) {
           expect(TileRegistry.byId(l.tileType), isNotNull);
@@ -170,14 +168,6 @@ void main() {
           _minOf,
         );
         expect(result.leafRects.length, ws.root!.leaves.length);
-      }
-    });
-
-    test('DefaultLayouts.all() returns all configured default workspaces', () {
-      final all = DefaultLayouts.all();
-      expect(all, isNotEmpty);
-      for (final ws in all) {
-        expect(ws.name, isNotEmpty);
       }
     });
   });
