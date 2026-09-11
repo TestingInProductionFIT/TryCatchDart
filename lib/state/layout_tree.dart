@@ -123,7 +123,48 @@ class SplitNode extends LayoutNode {
 
 int _splitIdCounter = 0;
 
-String _nextSplitId() => 's${_splitIdCounter++}';
+/// Time-based unique ids: the old monotonic `s0, s1, …` counter reset to 0
+/// on every app restart, so a newly inserted split could reuse an id that
+/// already existed in the persisted tree. `setRatio`/`flipOrientation` match
+/// by id, so dragging one divider then moved every other divider sharing
+/// the id (e.g. resizing the middle tiles also resized the left tile, and
+/// two dividers lit up pink at once). Basing ids on wall-clock time makes
+/// collisions across restarts practically impossible.
+String _nextSplitId() {
+  final t = DateTime.now().microsecondsSinceEpoch.toRadixString(36);
+  return 's${t}_${(_splitIdCounter++).toRadixString(36)}';
+}
+
+/// Walks [root] and reassigns any duplicate split ids in place (by
+/// rebuilding the affected nodes). Run after loading persisted JSON so old
+/// trees that already contain duplicates heal themselves.
+LayoutNode? ensureUniqueSplitIds(LayoutNode? root) {
+  final seen = <String>{};
+  LayoutNode? fix(LayoutNode? node) {
+    if (node is SplitNode) {
+      var id = node.id;
+      if (!seen.add(id)) {
+        id = _nextSplitId();
+        seen.add(id);
+      }
+      final a = fix(node.a);
+      final b = fix(node.b);
+      if (id == node.id && identical(a, node.a) && identical(b, node.b)) {
+        return node;
+      }
+      return SplitNode(
+        id: id,
+        vertical: node.vertical,
+        ratio: node.ratio,
+        a: a ?? node.a,
+        b: b ?? node.b,
+      );
+    }
+    return node;
+  }
+
+  return fix(root);
+}
 
 /// Leaf: one tile instance.
 class LeafNode extends LayoutNode {
@@ -269,6 +310,118 @@ double _clampRatio(
   return ratio.clamp(lo, hi);
 }
 
+// ── Single-node updates + snapping (pure) ────────────────────────────────────
+
+/// Updates the ratio of the *first* split with [nodeId] (depth-first).
+/// Unlike a naive recursive rebuild this stops after one match, so even a
+/// tree that still contains duplicate ids (loaded from an old install)
+/// only moves the divider the user actually grabbed.
+LayoutNode? setSplitRatio(LayoutNode? node, String nodeId, double ratio) {
+  if (node == null) return null;
+  if (node is SplitNode) {
+    if (node.id == nodeId) return node.withRatio(ratio);
+    final left = setSplitRatio(node.a, nodeId, ratio);
+    if (!identical(left, node.a)) {
+      return node.withChildren(a: left, b: node.b);
+    }
+    final right = setSplitRatio(node.b, nodeId, ratio);
+    if (!identical(right, node.b)) {
+      return node.withChildren(a: node.a, b: right);
+    }
+    return node;
+  }
+  return node;
+}
+
+/// Flips the orientation of the *first* split with [nodeId] (depth-first).
+LayoutNode? flipSplitOrientation(LayoutNode? node, String nodeId) {
+  if (node == null) return null;
+  if (node is SplitNode) {
+    if (node.id == nodeId) return node.flipOrientation();
+    final left = flipSplitOrientation(node.a, nodeId);
+    if (!identical(left, node.a)) {
+      return node.withChildren(a: left, b: node.b);
+    }
+    final right = flipSplitOrientation(node.b, nodeId);
+    if (!identical(right, node.b)) {
+      return node.withChildren(a: node.a, b: right);
+    }
+    return node;
+  }
+  return node;
+}
+
+/// PowerPoint-style snap for a divider drag.
+///
+/// Candidates, in priority order:
+/// 1. alignment with another parallel divider's absolute position
+///    (e.g. the Highlights|Events split lining up with the
+///    Max-alt|Nose-cone split below it),
+/// 2. classic fractions of the split extent: 25% / 33% / 50% / 66% / 75%.
+///
+/// Returns the snapped ratio plus a short label for the drag badge
+/// (`'Aligned'`, `'50%'`, `'⅓'` …), or `null` when nothing is close enough.
+/// [snapPx] is the grab radius in logical pixels.
+({double ratio, String label})? snapDividerRatio({
+  required double rawRatio,
+  required DividerHandle dragged,
+  required List<DividerHandle> all,
+  double snapPx = 8,
+}) {
+  if (dragged.extent <= 0 || snapPx <= 0) return null;
+  final pxPerRatio = dragged.extent;
+
+  // Absolute pixel position of the dragged divider's parent origin, derived
+  // from its current hit area so alignment compares absolute coordinates.
+  final origin = dragged.vertical
+      ? dragged.hitArea.top - dragged.ratio * dragged.extent
+      : dragged.hitArea.left - dragged.ratio * dragged.extent;
+  final rawPos = origin + rawRatio * dragged.extent;
+
+  // 1. Align with parallel dividers.
+  double bestSigned = 0;
+  var best = snapPx;
+  for (final other in all) {
+    if (other.nodeId == dragged.nodeId) continue;
+    if (other.vertical != dragged.vertical) continue;
+    final otherPos = dragged.vertical ? other.hitArea.top : other.hitArea.left;
+    final delta = otherPos - rawPos;
+    if (delta.abs() <= best) {
+      best = delta.abs();
+      bestSigned = delta;
+    }
+  }
+  if (best < snapPx) {
+    final ratio =
+        ((rawPos + bestSigned - origin) / pxPerRatio).clamp(0.02, 0.98);
+    return (ratio: ratio, label: 'Aligned');
+  }
+
+  // 2. Fractions.
+  final fractions = <({double ratio, String label})>[
+    (ratio: 0.5, label: '50%'),
+    (ratio: 1 / 3, label: '⅓'),
+    (ratio: 2 / 3, label: '⅔'),
+    (ratio: 0.25, label: '25%'),
+    (ratio: 0.75, label: '75%'),
+  ];
+  var bestFractionRatio = -1.0;
+  var bestFractionLabel = '';
+  var bestFractionDelta = snapPx;
+  for (final entry in fractions) {
+    final delta = ((entry.ratio - rawRatio).abs()) * pxPerRatio;
+    if (delta <= bestFractionDelta) {
+      bestFractionDelta = delta;
+      bestFractionRatio = entry.ratio;
+      bestFractionLabel = entry.label;
+    }
+  }
+  if (bestFractionRatio >= 0) {
+    return (ratio: bestFractionRatio, label: bestFractionLabel);
+  }
+  return null;
+}
+
 // ── Mutations (pure) ─────────────────────────────────────────────────────────
 
 /// Inserts a new leaf for [tileType] by splitting the largest-area leaf.
@@ -403,6 +556,24 @@ LayoutNode? removeLeaf(LayoutNode? root, String tileId) {
   if (newA == null) return newB;
   if (newB == null) return newA;
   return root.withChildren(a: newA, b: newB);
+}
+
+/// Replaces the tile type of the leaf with [tileId], keeping its id (and
+/// therefore its position) stable.
+LayoutNode? retileLeaf(LayoutNode? root, String tileId, String newType) {
+  if (root == null) return null;
+  if (root is LeafNode) {
+    return root.tileId == tileId
+        ? LeafNode(tileId: root.tileId, tileType: newType)
+        : root;
+  }
+  if (root is SplitNode) {
+    return root.withChildren(
+      a: retileLeaf(root.a, tileId, newType),
+      b: retileLeaf(root.b, tileId, newType),
+    );
+  }
+  return root;
 }
 
 /// Swaps the *content* of two leaves (drag a tile onto another).

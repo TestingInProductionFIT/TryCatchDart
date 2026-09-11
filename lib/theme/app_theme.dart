@@ -7,6 +7,16 @@ import './app_colors.dart';
 ///
 /// All colors resolve through [AppColors], so the same builder serves both
 /// modes — callers rebuild [MaterialApp] when [AppThemeMode] flips.
+/// Pointer cursor for every enabled interactive control, basic arrow when
+/// disabled. Shared across all button / toggle / slider themes so no
+/// clickable widget is left with the default arrow.
+WidgetStateProperty<MouseCursor> get _clickableCursor =>
+    WidgetStateProperty.resolveWith<MouseCursor>(
+      (states) => states.contains(WidgetState.disabled)
+          ? SystemMouseCursors.basic
+          : SystemMouseCursors.click,
+    );
+
 ThemeData buildAppTheme({bool dark = false}) {
   final scheme = dark
       ? ColorScheme.dark(
@@ -134,7 +144,12 @@ ThemeData buildAppTheme({bool dark = false}) {
         ),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         visualDensity: VisualDensity.compact,
-      ),
+      ).copyWith(mouseCursor: _clickableCursor),
+    ),
+    elevatedButtonTheme: ElevatedButtonThemeData(
+      style: ElevatedButton.styleFrom(
+        visualDensity: VisualDensity.compact,
+      ).copyWith(mouseCursor: _clickableCursor),
     ),
     outlinedButtonTheme: OutlinedButtonThemeData(
       style: OutlinedButton.styleFrom(
@@ -147,20 +162,28 @@ ThemeData buildAppTheme({bool dark = false}) {
         ),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         visualDensity: VisualDensity.compact,
-      ),
+      ).copyWith(mouseCursor: _clickableCursor),
     ),
     textButtonTheme: TextButtonThemeData(
       style: TextButton.styleFrom(
         foregroundColor: AppColors.pinkDeep,
         textStyle: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
         visualDensity: VisualDensity.compact,
-      ),
+      ).copyWith(mouseCursor: _clickableCursor),
     ),
     iconButtonTheme: IconButtonThemeData(
       style: IconButton.styleFrom(
         foregroundColor: AppColors.foreground,
         visualDensity: VisualDensity.compact,
+      ).copyWith(mouseCursor: _clickableCursor),
+    ),
+    menuButtonTheme: MenuButtonThemeData(
+      style: MenuItemButton.styleFrom().copyWith(
+        mouseCursor: _clickableCursor,
       ),
+    ),
+    segmentedButtonTheme: SegmentedButtonThemeData(
+      style: ButtonStyle(mouseCursor: _clickableCursor),
     ),
     chipTheme: ChipThemeData(
       backgroundColor: AppColors.muted,
@@ -171,6 +194,7 @@ ThemeData buildAppTheme({bool dark = false}) {
       shape: StadiumBorder(),
     ),
     switchTheme: SwitchThemeData(
+      mouseCursor: _clickableCursor,
       thumbColor: WidgetStateProperty.resolveWith(
         (states) => states.contains(WidgetState.selected)
             ? AppColors.primaryForeground
@@ -183,6 +207,7 @@ ThemeData buildAppTheme({bool dark = false}) {
       ),
     ),
     checkboxTheme: CheckboxThemeData(
+      mouseCursor: _clickableCursor,
       side: BorderSide(color: AppColors.strongBorder),
       fillColor: WidgetStateProperty.resolveWith(
         (states) => states.contains(WidgetState.selected)
@@ -193,6 +218,9 @@ ThemeData buildAppTheme({bool dark = false}) {
         borderRadius: BorderRadius.circular(4),
       ),
       visualDensity: VisualDensity.compact,
+    ),
+    radioTheme: RadioThemeData(
+      mouseCursor: _clickableCursor,
     ),
     dropdownMenuTheme: DropdownMenuThemeData(
       textStyle: TextStyle(fontSize: 13, color: AppColors.foreground),
@@ -234,6 +262,7 @@ ThemeData buildAppTheme({bool dark = false}) {
       textStyle: TextStyle(fontSize: 13, color: AppColors.foreground),
     ),
     sliderTheme: SliderThemeData(
+      mouseCursor: _clickableCursor,
       activeTrackColor: AppColors.primary,
       inactiveTrackColor: AppColors.strongBorder,
       thumbColor: AppColors.primary,

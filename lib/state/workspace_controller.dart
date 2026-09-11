@@ -37,12 +37,11 @@ class WorkspaceState {
     final workspaces = (json['workspaces'] as List<dynamic>? ?? [])
         .map((e) => Workspace.fromJson(e as Map<String, dynamic>))
         .toList();
-    final activeId = json['activeId'] as String?;
+    // No heuristics: the app always shows the first layout (on start,
+    // after replay, etc.). The persisted activeId is intentionally ignored.
     return WorkspaceState(
       workspaces: workspaces,
-      activeId: workspaces.any((w) => w.id == activeId)
-          ? activeId!
-          : (workspaces.isEmpty ? '' : workspaces.first.id),
+      activeId: workspaces.isEmpty ? '' : workspaces.first.id,
     );
   }
 }
@@ -68,7 +67,7 @@ class WorkspaceStore extends AsyncNotifier<WorkspaceState> {
         final loaded =
             WorkspaceState.fromJson(jsonDecode(raw) as Map<String, dynamic>);
         if (loaded.workspaces.isNotEmpty) {
-          return loaded;
+          return _healed(loaded);
         }
       }
     } catch (_) {
@@ -77,12 +76,41 @@ class WorkspaceStore extends AsyncNotifier<WorkspaceState> {
     return _defaultState();
   }
 
+  /// Reassigns duplicate split ids left over from installs that used a
+  /// restart-resetting counter (they made one divider drag move several
+  /// tiles at once). Pure + cheap; runs once per load.
+  WorkspaceState _healed(WorkspaceState s) {
+    var changed = false;
+    final workspaces = [
+      for (final w in s.workspaces)
+        () {
+          final fixed = ensureUniqueSplitIds(w.root);
+          if (!identical(fixed, w.root)) {
+            changed = true;
+            return w.copyWith(root: fixed);
+          }
+          return w;
+        }(),
+    ];
+    if (!changed) return s;
+    final next = s.copyWith(workspaces: workspaces);
+    // Heal persistence in the background; the in-memory state is already fixed.
+    Future(() async {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(_prefsKey, jsonEncode(next.toJson()));
+      } catch (_) {}
+    });
+    return next;
+  }
+
   WorkspaceState _defaultState() {
     final flight = TileRegistry.defaultFlightLayout();
     final prep = TileRegistry.defaultPrepLayout();
+    final recovery = TileRegistry.defaultRecoveryLayout();
     final replay = TileRegistry.defaultReplayLayout();
     return WorkspaceState(
-        workspaces: [flight, prep, replay], activeId: flight.id);
+        workspaces: [flight, prep, recovery, replay], activeId: flight.id);
   }
 
   Future<void> _persist(WorkspaceState next) async {
@@ -175,6 +203,33 @@ class WorkspaceStore extends AsyncNotifier<WorkspaceState> {
     ));
   }
 
+  /// Moves the workspace with [id] to [newIndex] (final index after the
+  /// move, clamped into range). No-op for unknown ids or a no-op move.
+  Future<void> moveWorkspace(String id, int newIndex) async {
+    final current = state.value;
+    if (current == null) return;
+    final oldIndex = current.workspaces.indexWhere((w) => w.id == id);
+    if (oldIndex == -1) return;
+    final clamped = newIndex.clamp(0, current.workspaces.length - 1);
+    if (oldIndex == clamped) return;
+    final reordered = [...current.workspaces];
+    final ws = reordered.removeAt(oldIndex);
+    reordered.insert(clamped, ws);
+    await _persist(current.copyWith(workspaces: reordered));
+  }
+
+  /// Reorder entry point matching [ReorderableListView] semantics: [newIndex]
+  /// is the insertion index in the list *with* the dragged item removed, so
+  /// a forward move needs one step back.
+  Future<void> reorderWorkspace(int oldIndex, int newIndex) async {
+    final current = state.value;
+    if (current == null) return;
+    if (oldIndex < 0 || oldIndex >= current.workspaces.length) return;
+    var target = newIndex.clamp(0, current.workspaces.length);
+    if (oldIndex < target) target -= 1;
+    await moveWorkspace(current.workspaces[oldIndex].id, target);
+  }
+
   String _uniqueName(List<Workspace> existing, String base) {
     var name = base;
     var i = 2;
@@ -198,9 +253,18 @@ class WorkspaceStore extends AsyncNotifier<WorkspaceState> {
   }
 
   Future<void> removeTile(String tileId) async {
-    await _updateActive(
-      (ws) => ws.copyWith(root: removeLeaf(ws.root, tileId)),
-    );
+    await _updateActive((ws) {
+      final next = removeLeaf(ws.root, tileId);
+      return next == null ? ws.copyWith(clearRoot: true) : ws.copyWith(root: next);
+    });
+  }
+
+  /// Replaces the tile type in place (keeps position + id).
+  Future<void> changeTileType(String tileId, String newType) async {
+    await _updateActive((ws) {
+      final next = retileLeaf(ws.root, tileId, newType);
+      return next == null ? ws : ws.copyWith(root: next);
+    });
   }
 
   /// Swaps the content of two leaves (drag a tile onto another in edit mode).
@@ -217,13 +281,15 @@ class WorkspaceStore extends AsyncNotifier<WorkspaceState> {
   }
 
   /// Updates a split ratio (divider drag), located by stable node id.
+  /// Only the first matching split moves, so duplicate ids from old
+  /// installs can never drag two dividers at once.
   Future<void> setRatio({
     required String nodeId,
     required double ratio,
     bool persist = true,
   }) async {
     await _updateActive(
-      (ws) => ws.copyWith(root: _setRatio(ws.root, nodeId, ratio)),
+      (ws) => ws.copyWith(root: setSplitRatio(ws.root, nodeId, ratio)),
       persist: persist,
     );
   }
@@ -232,36 +298,8 @@ class WorkspaceStore extends AsyncNotifier<WorkspaceState> {
   /// divider in edit mode), located by stable node id.
   Future<void> toggleSplitOrientation({required String nodeId}) async {
     await _updateActive(
-      (ws) => ws.copyWith(root: _flipOrientation(ws.root, nodeId)),
+      (ws) => ws.copyWith(root: flipSplitOrientation(ws.root, nodeId)),
     );
-  }
-
-  LayoutNode? _flipOrientation(LayoutNode? node, String nodeId) {
-    if (node == null) return null;
-    if (node is SplitNode) {
-      if (node.id == nodeId) return node.flipOrientation();
-      final newA = _flipOrientation(node.a, nodeId);
-      final newB = _flipOrientation(node.b, nodeId);
-      if (!identical(newA, node.a) || !identical(newB, node.b)) {
-        return node.withChildren(a: newA, b: newB);
-      }
-      return node;
-    }
-    return node;
-  }
-
-  LayoutNode? _setRatio(LayoutNode? node, String nodeId, double ratio) {
-    if (node == null) return null;
-    if (node is SplitNode) {
-      if (node.id == nodeId) return node.withRatio(ratio);
-      final newA = _setRatio(node.a, nodeId, ratio);
-      final newB = _setRatio(node.b, nodeId, ratio);
-      if (!identical(newA, node.a) || !identical(newB, node.b)) {
-        return node.withChildren(a: newA, b: newB);
-      }
-      return node;
-    }
-    return node;
   }
 
   /// Persists the current in-memory state — called at the end of drags whose

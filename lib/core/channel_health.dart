@@ -38,6 +38,8 @@ abstract final class ChannelThresholds {
   static const double interferenceBps = 400;
 }
 
+
+
 ChannelVerdict verdictFor(double unmatchedBps) {
   if (unmatchedBps >= ChannelThresholds.interferenceBps) {
     return ChannelVerdict.interference;

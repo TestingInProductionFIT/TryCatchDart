@@ -14,10 +14,11 @@ class Workspace {
     required this.root,
   });
 
-  Workspace copyWith({String? name, LayoutNode? root}) => Workspace(
+  Workspace copyWith({String? name, LayoutNode? root, bool clearRoot = false}) =>
+      Workspace(
         id: id,
         name: name ?? this.name,
-        root: root ?? this.root,
+        root: clearRoot ? null : (root ?? this.root),
       );
 
   /// The tile leaf with [tileId], or `null`.
@@ -36,9 +37,11 @@ class Workspace {
 
   factory Workspace.fromJson(Map<String, dynamic> json) {
     final rootJson = json['root'];
-    final LayoutNode? root = rootJson == null
+    final LayoutNode? rawRoot = rootJson == null
         ? null
         : LayoutNode.fromJson(rootJson as Map<String, dynamic>);
+    // Heal duplicate split ids from old installs (one drag moved many tiles).
+    final root = ensureUniqueSplitIds(rawRoot);
 
     return Workspace(
       id: json['id'] as String,

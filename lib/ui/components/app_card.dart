@@ -97,22 +97,31 @@ class AppCard extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 8),
-                Text(
-                  title!.toUpperCase(),
-                  style: AppText.microLabel.copyWith(letterSpacing: 1.1),
-                  overflow: TextOverflow.ellipsis,
+                // Tight fit: the title takes the remaining width and pushes
+                // the trailing to the card's right edge (a loose fit split
+                // the row in half and parked legends in the middle).
+                Expanded(
+                  child: Text(
+                    title!.toUpperCase(),
+                    style: AppText.microLabel.copyWith(letterSpacing: 1.1),
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
+                  ),
                 ),
               ],
               if (subtitle != null) ...[
                 if (title != null) const SizedBox(width: 8),
-                Text(
-                  subtitle!,
-                  style: TextStyle(fontSize: 11, color: AppColors.faint),
-                  overflow: TextOverflow.ellipsis,
+                Flexible(
+                  child: Text(
+                    subtitle!,
+                    style: TextStyle(fontSize: 11, color: AppColors.faint),
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
+                  ),
                 ),
               ],
               if (trailing != null) ...[
-                const Spacer(),
+                const SizedBox(width: 8),
                 trailing!,
               ] else if (title == null)
                 const Spacer(),

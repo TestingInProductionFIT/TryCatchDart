@@ -72,6 +72,15 @@ class TimeSeriesConfig {
 ///
 /// [entries] must align 1:1 with the chart's `lineBarsData` (including
 /// dimmed replay duplicates) — the touched bar's index picks its row.
+/// Alpha for the dimmed replay-future duplicates (played + future share one
+/// style per series, the future at this opacity).
+///
+/// This doubles as the touch-exclusion marker (see [chartTouchData]):
+/// preview bars stay out of touch so a touch near the playhead reports each
+/// series once instead of twin heads + doubled rows. Keep played series
+/// fully opaque — anything faded is untouchable by convention.
+const double previewBarAlpha = 0.25;
+
 LineTouchData chartTouchData({
   required List<(String label, Color color)> entries,
   required String unit,
@@ -79,23 +88,33 @@ LineTouchData chartTouchData({
   required String Function(double y) formatY,
 }) {
   final suffix = unit.isEmpty ? '' : ' $unit';
+  // Preview (dimmed future) bars are untouchable. Alpha is used instead of
+  // bar identity on purpose: LineChart runs every frame through an animation
+  // tween, so the painter sees lerped *copies* and identical() never matches
+  // in production. Alpha survives the lerp (0.25 → 0.25); opaque played
+  // series never cross the threshold.
+  bool isPreviewBar(Color? color) => (color?.a ?? 1) < 0.5;
   return LineTouchData(
     handleBuiltInTouches: true,
     touchSpotThreshold: 12,
     getTouchedSpotIndicator: (bar, indexes) => [
+      // fl_chart skips null entries, but the length must still match.
       for (final _ in indexes)
-        TouchedSpotIndicatorData(
-          FlLine(color: AppColors.strongBorder, strokeWidth: 1),
-          FlDotData(
-            show: true,
-            getDotPainter: (spot, percent, touchedBar, index) =>
-                FlDotCirclePainter(
-              radius: 3.5,
-              color: touchedBar.color ?? AppColors.foreground,
-              strokeWidth: 0,
+        if (isPreviewBar(bar.color))
+          null
+        else
+          TouchedSpotIndicatorData(
+            FlLine(color: AppColors.strongBorder, strokeWidth: 1),
+            FlDotData(
+              show: true,
+              getDotPainter: (spot, percent, touchedBar, index) =>
+                  FlDotCirclePainter(
+                radius: 3.5,
+                color: touchedBar.color ?? AppColors.foreground,
+                strokeWidth: 0,
+              ),
             ),
           ),
-        ),
     ],
     touchTooltipData: LineTouchTooltipData(
       getTooltipColor: (_) => AppColors.card,
@@ -110,31 +129,37 @@ LineTouchData chartTouchData({
       maxContentWidth: 240,
       getTooltipItems: (spots) {
         // Must stay 1:1 with [spots] — fl_chart throws when the lengths
-        // differ. The time header is folded into the first row instead of
-        // being an extra item.
-        return [
-          for (var i = 0; i < spots.length; i++)
-            if (spots[i].barIndex < 0 ||
-                spots[i].barIndex >= entries.length)
-              LineTooltipItem(
-                '',
-                AppText.mono.copyWith(
-                    fontSize: 10, color: Colors.transparent),
-              )
-            else
-              LineTooltipItem(
-                '${i == 0 ? '${formatX(spots[i].x)}\n' : ''}'
-                '${entries[spots[i].barIndex].$1.toUpperCase()}  '
-                '${formatY(spots[i].y)}$suffix',
-                AppText.mono.copyWith(
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w700,
-                  color: entries[spots[i].barIndex].$2,
-                  fontFeatures: const [FontFeature.tabularFigures()],
-                ),
-                textAlign: TextAlign.left,
+        // differ. Preview rows are null (fl_chart skips nulls entirely: no
+        // row, no spacing — unlike empty strings, which still take a line).
+        // The time header folds into the first *visible* row (spots arrive
+        // closest-first, so row 0 is not necessarily shown).
+        final items = <LineTooltipItem?>[];
+        var headerShown = false;
+        for (var i = 0; i < spots.length; i++) {
+          final barIndex = spots[i].barIndex;
+          if (barIndex < 0 ||
+              barIndex >= entries.length ||
+              isPreviewBar(spots[i].bar.color)) {
+            items.add(null);
+            continue;
+          }
+          items.add(
+            LineTooltipItem(
+              '${!headerShown ? '${formatX(spots[i].x)}\n' : ''}'
+              '${entries[barIndex].$1.toUpperCase()}  '
+              '${formatY(spots[i].y)}$suffix',
+              AppText.mono.copyWith(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w700,
+                color: entries[barIndex].$2,
+                fontFeatures: const [FontFeature.tabularFigures()],
               ),
-        ];
+              textAlign: TextAlign.left,
+            ),
+          );
+          headerShown = true;
+        }
+        return items;
       },
     ),
   );
@@ -231,45 +256,52 @@ class _TimeSeriesChartState extends ConsumerState<TimeSeriesChart> {
     // no longer flickers once data reaches the left edge.
     // In replay the whole flight is shown: samples up to the replay clock at
     // full opacity, the not-yet-played remainder dimmed.
+    //
+    // Buckets keep every series' min/max frame, not just the first packet:
+    // a single-packet transient (e.g. a large negative pyro spike) IS its
+    // bucket extreme, so it survives even a whole-flight 400-bucket window
+    // where first-sample decimation would silently drop it.
     final bucketMs = math.max(1, windowMs ~/ _maxPoints);
+    int bucketOf(TelemetryFrame f) => f.receivedAtMs ~/ bucketMs;
+    final seriesValues = [
+      for (final s in widget.config.series) s.value,
+    ];
     final playedSamples = <TelemetryFrame>[];
     final futureSamples = <TelemetryFrame>[];
     if (fullFlight) {
-      var lastPlayedBucket = -1;
-      var lastFutureBucket = -1;
+      final playedRaw = <TelemetryFrame>[];
+      final futureRaw = <TelemetryFrame>[];
       TelemetryFrame? lastPlayed;
       for (final frame in replayFrames) {
-        final t = frame.receivedAtMs;
-        final bucket = t ~/ bucketMs;
-        if (t <= nowMs) {
-          if (bucket == lastPlayedBucket) continue;
-          playedSamples.add(frame);
-          lastPlayedBucket = bucket;
+        if (frame.receivedAtMs <= nowMs) {
+          playedRaw.add(frame);
           lastPlayed = frame;
         } else {
-          if (bucket == lastFutureBucket) continue;
-          // Carry the last played point so the dimmed segment connects.
-          if (futureSamples.isEmpty && lastPlayed != null) {
-            futureSamples.add(lastPlayed);
-            lastFutureBucket = lastPlayed.receivedAtMs ~/ bucketMs;
-            if (bucket == lastFutureBucket) continue;
-          }
-          futureSamples.add(frame);
-          lastFutureBucket = bucket;
+          futureRaw.add(frame);
         }
       }
+      playedSamples.addAll(
+        decimateExtremes(playedRaw, bucketOf, seriesValues),
+      );
+      if (lastPlayed != null && futureRaw.isNotEmpty) {
+        // Carry the last played point so the dimmed segment connects.
+        futureSamples.add(lastPlayed);
+      }
+      futureSamples.addAll(
+        decimateExtremes(futureRaw, bucketOf, seriesValues),
+      );
     } else {
-      var lastBucket = -1;
+      final windowed = <TelemetryFrame>[];
       final len = history.length;
       for (var i = 0; i < len; i++) {
         final frame = history.getChronological(i);
         final t = frame.receivedAtMs;
         if (t < windowStart || t > nowMs) continue;
-        final bucket = t ~/ bucketMs;
-        if (bucket == lastBucket) continue;
-        playedSamples.add(frame);
-        lastBucket = bucket;
+        windowed.add(frame);
       }
+      playedSamples.addAll(
+        decimateExtremes(windowed, bucketOf, seriesValues),
+      );
     }
     final samples = fullFlight
         ? [
@@ -354,7 +386,7 @@ class _TimeSeriesChartState extends ConsumerState<TimeSeriesChart> {
         lineBars.add(
           LineChartBarData(
             spots: spotsFor(futureSamples, spec),
-            color: spec.color.withValues(alpha: 0.25),
+            color: spec.color.withValues(alpha: previewBarAlpha),
             barWidth: 1.6,
             isCurved: false,
             dotData: const FlDotData(show: false),
@@ -522,6 +554,14 @@ class _TimeSeriesChartState extends ConsumerState<TimeSeriesChart> {
     );
   }
 
+  /// Buckets [frames] by [bucketOf], keeping each bucket's per-series
+  /// min/max frames (union, time-ordered) instead of a single sample, so
+  /// single-packet transients survive aggressive whole-flight decimation.
+  /// Frames carry identity equality, so the set union only dedupes the same
+  /// packet picked as several series' extreme.
+  ///
+  /// Top-level (and public) so unit tests can pin the spike-preserving
+  /// behaviour without pumping the widget.
   /// Chooses a human-friendly axis step (1-2-5 progression).
   double _niceStep(double raw) {
     if (raw <= 0) return 1;
@@ -552,4 +592,68 @@ class _TimeSeriesChartState extends ConsumerState<TimeSeriesChart> {
     if (v.abs() >= 10) return v.toStringAsFixed(1);
     return v.toStringAsFixed(2);
   }
+}
+
+/// Buckets [frames] by [bucketOf], keeping each bucket's per-series min/max
+/// frames (union, time-ordered) instead of a single sample, so single-packet
+/// transients survive aggressive whole-flight decimation. Frames carry
+/// identity equality, so the set union only dedupes the same packet picked
+/// as several series' extreme.
+///
+/// Top-level (and public) so unit tests can pin the spike-preserving
+/// behaviour without pumping the widget.
+List<TelemetryFrame> decimateExtremes(
+  List<TelemetryFrame> frames,
+  int Function(TelemetryFrame) bucketOf,
+  List<double Function(TelemetryFrame)> values,
+) {
+  final out = <TelemetryFrame>[];
+  if (frames.isEmpty || values.isEmpty) return out;
+  var curBucket = bucketOf(frames.first);
+  var mins = List<double>.filled(values.length, double.infinity);
+  var maxs = List<double>.filled(values.length, double.negativeInfinity);
+  var minF = List<TelemetryFrame?>.filled(values.length, null);
+  var maxF = List<TelemetryFrame?>.filled(values.length, null);
+  void resetBucket() {
+    mins = List<double>.filled(values.length, double.infinity);
+    maxs = List<double>.filled(values.length, double.negativeInfinity);
+    minF = List<TelemetryFrame?>.filled(values.length, null);
+    maxF = List<TelemetryFrame?>.filled(values.length, null);
+  }
+
+  void flush() {
+    final set = <TelemetryFrame>{};
+    for (final f in minF) {
+      if (f != null) set.add(f);
+    }
+    for (final f in maxF) {
+      if (f != null) set.add(f);
+    }
+    if (set.isEmpty) return;
+    final sorted = set.toList()
+      ..sort((a, b) => a.receivedAtMs.compareTo(b.receivedAtMs));
+    out.addAll(sorted);
+  }
+
+  for (final frame in frames) {
+    final b = bucketOf(frame);
+    if (b != curBucket) {
+      flush();
+      curBucket = b;
+      resetBucket();
+    }
+    for (var i = 0; i < values.length; i++) {
+      final v = values[i](frame);
+      if (v < mins[i]) {
+        mins[i] = v;
+        minF[i] = frame;
+      }
+      if (v > maxs[i]) {
+        maxs[i] = v;
+        maxF[i] = frame;
+      }
+    }
+  }
+  flush();
+  return out;
 }

@@ -7,7 +7,10 @@ import '../components/centered_stat.dart';
 import '../components/waiting_for_data.dart';
 import './shared/time_series_chart.dart';
 
-/// Horizontal and total body acceleration over time (m/s²).
+/// Standard gravity — the chart reads out in G-force.
+const double _g0 = 9.80665;
+
+/// Vertical (dashed) and total body acceleration over time (G).
 /// Very short tiles show the live total instead of the graph.
 class AccelerationChartTile extends ConsumerWidget {
   const AccelerationChartTile({super.key});
@@ -23,24 +26,25 @@ class AccelerationChartTile extends ConsumerWidget {
         }
         return Center(
           child: CenteredValue(
-            value: '${latest.accelTotal.toStringAsFixed(1)} m/s²',
+            value: '${(latest.accelTotal / _g0).toStringAsFixed(1)} G',
             valueColor: AppColors.seriesAccel,
           ),
         );
       }
       return TimeSeriesChart(
         config: TimeSeriesConfig(
-          unit: 'm/s²',
+          unit: 'G',
           series: [
             SeriesSpec(
-              label: 'Horizontal',
+              label: 'Vertical',
               color: AppColors.seriesAccel,
-              value: (f) => f.accelHorizontal,
+              value: (f) => f.accelVertical / _g0,
+              dashed: true,
             ),
             SeriesSpec(
               label: 'Total',
               color: AppColors.foreground,
-              value: (f) => f.accelTotal,
+              value: (f) => f.accelTotal / _g0,
             ),
           ],
         ),

@@ -1,3 +1,4 @@
+import './format.dart';
 import './ring_buffer.dart';
 
 /// Internal sample data structure for packet rate tracking.
@@ -78,4 +79,19 @@ class PacketRateTracker {
     _lastPacketTimeMs = null;
     _samples.clear();
   }
+}
+
+/// Top-bar style label for [rate]: live `X.X pkt/s` while packets arrive
+/// within the liveness window, otherwise the age of the last packet
+/// (`N.N s ago`) — or `no data` before the first packet ever arrives.
+///
+/// Pure in ([rate], [nowMs]): pass an explicit clock in tests, wall clock
+/// in widgets.
+String linkRateLabel(PacketRateTracker rate, [int? nowMs]) {
+  if (!rate.isTimedOut(nowMs)) {
+    return '${rate.getAveragePacketsPerSecond(nowMs).toStringAsFixed(1)} pkt/s';
+  }
+  final since = rate.timeSinceLastPacket(nowMs);
+  if (since == null) return 'no data';
+  return formatPacketAge(since);
 }

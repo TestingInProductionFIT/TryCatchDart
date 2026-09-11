@@ -193,6 +193,45 @@ class TelemetryStore extends Notifier<TelemetryState> {
     }
   }
 
+  /// Bulk-ingests packets with a single state rebuild.
+  ///
+  /// Replay clocks and seeks push hundreds-to-thousands of packets at once;
+  /// ingesting them one by one would notify every watching tile per packet
+  /// (26k rebuilds per scrub on a full flight log). Dead reckoning is a
+  /// live-only gap filler, so in replay mode it is skipped exactly like in
+  /// [ingest]; callers outside replay mode fall back to [ingest] to preserve
+  /// the DR + ticker behaviour.
+  void ingestPackets(List<TelemetryPacket> packets, {String? sourceName}) {
+    if (packets.isEmpty) return;
+    if (!state.replaying) {
+      for (final packet in packets) {
+        ingest(packet, sourceName: sourceName);
+      }
+      return;
+    }
+    TelemetryFrame? last;
+    var errors = 0;
+    for (final packet in packets) {
+      final frame = FrameCodec.decode(
+        packet.rawData,
+        receivedAtMs: packet.receivedAtMs,
+      );
+      if (frame == null) {
+        errors++;
+        continue;
+      }
+      _history.push(frame);
+      last = frame;
+    }
+    state = _copyWithCurrent(
+      latest: last ?? state.latest,
+      packetCount: state.packetCount + packets.length - errors,
+      errorCount: state.errorCount + errors,
+      sourceName: sourceName ?? state.sourceName,
+      clearDeadReckoning: true,
+    );
+  }
+
   /// DR is only computed while GPS is stale: with a fresh fix the fix itself
   /// is the best estimate and the estimator would just duplicate the GPS
   /// track. Once GPS has been silent for over a second, extrapolate — at

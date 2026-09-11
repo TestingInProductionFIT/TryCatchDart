@@ -10,10 +10,13 @@ import '../ui/tiles/flight_3d_satellite_tile.dart';
 import '../ui/tiles/flight_3d_tile.dart';
 import '../ui/tiles/fsm_tile.dart';
 import '../ui/tiles/hall_sensor_tile.dart';
+import '../ui/tiles/highlights_tile.dart';
 import '../ui/tiles/map_tile.dart';
 import '../ui/tiles/max_altitude_tile.dart';
-import '../ui/tiles/parachute_tile.dart';
+import '../ui/tiles/nosecone_tile.dart';
 import '../ui/tiles/rocket_3d_tile.dart';
+import '../ui/tiles/dead_reckoning_tile.dart';
+import '../ui/tiles/events_tile.dart';
 import '../ui/tiles/stats_tile.dart';
 import '../ui/tiles/velocity_chart_tile.dart';
 import './workspace_models.dart';
@@ -32,6 +35,9 @@ class TileDescriptor {
   /// One-line description shown in the picker.
   final String description;
 
+  /// Picker glyph.
+  final IconData icon;
+
   /// Minimum usable size in logical pixels — the layout tree's divider drag
   /// never squeezes a tile below this.
   final Size minSize;
@@ -47,6 +53,7 @@ class TileDescriptor {
     required this.id,
     required this.title,
     required this.description,
+    required this.icon,
     required this.minSize,
     this.immersive = false,
     required this.builder,
@@ -60,7 +67,8 @@ abstract final class TileRegistry {
       id: 'rocket_3d',
       title: '3D Rocket',
       description: 'Live orientation',
-      minSize: const Size(240, 200),
+      icon: Icons.rocket_launch_outlined,
+      minSize: const Size(150, 110),
       immersive: true,
       builder: (context) => Rocket3dTile(),
     ),
@@ -68,7 +76,8 @@ abstract final class TileRegistry {
       id: 'map',
       title: 'Map',
       description: 'GPS track, dead reckoning and launch site',
-      minSize: const Size(280, 200),
+      icon: Icons.map_outlined,
+      minSize: const Size(150, 110),
       immersive: true,
       builder: (context) => MapTile(),
     ),
@@ -76,7 +85,8 @@ abstract final class TileRegistry {
       id: 'flight_3d',
       title: 'Flight 3D',
       description: '3D flight trail with launch site and camera modes',
-      minSize: const Size(300, 220),
+      icon: Icons.view_in_ar_outlined,
+      minSize: const Size(170, 120),
       immersive: true,
       builder: (context) => Flight3dTile(),
     ),
@@ -84,85 +94,121 @@ abstract final class TileRegistry {
       id: 'flight_3d_sat',
       title: 'Flight 3D Satellite',
       description: '3D flight trail over satellite imagery (needs internet)',
-      minSize: const Size(320, 240),
+      icon: Icons.satellite_alt_outlined,
+      minSize: const Size(170, 120),
       immersive: true,
       builder: (context) => Flight3dSatelliteTile(),
     ),
     TileDescriptor(
       id: 'stats',
-      title: 'Position',
-      description: 'GPS and dead-reckoning positions with copy',
-      minSize: const Size(220, 170),
+      title: 'GPS position',
+      description: 'GPS position with copy',
+      icon: Icons.place_outlined,
+      minSize: const Size(130, 80),
       builder: (context) => StatsTile(),
+    ),
+    TileDescriptor(
+      id: 'dead_reckoning',
+      title: 'Dead reckoning',
+      description: 'Estimated position during packet loss (live only)',
+      icon: Icons.explore_outlined,
+      minSize: const Size(130, 80),
+      builder: (context) => DeadReckoningTile(),
     ),
     TileDescriptor(
       id: 'max_alt',
       title: 'Max altitude',
       description: 'Peak barometric altitude this session',
-      minSize: const Size(200, 110),
+      icon: Icons.arrow_upward,
+      minSize: const Size(110, 64),
       builder: (context) => MaxAltitudeTile(),
+    ),
+    TileDescriptor(
+      id: 'highlights',
+      title: 'Highlights',
+      description: 'Flight extremes: ascent, descent, speed, acceleration (+ replay drift/altitude)',
+      icon: Icons.emoji_events_outlined,
+      minSize: const Size(140, 80),
+      builder: (context) => HighlightsTile(),
     ),
     TileDescriptor(
       id: 'altitude_chart',
       title: 'Altitude',
       description: 'Barometric altitude over time',
-      minSize: const Size(220, 140),
+      icon: Icons.show_chart,
+      minSize: const Size(130, 70),
       builder: (context) => AltitudeChartTile(),
     ),
     TileDescriptor(
       id: 'velocity_chart',
       title: 'Velocity',
       description: 'Horizontal, vertical and total speed',
-      minSize: const Size(220, 140),
+      icon: Icons.speed_outlined,
+      minSize: const Size(130, 70),
       builder: (context) => VelocityChartTile(),
     ),
     TileDescriptor(
       id: 'acceleration_chart',
       title: 'Acceleration',
-      description: 'Horizontal and total acceleration',
-      minSize: const Size(220, 140),
+      description: 'Vertical and total acceleration',
+      icon: Icons.trending_up,
+      minSize: const Size(130, 70),
       builder: (context) => AccelerationChartTile(),
     ),
     TileDescriptor(
       id: 'battery_chart',
       title: 'Battery',
       description: 'Battery voltage over time',
-      minSize: const Size(220, 140),
+      icon: Icons.battery_charging_full_outlined,
+      minSize: const Size(130, 70),
       builder: (context) => BatteryChartTile(),
     ),
     TileDescriptor(
       id: 'fsm',
       title: 'State machine',
       description: 'Flight software state and timeline',
-      minSize: const Size(240, 240),
+      icon: Icons.account_tree_outlined,
+      minSize: const Size(150, 120),
       builder: (context) => FsmTile(),
     ),
     TileDescriptor(
-      id: 'parachute',
-      title: 'Parachute',
-      description: 'Parachute deployment state',
-      minSize: const Size(140, 110),
-      builder: (context) => ParachuteTile(),
+      id: 'events',
+      title: 'Events',
+      description: 'Flight milestones: launch, apogee, parachute, touchdown',
+      icon: Icons.flag_outlined,
+      minSize: const Size(140, 90),
+      builder: (context) => EventsTile(),
+    ),
+    TileDescriptor(
+      id: 'nosecone',
+      title: 'Nose cone',
+      description: 'Nose-cone lock state',
+      icon: Icons.lock_outlined,
+      minSize: const Size(110, 64),
+      builder: (context) => NoseconeTile(),
     ),
     TileDescriptor(
       id: 'hall_sensor',
       title: 'Hall sensor',
       description: 'Breakaway wire sensor readout',
-      minSize: const Size(220, 140),
+      icon: Icons.sensors_outlined,
+      minSize: const Size(130, 70),
       builder: (context) => HallSensorTile(),
     ),
     TileDescriptor(
       id: 'channel_health',
       title: 'Channel health',
       description: 'Undecodable traffic on this frequency',
-      minSize: const Size(260, 180),
+      icon: Icons.wifi_tethering_outlined,
+      minSize: const Size(140, 80),
       builder: (context) => ChannelHealthTile(),
     ),
     TileDescriptor(
       id: 'control_panel',
       title: 'Control panel',
       description: 'Two-click commands to the rocket',
-      minSize: const Size(420, 200),
+      icon: Icons.gamepad_outlined,
+      minSize: const Size(190, 110),
       builder: (context) => ControlPanelTile(),
     ),
   ];
@@ -171,120 +217,174 @@ abstract final class TileRegistry {
     for (final d in all) {
       if (d.id == id) return d;
     }
+    // Legacy workspaces persisted the nose-cone tile as 'parachute'.
+    if (id == 'parachute') return byId('nosecone');
     return null;
   }
 
-  static Size minSizeOf(String tileType) =>
-      byId(tileType)?.minSize ?? const Size(180, 120);
+  /// Hard floor under every tile so dividers never squeeze a tile into
+  /// an unpaintable strip. Kept deliberately low — tiles shed chrome
+  /// (legends, grids collapse) instead of overflowing.
+  static const Size absoluteFloor = Size(110, 64);
 
-  /// Factory layout used for the initial workspace and after a reset.
-  ///
-  /// A balanced alternating tree over the tile order.
+  static Size minSizeOf(String tileType) {
+    final min = byId(tileType)?.minSize ?? const Size(120, 70);
+    return Size(
+      min.width > absoluteFloor.width ? min.width : absoluteFloor.width,
+      min.height > absoluteFloor.height ? min.height : absoluteFloor.height,
+    );
+  }
+
+  /// Factory layouts — snapshot of the user's arranged workspaces
+  /// (Flight control, Pre-flight check, Recovery, Replay), promoted to
+  /// defaults. Ratios/orientations are preserved verbatim; ids are fresh
+  /// via [GridIds.next] at construction time.
   static Workspace defaultFlightLayout() => Workspace(
-        id: GridIds.next(),
-        name: 'Flight view',
-        root: treeFromOrder(_leaves(const [
-          'rocket_3d',
-          'map',
-          'flight_3d',
-          'flight_3d_sat',
-          'stats',
-          'max_alt',
-          'fsm',
-          'parachute',
-          'altitude_chart',
-          'velocity_chart',
-          'battery_chart',
-          'hall_sensor',
-          'acceleration_chart',
-          'channel_health',
-          'control_panel',
-        ])),
-      );
+    id: GridIds.next(),
+    name: 'Flight control',
+    root: SplitNode(
+      vertical: false,
+      ratio: 0.6505319148936172,
+      a: SplitNode(
+        vertical: false,
+        ratio: 0.6330814441645675,
+        a: SplitNode(
+          vertical: true,
+          ratio: 0.5,
+          a: LeafNode(tileId: GridIds.next(), tileType: 'rocket_3d'),
+          b: LeafNode(tileId: GridIds.next(), tileType: 'map'),
+        ),
+        b: SplitNode(
+          vertical: true,
+          ratio: 0.46879258653584105,
+          a: SplitNode(
+            vertical: true,
+            ratio: 0.8007246376811616,
+            a: LeafNode(tileId: GridIds.next(), tileType: 'highlights'),
+            b: SplitNode(
+              vertical: false,
+              ratio: 0.5,
+              a: LeafNode(tileId: GridIds.next(), tileType: 'max_alt'),
+              b: LeafNode(tileId: GridIds.next(), tileType: 'nosecone'),
+            ),
+          ),
+          b: SplitNode(
+            vertical: true,
+            ratio: 0.2939632545931769,
+            a: SplitNode(
+              vertical: false,
+              ratio: 0.5,
+              a: LeafNode(tileId: GridIds.next(), tileType: 'altitude_chart'),
+              b: LeafNode(tileId: GridIds.next(), tileType: 'velocity_chart'),
+            ),
+            b: LeafNode(tileId: GridIds.next(), tileType: 'altitude_chart'),
+          ),
+        ),
+      ),
+      b: SplitNode(
+        vertical: true,
+        ratio: 0.5,
+        a: LeafNode(tileId: GridIds.next(), tileType: 'fsm'),
+        b: LeafNode(tileId: GridIds.next(), tileType: 'control_panel'),
+      ),
+    ),
+  );
 
   /// Secondary default workspace for pre-launch checks.
   static Workspace defaultPrepLayout() => Workspace(
-        id: GridIds.next(),
-        name: 'Prep',
-        root: treeFromOrder(_leaves(const [
-          'control_panel',
-          'fsm',
-          'parachute',
-          'stats',
-          'max_alt',
-          'battery_chart',
-          'hall_sensor',
-          'channel_health',
-        ])),
-      );
-
-  /// Replay workspace: large Flight 3D on the left, flight data on the
-  /// right — no control panel (commands are disabled during replay) and no
-  /// dead-reckoning trail.
-  static Workspace defaultReplayLayout() {
-    LeafNode leaf(String tileType) =>
-        LeafNode(tileId: GridIds.next(), tileType: tileType);
-
-    final flight3d = leaf('flight_3d');
-    final map = leaf('map');
-    final altitude = leaf('altitude_chart');
-    final velocity = leaf('velocity_chart');
-    final position = leaf('stats');
-    final fsm = leaf('fsm');
-    final parachute = leaf('parachute');
-    final maxAlt = leaf('max_alt');
-    final battery = leaf('battery_chart');
-
-    // Right column: map on top, charts in the middle, position row at bottom.
-    final chartRow = SplitNode(
+    id: GridIds.next(),
+    name: 'Pre-flight check',
+    root: SplitNode(
       vertical: false,
-      ratio: 0.5,
-      a: altitude,
-      b: velocity,
-    );
-    final posRow = SplitNode(
-      vertical: false,
-      ratio: 0.55,
-      a: position,
-      b: fsm,
-    );
-    final metaRow = SplitNode(
-      vertical: false,
-      ratio: 0.5,
+      ratio: 0.5239361702127658,
       a: SplitNode(
         vertical: false,
         ratio: 0.5,
-        a: maxAlt,
-        b: parachute,
+        a: SplitNode(
+          vertical: true,
+          ratio: 0.5,
+          a: SplitNode(
+            vertical: true,
+            ratio: 0.15004179437169118,
+            a: LeafNode(tileId: GridIds.next(), tileType: 'hall_sensor'),
+            b: LeafNode(tileId: GridIds.next(), tileType: 'hall_sensor'),
+          ),
+          b: SplitNode(
+            vertical: true,
+            ratio: 0.18793535803845174,
+            a: LeafNode(tileId: GridIds.next(), tileType: 'battery_chart'),
+            b: LeafNode(tileId: GridIds.next(), tileType: 'battery_chart'),
+          ),
+        ),
+        b: SplitNode(
+          vertical: true,
+          ratio: 0.5,
+          a: LeafNode(tileId: GridIds.next(), tileType: 'nosecone'),
+          b: LeafNode(tileId: GridIds.next(), tileType: 'channel_health'),
+        ),
       ),
-      b: battery,
-    );
-    final bottomStack = SplitNode(
-      vertical: true,
-      ratio: 0.42,
-      a: chartRow,
       b: SplitNode(
         vertical: true,
-        ratio: 0.62,
-        a: posRow,
-        b: metaRow,
+        ratio: 0.4989845171840794,
+        a: LeafNode(tileId: GridIds.next(), tileType: 'fsm'),
+        b: LeafNode(tileId: GridIds.next(), tileType: 'control_panel'),
       ),
-    );
-    final rightColumn = SplitNode(
-      vertical: true,
-      ratio: 0.4,
-      a: map,
-      b: bottomStack,
-    );
-    final root = SplitNode(
-      vertical: false,
-      ratio: 0.58,
-      a: flight3d,
-      b: rightColumn,
-    );
-    return Workspace(id: GridIds.next(), name: 'Replay', root: root);
-  }
+    ),
+  );
 
-  static List<LeafNode> _leaves(List<String> tileTypes) =>
-      [for (final t in tileTypes) LeafNode(tileId: GridIds.next(), tileType: t)];
+  /// Recovery workspace: GPS + dead-reckoning positions on the left, map
+  /// below them, satellite 3D on the right.
+  static Workspace defaultRecoveryLayout() => Workspace(
+    id: GridIds.next(),
+    name: 'Recovery',
+    root: SplitNode(
+      vertical: false,
+      ratio: 0.5,
+      a: SplitNode(
+        vertical: true,
+        ratio: 0.26996456800217977,
+        a: SplitNode(
+          vertical: false,
+          ratio: 0.5,
+          a: LeafNode(tileId: GridIds.next(), tileType: 'stats'),
+          b: LeafNode(tileId: GridIds.next(), tileType: 'dead_reckoning'),
+        ),
+        b: LeafNode(tileId: GridIds.next(), tileType: 'map'),
+      ),
+      b: LeafNode(tileId: GridIds.next(), tileType: 'flight_3d_sat'),
+    ),
+  );
+
+  /// Replay workspace: satellite 3D on the left, charts + highlights on the
+  /// right.
+  static Workspace defaultReplayLayout() => Workspace(
+    id: GridIds.next(),
+    name: 'Replay',
+    root: SplitNode(
+      vertical: false,
+      ratio: 0.530851063829787,
+      a: LeafNode(tileId: GridIds.next(), tileType: 'flight_3d_sat'),
+      b: SplitNode(
+        vertical: false,
+        ratio: 0.5020102109026083,
+        a: SplitNode(
+          vertical: true,
+          ratio: 0.6929681112019618,
+          a: SplitNode(
+            vertical: true,
+            ratio: 0.4969224962877054,
+            a: LeafNode(tileId: GridIds.next(), tileType: 'altitude_chart'),
+            b: LeafNode(tileId: GridIds.next(), tileType: 'velocity_chart'),
+          ),
+          b: LeafNode(tileId: GridIds.next(), tileType: 'acceleration_chart'),
+        ),
+        b: SplitNode(
+          vertical: true,
+          ratio: 0.4969224962877054,
+          a: LeafNode(tileId: GridIds.next(), tileType: 'highlights'),
+          b: LeafNode(tileId: GridIds.next(), tileType: 'map'),
+        ),
+      ),
+    ),
+  );
 }

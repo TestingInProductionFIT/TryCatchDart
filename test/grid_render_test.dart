@@ -24,6 +24,7 @@ void main() {
         id: id,
         title: label,
         description: 'test',
+        icon: Icons.widgets_outlined,
         minSize: const Size(80, 60),
         builder: (context) => SizedBox.expand(
           child: Center(child: Text('${label.toUpperCase()} BODY')),

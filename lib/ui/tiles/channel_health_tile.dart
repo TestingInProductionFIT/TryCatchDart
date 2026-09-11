@@ -7,13 +7,15 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../state/replay_controller.dart';
 import '../../core/channel_health.dart';
+import '../../state/channel_health_provider.dart';
 import '../../state/telemetry_provider.dart';
 import '../../state/telemetry_store.dart';
 import '../../theme/app_colors.dart';
 import '../components/app_card.dart';
 import '../components/centered_stat.dart';
 import '../components/waiting_for_data.dart';
-import './shared/time_series_chart.dart' show chartTouchData;
+import './shared/time_series_chart.dart'
+    show chartTouchData, previewBarAlpha;
 
 /// Tile-friendly channel-health readout: verdict + rolling signal chart.
 ///
@@ -29,7 +31,6 @@ class ChannelHealthTile extends ConsumerStatefulWidget {
 }
 
 class _ChannelHealthTileState extends ConsumerState<ChannelHealthTile> {
-  final ChannelHealthTracker _tracker = ChannelHealthTracker();
   Timer? _ticker;
 
   @override
@@ -49,12 +50,10 @@ class _ChannelHealthTileState extends ConsumerState<ChannelHealthTile> {
 
   @override
   Widget build(BuildContext context) {
-    ref.listen(linkStatsStreamProvider, (_, next) {
-      next.whenData((stats) {
-        _tracker.addSnapshot(stats);
-        if (mounted) setState(() {});
-      });
-    });
+    // Shared history: survives remounts (notably the edit-mode toggle,
+    // which swaps wrappers around every tile and recreates tile State).
+    ref.watch(channelHealthProvider);
+    final tracker = ref.read(channelHealthProvider.notifier).tracker;
     final status = ref.watch(serialStatusProvider).value;
     final connected = status?.isConnected ?? false;
     final replay = ref.watch(replayProvider);
@@ -80,7 +79,7 @@ class _ChannelHealthTileState extends ConsumerState<ChannelHealthTile> {
       );
     }
 
-    final latest = _tracker.latest;
+    final latest = tracker.latest;
     final matchedBps = latest?.matchedBps ?? 0.0;
     final unmatchedBps = latest?.unmatchedBps ?? 0.0;
     final verdict = verdictFor(unmatchedBps);
@@ -111,7 +110,7 @@ class _ChannelHealthTileState extends ConsumerState<ChannelHealthTile> {
             const SizedBox(height: 6),
             Expanded(
               // Display-only plot (axis labels repaint on every tick).
-              child: ExcludeSemantics(child: _RateChart(tracker: _tracker)),
+              child: ExcludeSemantics(child: _RateChart(tracker: tracker)),
             ),
           ],
         );
@@ -273,7 +272,6 @@ class ChannelHealthMonitor extends ConsumerStatefulWidget {
 }
 
 class _ChannelHealthMonitorState extends ConsumerState<ChannelHealthMonitor> {
-  final ChannelHealthTracker _tracker = ChannelHealthTracker();
   Timer? _ticker;
 
   static const _windowMs = 60000;
@@ -295,12 +293,9 @@ class _ChannelHealthMonitorState extends ConsumerState<ChannelHealthMonitor> {
 
   @override
   Widget build(BuildContext context) {
-    ref.listen(linkStatsStreamProvider, (_, next) {
-      next.whenData((stats) {
-        _tracker.addSnapshot(stats);
-        if (mounted) setState(() {});
-      });
-    });
+    // Shared history — see the tile above.
+    ref.watch(channelHealthProvider);
+    final tracker = ref.read(channelHealthProvider.notifier).tracker;
     final status = ref.watch(serialStatusProvider).value;
     final connected = status?.isConnected ?? false;
     final replay = ref.watch(replayProvider);
@@ -330,7 +325,7 @@ class _ChannelHealthMonitorState extends ConsumerState<ChannelHealthMonitor> {
       );
     }
 
-    final latest = _tracker.latest;
+    final latest = tracker.latest;
     final matchedBps = latest?.matchedBps ?? 0.0;
     final unmatchedBps = latest?.unmatchedBps ?? 0.0;
     final verdict = verdictFor(unmatchedBps);
@@ -356,7 +351,7 @@ class _ChannelHealthMonitorState extends ConsumerState<ChannelHealthMonitor> {
                   trailing: _Legend(),
                   fillChild: true,
                   // Display-only plot (axis labels repaint on every tick).
-                  child: ExcludeSemantics(child: _RateChart(tracker: _tracker)),
+                  child: ExcludeSemantics(child: _RateChart(tracker: tracker)),
                 ),
               ),
             ],
@@ -613,16 +608,23 @@ class _ReplayChart extends StatelessWidget {
 
     LineChartBarData dimmed(List<FlSpot> s, Color c) => _bar(
           s,
-          c.withValues(alpha: 0.25),
+          c.withValues(alpha: previewBarAlpha),
         );
 
+    // X axis: one label every ~1-2-5 step so long flights don't pile
+    // dozens of overlapping texts (the old fixed 15 s interval broke past
+    // ~1 min). Y axis already snaps the same way.
+    final xStep = _niceStep(math.max(1.0, maxX) / 4);
+
     // Tooltip legend kept 1:1 with the bars (played + dimmed future) so
-    // the touched bar index always resolves its row.
+    // the touched bar index always resolves its row. The dimmed future is
+    // preview-only (see [previewBarAlpha]) and stays out of touch.
     return LineChart(
       _chartData(
         minX: 0,
         maxX: math.max(1.0, maxX),
         maxY: maxY,
+        bottomInterval: xStep,
         played: [
           _bar(spots(played, (b) => b.matchedBps), AppColors.success),
           _bar(spots(played, (b) => b.unmatchedBps), AppColors.destructive,
@@ -671,9 +673,11 @@ LineChartData _chartData({
   List<LineChartBarData>? future,
   required LineTouchData touchData,
   required String Function(double) bottomLabel,
+  double? bottomInterval,
 }) {
   final step = _niceStep(maxY / 3);
   final interval = maxY / (maxY / step).round().clamp(2, 6);
+  final xInterval = bottomInterval ?? 15;
   return LineChartData(
     minX: minX,
     maxX: maxX,
@@ -682,7 +686,7 @@ LineChartData _chartData({
     gridData: FlGridData(
       show: true,
       drawVerticalLine: true,
-      verticalInterval: 15,
+      verticalInterval: xInterval,
       horizontalInterval: interval,
       getDrawingHorizontalLine: (value) => FlLine(
         color: AppColors.border,
@@ -722,7 +726,7 @@ LineChartData _chartData({
         sideTitles: SideTitles(
           showTitles: true,
           reservedSize: 18,
-          interval: 15,
+          interval: xInterval,
           getTitlesWidget: (value, meta) => SideTitleWidget(
             meta: meta,
             child: Text(

@@ -6,6 +6,7 @@ import 'package:serial/serial.dart';
 
 import './launch_site_store.dart';
 import '../core/channel_health.dart';
+import '../core/flight_events.dart';
 import './telemetry_store.dart';
 
 /// Maps a recording header's launch reference to a display site, or `null`
@@ -38,7 +39,7 @@ class ReplayState {
 
   final bool playing;
 
-  /// Playback speed multiplier (1, 4, 20; 999 ≈ as fast as possible).
+  /// Playback speed multiplier (0.5, 1, 4, 20).
   final double speed;
 
   /// Replay clock position relative to recording start (ms of flight time).
@@ -46,6 +47,9 @@ class ReplayState {
 
   /// Total flight time in the recording (ms), `null` while loading.
   final int? durationMs;
+
+  /// True while a recording is being decoded (play() in flight).
+  final bool isLoading;
 
   /// Set when the recording could not be decoded (unknown format).
   final String? errorMsg;
@@ -64,16 +68,25 @@ class ReplayState {
   /// shows the same picture the live view did. Empty outside a replay.
   final List<ChannelBin> channelProfile;
 
+  /// Display-only smoothing for the 3D views (smoothed trail + stabilized
+  /// rotation). The recording bytes and charts are always raw; this only
+  /// affects how the 3D tiles paint. Defaults off so replays show the
+  /// unfiltered sensor picture; toggle it on to resemble the legacy web
+  /// visualizer (which averaged the track).
+  final bool smoothingEnabled;
+
   const ReplayState({
     this.filePath,
     this.playing = false,
     this.speed = 1,
     this.positionMs = 0,
     this.durationMs,
+    this.isLoading = false,
     this.errorMsg,
     this.frames = const [],
     this.launchSite,
     this.channelProfile = const [],
+    this.smoothingEnabled = false,
   });
 
   bool get isActive => filePath != null;
@@ -84,22 +97,25 @@ class ReplayState {
     double? speed,
     int? positionMs,
     int? durationMs,
+    bool? isLoading,
     String? errorMsg,
     List<TelemetryFrame>? frames,
     LaunchSite? launchSite,
     List<ChannelBin>? channelProfile,
-  }) =>
-      ReplayState(
-        filePath: filePath ?? this.filePath,
-        playing: playing ?? this.playing,
-        speed: speed ?? this.speed,
-        positionMs: positionMs ?? this.positionMs,
-        durationMs: durationMs ?? this.durationMs,
-        errorMsg: errorMsg ?? this.errorMsg,
-        frames: frames ?? this.frames,
-        launchSite: launchSite ?? this.launchSite,
-        channelProfile: channelProfile ?? this.channelProfile,
-      );
+    bool? smoothingEnabled,
+  }) => ReplayState(
+    filePath: filePath ?? this.filePath,
+    playing: playing ?? this.playing,
+    speed: speed ?? this.speed,
+    positionMs: positionMs ?? this.positionMs,
+    durationMs: durationMs ?? this.durationMs,
+    isLoading: isLoading ?? this.isLoading,
+    errorMsg: errorMsg ?? this.errorMsg,
+    frames: frames ?? this.frames,
+    launchSite: launchSite ?? this.launchSite,
+    channelProfile: channelProfile ?? this.channelProfile,
+    smoothingEnabled: smoothingEnabled ?? this.smoothingEnabled,
+  );
 }
 
 /// Plays a recorded binary telemetry file back through [telemetryStoreProvider]
@@ -112,14 +128,32 @@ final replayProvider = NotifierProvider<ReplayController, ReplayState>(
   ReplayController.new,
 );
 
+/// Flight milestones (launch / apogee / parachute / touchdown) detected from
+/// the loaded replay's FSM transitions, in frame order.
+///
+/// Derived from the pre-decoded frames list identity, so it computes once per
+/// loaded recording — not on every playhead tick. Empty outside a replay or
+/// when the flight never made the nominal transitions.
+final replayFlightEventsProvider = Provider<List<FlightEvent>>((ref) {
+  final frames = ref.watch(replayProvider.select((s) => s.frames));
+  return detectFlightEvents(frames);
+});
+
 class ReplayController extends Notifier<ReplayState> {
   /// Speed presets offered in the UI.
-  static const List<double> speeds = [1, 4, 20, 999];
+  static const List<double> speeds = [0.5, 1, 4, 20];
 
   List<TelemetryPacket> _packets = const [];
   int _index = 0;
   Timer? _ticker;
   int _lastTickMs = 0;
+
+  /// Monotonic load generation: each play()/stop() bumps it, and a pending
+  /// play() abandons its result when it notices a newer generation. This
+  /// closes the stop-during-loading race — the UI disables the close action
+  /// while isLoading, but a programmatic stop (or a second play) must not
+  /// be resurrected by the stale decode finishing late.
+  int _loadGeneration = 0;
 
   @override
   ReplayState build() => const ReplayState();
@@ -128,15 +162,30 @@ class ReplayController extends Notifier<ReplayState> {
 
   /// Loads [path], decodes every packet up front and starts playback at 1×.
   Future<void> play(String path) async {
-    stop();
+    final initialSmoothing = state.smoothingEnabled;
+    final generation = ++_loadGeneration;
+    _ticker?.cancel();
+    _ticker = null;
+    _packets = const [];
+    _index = 0;
+    _store.setReplaying(false);
+    // Publish a loading state immediately so the UI can show a spinner
+    // while the (potentially large) file decodes.
+    state = ReplayState(
+      filePath: path,
+      isLoading: true,
+      smoothingEnabled: initialSmoothing,
+    );
 
     final packets = await _decode(path);
+    if (generation != _loadGeneration) return;
     if (packets.isEmpty) {
       state = ReplayState(
         filePath: path,
         durationMs: 0,
-        errorMsg:
-            'Unsupported recording — expected a recording with a header.',
+        errorMsg: 'Unsupported recording — expected a recording with a header.',
+        // Keep any smoothing toggle made mid-load instead of the entry value.
+        smoothingEnabled: state.smoothingEnabled,
       );
       return;
     }
@@ -147,14 +196,19 @@ class ReplayController extends Notifier<ReplayState> {
     // Pre-decode the whole flight so tiles can fix their axes up front.
     final frames = <TelemetryFrame>[];
     for (final packet in packets) {
-      final frame =
-          FrameCodec.decode(packet.rawData, receivedAtMs: packet.receivedAtMs);
+      final frame = FrameCodec.decode(
+        packet.rawData,
+        receivedAtMs: packet.receivedAtMs,
+      );
       if (frame != null) frames.add(frame);
     }
 
     _store.setReplaying(true);
-    final site =
-        launchSiteFromHeader(await tryReadRecordingHeader(path));
+    final site = launchSiteFromHeader(await tryReadRecordingHeader(path));
+    if (generation != _loadGeneration) {
+      _store.setReplaying(false);
+      return;
+    }
     if (site == null) {
       _store.setReplaying(false);
       state = ReplayState(
@@ -162,7 +216,13 @@ class ReplayController extends Notifier<ReplayState> {
         durationMs: 0,
         errorMsg:
             'Unsupported recording — expected a launch site in the header.',
+        smoothingEnabled: state.smoothingEnabled,
       );
+      return;
+    }
+    final channelProfile = buildChannelProfile(await readRecordingChunks(path));
+    if (generation != _loadGeneration) {
+      _store.setReplaying(false);
       return;
     }
     state = ReplayState(
@@ -173,8 +233,8 @@ class ReplayController extends Notifier<ReplayState> {
       durationMs: packets.last.receivedAtMs - packets.first.receivedAtMs,
       frames: frames,
       launchSite: site,
-      channelProfile:
-          buildChannelProfile(await readRecordingChunks(path)),
+      channelProfile: channelProfile,
+      smoothingEnabled: state.smoothingEnabled,
     );
 
     _lastTickMs = DateTime.now().millisecondsSinceEpoch;
@@ -204,20 +264,20 @@ class ReplayController extends Notifier<ReplayState> {
 
     final speed = state.speed;
     final t0 = _packets.first.receivedAtMs;
-    var clock = state.positionMs + (realDt * speed).round();
-    if (speed >= 999) clock = _packets.last.receivedAtMs - t0;
+    final clock = state.positionMs + (realDt * speed).round();
 
-    var ingested = false;
+    // Batch the due packets into one store rebuild — per-packet ingestion
+    // notifies every watching tile.
+    final due = <TelemetryPacket>[];
     while (_index < _packets.length) {
       final packet = _packets[_index];
       final rel = packet.receivedAtMs - t0;
       if (rel > clock) break;
-      _store.ingest(packet, sourceName: _fileName());
+      due.add(packet);
       _index++;
-      ingested = true;
     }
 
-    if (ingested) _store.notifyThrottled();
+    if (due.isNotEmpty) _store.ingestPackets(due, sourceName: _fileName());
     state = state.copyWith(positionMs: clock);
 
     if (_index >= _packets.length) pause();
@@ -232,32 +292,80 @@ class ReplayController extends Notifier<ReplayState> {
   }
 
   void resume() {
-    if (!state.isActive || state.playing) return;
+    if (!state.isActive || state.isLoading) return;
     if (_index >= _packets.length) {
       // Restart from the beginning when replaying a finished recording.
       seek(0);
     }
+    // Idempotent: a stray live ticker is replaced, a dead one while
+    // `playing` is healed — resume always converges on ticking playback.
+    _ticker?.cancel();
     _lastTickMs = DateTime.now().millisecondsSinceEpoch;
-    state = state.copyWith(playing: true);
     _ticker = Timer.periodic(const Duration(milliseconds: 50), (_) => _tick());
+    if (!state.playing) {
+      state = state.copyWith(playing: true);
+    }
   }
 
-  void setSpeed(double speed) => state = state.copyWith(speed: speed);
-
-  /// Jumps to [positionMs]: replays everything from the start instantly so
-  /// the store's history and dead reckoning stay consistent.
-  void seek(int positionMs) {
-    if (_packets.isEmpty) return;
-
-    _store.reset(sourceName: _fileName());
-    final t0 = _packets.first.receivedAtMs;
-    var index = 0;
-    while (index < _packets.length) {
-      if (_packets[index].receivedAtMs - t0 > positionMs) break;
-      _store.ingest(_packets[index], sourceName: _fileName());
-      index++;
+  /// Single entry point for the play/pause button. Decides by the live timer
+  /// rather than the last-published flag alone, so a stale build (or a timer
+  /// lost to an exception) can never strand the button: one tap always flips
+  /// the actual playback state.
+  void toggle() {
+    if (state.isLoading) return;
+    if ((_ticker?.isActive ?? false) && state.playing) {
+      pause();
+    } else {
+      resume();
     }
-    _store.notifyThrottled();
+  }
+
+  void setSpeed(double speed) {
+    if (state.isLoading) return;
+    state = state.copyWith(speed: speed);
+  }
+
+  /// Current ingestion cursor (packets already in the store). Exposed for
+  /// tests pinning the incremental-seek behaviour.
+  int get debugIndex => _index;
+
+  /// Toggles the replay-only 3D display smoothing (trail + rotation).
+  void setSmoothing(bool enabled) =>
+      state = state.copyWith(smoothingEnabled: enabled);
+
+  /// Jumps to [positionMs].
+  ///
+  /// Forward jumps ingest only the delta (the store already holds everything
+  /// before [_index]); backward jumps reset and replay from the start so the
+  /// store's history stays consistent. The target is found by binary search
+  /// and ingestion is a single bulk rebuild — scrubbing a 26k-packet flight
+  /// no longer replays per-packet state churn from zero on every slider tick.
+  void seek(int positionMs) {
+    if (state.isLoading || _packets.isEmpty) return;
+
+    final t0 = _packets.first.receivedAtMs;
+    var lo = 0;
+    var hi = _packets.length;
+    while (lo < hi) {
+      final mid = (lo + hi) >> 1;
+      if (_packets[mid].receivedAtMs - t0 > positionMs) {
+        hi = mid;
+      } else {
+        lo = mid + 1;
+      }
+    }
+    final index = lo;
+
+    if (index > _index) {
+      if (_index == 0) _store.reset(sourceName: _fileName());
+      _store.ingestPackets(
+        _packets.sublist(_index, index),
+        sourceName: _fileName(),
+      );
+    } else if (index < _index) {
+      _store.reset(sourceName: _fileName());
+      _store.ingestPackets(_packets.sublist(0, index), sourceName: _fileName());
+    }
 
     _index = index;
     state = state.copyWith(positionMs: positionMs);
@@ -265,6 +373,9 @@ class ReplayController extends Notifier<ReplayState> {
 
   /// Stops playback and returns the store to live mode.
   void stop() {
+    // Invalidate any in-flight play() so its late async completion is
+    // dropped instead of resurrecting a replay the user just closed.
+    _loadGeneration++;
     _ticker?.cancel();
     _ticker = null;
     _packets = const [];

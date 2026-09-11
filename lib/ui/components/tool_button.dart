@@ -32,6 +32,7 @@ class ToolFab extends StatelessWidget {
         ),
         child: InkWell(
           onTap: onTap,
+          mouseCursor: SystemMouseCursors.click,
           borderRadius: BorderRadius.circular(AppDimens.radiusSmall),
           child: Tooltip(
             message: tooltip,

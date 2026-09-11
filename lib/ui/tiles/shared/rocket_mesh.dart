@@ -94,6 +94,13 @@ abstract final class RocketMesh {
   /// ground in the flight views.
   static const double baseExtent = -_bodyBottom + _finDrop;
 
+  /// Longitudinal centre of gravity in model units (+Y), from the Raketa.ork
+  /// mass budget: ~0.46 m from the nose tip of the 0.755 m airframe
+  /// (nose 0.106 kg + forward avionics vs motor + fins aft). The flight
+  /// views pivot the mesh about this point so pitch/roll rotate the
+  /// airframe about its centre and the trail meets the rocket's middle.
+  static const double cgY = 0.07;
+
   /// Section lengths, exposed for tests locking the .ork proportions.
   static double get upperTubeLength => _bodyTop - _tubeBottom;
   static double get cageLength => _cageTop - _bodyBottom;

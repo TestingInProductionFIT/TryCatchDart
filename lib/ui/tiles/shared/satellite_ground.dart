@@ -51,15 +51,19 @@ double satTileLatNorth(int y, int zoom) {
 
 double _sinh(double x) => (math.exp(x) - math.exp(-x)) / 2;
 
+/// Smoothstep (0→1) for edge fades. Pure.
+double _smoothstep(double t) => t * t * (3 - 2 * t);
+
 /// Metres per pixel of Web-Mercator tiles at [zoom] and [lat].
 double satMetresPerPixel(double lat, int zoom) =>
     156543.03392 * math.cos(lat * math.pi / 180) / (1 << zoom);
 
 /// Zoom whose tiles cover [halfMeters] (half-extent) at roughly
-/// [targetPixels] across (denser than the screen needs, so chase close-ups
-/// stay sharp). Pure — unit-tested.
+/// [targetPixels] across (much denser than the screen needs, so the 3D
+/// close-up chase views stay sharp — the ground fills the screen from metres
+/// away, where every texture pixel counts). Pure — unit-tested.
 int satZoomForHalfMeters(double halfMeters, double lat,
-    {int targetPixels = 1280}) {
+    {int targetPixels = 4096}) {
   var zoom = (math.log(156543.03392 *
               math.cos(lat * math.pi / 180) *
               targetPixels /
@@ -94,9 +98,40 @@ int satZoomForHalfMeters(double halfMeters, double lat,
 
 // ── Perspective mapping (homography) ─────────────────────────────────────────
 
-/// Minimum ground half-extent (m) the satellite view always renders:
-/// 1120 m half-side ≈ 5 km² of context even for tiny flights.
-const double satMinHalfMeters = 1120;
+/// Fixed ground half-extent (m): the terrain always covers 20×20 km around
+/// the launch site, however small the flight or however far it drifts (the
+/// camera still frames the whole flight — only the imagery stays fixed,
+/// with the procedural far-terrain ring behind it). Fixed bounds mean one
+/// fetch per site instead of growth-triggered restitches, and static tier
+/// seams that can't crawl while panning.
+const double satFixedHalfMeters = 10000;
+
+/// Half-extent (m) of the mid tier: the central 10×10 km around the launch
+/// site (the flight area) at ~1.5–3 m/px, between the sharp pad tier and
+/// the coarse outer context. Always fetched.
+const double satMidHalfMeters = 5000;
+
+/// Half-extent (m) of the pad tier: the central 2.5×2.5 km at ~0.77 m/px —
+/// the sharp ground the chase camera actually flies over. Always fetched.
+const double satPadHalfMeters = 1250;
+
+/// Fetch parameters for the outer context patch: ~2048 px across the full
+/// extent in up to 9×9 tiles (2304 px). Shared by the fetcher, the
+/// progressive first paint and the offline precache so all three agree.
+const int satOuterTargetPixels = 2048;
+const int satOuterTileRadius = 4;
+
+/// Fetch parameters for the mid tier: ~4096 px across [satMidHalfMeters].
+const int satMidTargetPixels = 4096;
+const int satMidTileRadius = 4;
+
+/// Fetch parameters for the pad tier: ~4096 px across the central
+/// [satPadHalfMeters] (≈0.77 m/px at 50° latitude — the original single-
+/// patch sharpness around the launch site).
+const int satPadTargetPixels = 4096;
+const int satPadTileRadius = 3;
+
+
 
 /// Solves the 2D projective transform mapping [src] (image pixels) onto
 /// [dst] (screen pixels) from 4 corner correspondences, returned as the 8
@@ -168,35 +203,98 @@ List<double> homographyMatrix(List<double> h) {
   ];
 }
 
-/// Casts the ray through screen pixel ([sx], [sy]) onto the ground plane
-/// y = 0, returning east/south metres around the world origin.
-///
-/// [invVp] is the inverted view-projection matrix, [eye] the camera position
-/// (must be above the plane — the flight cameras clamp it ≥ 2 m). Returns
-/// `null` when the ray points at the sky or runs parallel to the plane.
-/// Pure — unit-tested.
-({double x, double z})? rayGroundHit({
-  required Matrix4 invVp,
-  required Vector3 eye,
-  required double sx,
-  required double sy,
-  required double viewW,
-  required double viewH,
-}) {
-  if (eye.y <= 0) return null;
-  final nx = sx / viewW * 2 - 1;
-  final ny = 1 - sy / viewH * 2;
-  final world = invVp.transformed(Vector4(nx, ny, 0, 1));
-  if (world.w.abs() < 1e-12) return null;
-  final iw = 1 / world.w;
-  final dx = world.x * iw - eye.x;
-  final dy = world.y * iw - eye.y;
-  final dz = world.z * iw - eye.z;
-  // Downward only: skyward and parallel rays never meet the plane ahead.
-  if (dy >= -1e-9) return null;
-  final t = -eye.y / dy;
-  return (x: eye.x + dx * t, z: eye.z + dz * t);
+/// Rim-feather alpha for a drape node [distM] from the anchor inside a
+/// tier covering [coverageHalfMeters]: opaque inside, dissolving over the
+/// outer rim into the layer below. Pure — unit-tested.
+double satRimAlpha(double distM, double coverageHalfMeters) {
+  final ft = ((distM / coverageHalfMeters - satFeatherStart) /
+          (1 - satFeatherStart))
+      .clamp(0.0, 1.0);
+  return 1 - ft * ft * (3 - 2 * ft);
 }
+
+/// One clip-space vertex of a drape triangle, with the imagery UV
+/// (pixels), hillshade tint and rim-feather alpha to interpolate.
+typedef ClipVert = ({
+  Vector4 c,
+  double u,
+  double v,
+  double shade,
+  double alpha
+});
+
+/// Near-plane epsilon for drape clipping (mirrors the shared camera
+/// guard: any positive w is in front of the lens).
+const double drapeClipEps = 1e-6;
+
+/// Sutherland–Hodgman clip of triangle ([a], [b], [c]) against the
+/// w = [eps] plane, interpolating every attribute in clip space.
+/// Returns 0 vertices (fully behind), 3 (triangle) or 4 (quad — fan
+/// triangulate as (0,1,2),(0,2,3) at the call site).
+///
+/// This is what keeps lifted foreground hills glued to their neighbours
+/// instead of punching flickering holes: a node behind the camera used
+/// to be dropped, subdivided around and discarded, so whole mountainsides
+/// popped in and out with pixels of camera motion. Pure — unit-tested.
+List<ClipVert> clipTriangleNear(ClipVert a, ClipVert b, ClipVert c,
+    [double eps = drapeClipEps]) {
+  ClipVert lerp(ClipVert out, ClipVert inn, double t) => (
+        c: out.c * (1 - t) + inn.c * t,
+        u: out.u + (inn.u - out.u) * t,
+        v: out.v + (inn.v - out.v) * t,
+        shade: out.shade + (inn.shade - out.shade) * t,
+        alpha: out.alpha + (inn.alpha - out.alpha) * t,
+      );
+  ClipVert cross(ClipVert out, ClipVert inn) {
+    final denom = inn.c.w - out.c.w;
+    if (denom.abs() < 1e-12) return inn;
+    return lerp(out, inn, ((eps - out.c.w) / denom).clamp(0.0, 1.0));
+  }
+
+  final vs = [a, b, c];
+  final clipped = <ClipVert>[];
+  for (var i = 0; i < vs.length; i++) {
+    final cur = vs[i];
+    final prev = vs[(i + vs.length - 1) % vs.length];
+    final curIn = cur.c.w > eps;
+    final prevIn = prev.c.w > eps;
+    if (curIn) {
+      if (!prevIn) clipped.add(cross(prev, cur));
+      clipped.add(cur);
+    } else if (prevIn) {
+      clipped.add(cross(cur, prev));
+    }
+  }
+  return clipped;
+}
+
+/// Edge fade for raw (unclamped) patch UVs [u]/[v]: 1 inside the patch,
+/// dissolving to 0 within 3% outside. Nodes beyond the imagery clamp
+/// their UVs to the patch edge (the sampler already clamps) and fade out,
+/// so coverage is continuous up to and past the tile rim instead of
+/// dropping whole cells — the old drop is what made terrain pop out near
+/// the edges. Pure — unit-tested.
+double satEdgeFade(double u, double v) {
+  final ou = u < 0 ? -u : (u > 1 ? u - 1 : 0.0);
+  final ov = v < 0 ? -v : (v > 1 ? v - 1 : 0.0);
+  final over = math.max(ou, ov) / 0.03;
+  if (over >= 1) return 0;
+  final t = over.clamp(0.0, 1.0);
+  return 1 - t * t * (3 - 2 * t);
+}
+
+/// Terrain surface height (m, same frame as the scene: true height above
+/// the pad datum) under world ([eastM], [southM]). 0 without a DEM.
+/// Pure — unit-tested.
+double terrainSurfaceY(
+  ElevationGrid? dem, {
+  required double eastM,
+  required double southM,
+  required double lat0,
+  required double lon0,
+  required double cosLat0,
+}) =>
+    dem?.sampleRel(eastM, southM, lat0, lon0, cosLat0) ?? 0.0;
 
 // ── Fetching & stitching ─────────────────────────────────────────────────────
 
@@ -274,23 +372,29 @@ typedef SatTileFetcher = Future<Uint8List?> Function(Uri url);
 
 /// Default fetcher: flutter_map's shared disk cache first (so settings'
 /// "preload tiles" also warms the 3D satellite view, and vice versa), then
-/// network with the result stored back.
+/// network with the result stored back. Esri "no data" placeholders are
+/// treated as misses so the patch falls back to parent tiles.
 Future<Uint8List?> _cachedFetcher(Uri url) async {
   final key = url.toString();
   final cache = BuiltInMapCachingProvider.getOrCreateInstance();
   if (cache.isSupported) {
     try {
       final hit = await cache.getTile(key);
-      if (hit != null && hit.bytes.isNotEmpty) return hit.bytes;
+      if (hit != null &&
+          hit.bytes.isNotEmpty &&
+          isUsableTileBytes(hit.bytes)) {
+        return hit.bytes;
+      }
     } catch (_) {
       // Corrupt entry — fall through to a fresh download below.
     }
   }
   final bytes = await fetchTileBytes(url);
   // Validate like the map precache does: HTML error pages must not poison
-  // the shared cache (they fail image decode below, but would still store).
-  if (bytes != null && !looksLikeImage(bytes)) return null;
-  if (bytes != null) await putTileCached(key, bytes);
+  // the shared cache (they fail image decode below, but would still store),
+  // and neither must Esri's "Map data not yet available" placeholder tiles.
+  if (bytes == null || !isUsableTileBytes(bytes)) return null;
+  await putTileCached(key, bytes);
   return bytes;
 }
 
@@ -299,22 +403,22 @@ String _key(double lat, double lon, double halfMeters) =>
 
 final Map<String, Future<SatellitePatch?>> _patchCache = {};
 
-/// Stitched Esri patch centred on [lat]/[lon] covering ±[halfMeters]
-/// (plus margin). Cached by rounded centre/extent; `null` when offline or on
-/// any tile failure (callers fall back to plain ground). Failures are NOT
-/// cached, so a later call retries instead of staying blank for the session.
+/// Stitched Esri patch centred on [lat]/[lon] covering the fixed 20×20 km
+/// terrain extent (plus margin). Cached by rounded centre; `null` when
+/// offline or on any tile failure (callers fall back to plain ground).
+/// Failures are NOT cached, so a later call retries instead of staying
+/// blank for the session.
 Future<SatellitePatch?> fetchSatellitePatch({
   required double lat,
   required double lon,
-  required double halfMeters,
   SatTileFetcher fetcher = _cachedFetcher,
 }) {
-  final key = _key(lat, lon, halfMeters);
+  final key = _key(lat, lon, satFixedHalfMeters);
   final hit = _patchCache[key];
   if (hit != null) return hit;
   final future = () async {
     try {
-      return await _fetch(lat, lon, halfMeters, fetcher);
+      return await _fetch(lat, lon, satFixedHalfMeters, fetcher);
     } catch (_) {
       return null;
     }
@@ -327,39 +431,854 @@ Future<SatellitePatch?> fetchSatellitePatch({
 }
 
 /// Fetches tile (wx, y, zoom); when the server has no imagery at that level
-/// (Esri caps rural areas around 17–18), falls back to the parent tile one
-/// level up and returns which quadrant of it to crop. Returns `null` only
-/// when both fail.
+/// (Esri caps rural areas around 17–18, or answers a "Map data not yet
+/// available" placeholder which the fetcher reports as a miss), walks up to
+/// [maxLevels] ancestors and returns the nearest usable one plus which cell
+/// of it ([qx], [qy] in units of 2^(zoom-qz)) to crop. Returns `null` bytes
+/// only when the whole chain fails.
 Future<(Uint8List? bytes, int qx, int qy, int qz)> _fetchTileImage(
   SatTileFetcher fetcher,
   int wx,
   int y,
-  int zoom,
-) async {
+  int zoom, {
+  int maxLevels = 3,
+}) async {
   Uri url(int x, int y, int z) =>
       Uri.parse(satelliteTileUrl(x, y, z));
   final bytes = await fetcher(url(wx, y, zoom));
   if (bytes != null) return (bytes, 0, 0, zoom);
-  if (zoom <= 10) return (null, 0, 0, zoom);
-  final n = 1 << (zoom - 1);
-  final px = ((wx >> 1) % n + n) % n;
-  final py = (y >> 1).clamp(0, n - 1);
-  final parent = await fetcher(url(px, py, zoom - 1));
-  if (parent == null) return (null, 0, 0, zoom);
-  return (parent, wx & 1, y & 1, zoom - 1);
+  for (var levels = 1; levels <= maxLevels; levels++) {
+    final pz = zoom - levels;
+    if (pz < 10) break;
+    final n = 1 << pz;
+    final px = ((wx >> levels) % n + n) % n;
+    final py = (y >> levels).clamp(0, n - 1);
+    final parent = await fetcher(url(px, py, pz));
+    if (parent == null) continue;
+    return (parent, wx - (px << levels), y - (py << levels), pz);
+  }
+  return (null, 0, 0, zoom);
+}
+
+/// Tile window (x, y, zoom triples) the imagery stitch fetches for
+/// [halfMeters] at [targetPixels]/[maxTileRadius]. Pure — shared by the
+/// fetcher and the offline precache so both agree on the URL set.
+List<(int x, int y, int z)> satImageryWindow(
+  double lat,
+  double lon,
+  double halfMeters, {
+  required int targetPixels,
+  required int maxTileRadius,
+}) {
+  final zoom =
+      satZoomForHalfMeters(halfMeters, lat, targetPixels: targetPixels);
+  final tileM = satMetresPerPixel(lat, zoom) * 256;
+  final r = (halfMeters * 1.4 / tileM).ceil().clamp(1, maxTileRadius);
+  final cx = satTileX(lon, zoom);
+  final cy = satTileY(lat, zoom);
+  final n = 1 << zoom;
+  return [
+    for (var y = math.max(0, cy - r);
+        y <= math.min(n - 1, cy + r);
+        y++)
+      for (var x = cx - r; x <= cx + r; x++)
+        (((x % n) + n) % n, y, zoom),
+  ];
+}
+
+/// Tile window for the DEM fetch around [lat]/[lon]. Pure.
+List<(int x, int y, int z)> satDemWindow(double lat, double lon) {
+  const zoom = demZoom;
+  const r = demTileRadius;
+  final n = 1 << zoom;
+  final cx = satTileX(lon, zoom);
+  final cy = satTileY(lat, zoom);
+  return [
+    for (var y = math.max(0, cy - r);
+        y <= math.min(n - 1, cy + r);
+        y++)
+      for (var x = cx - r; x <= cx + r; x++)
+        (((x % n) + n) % n, y, zoom),
+  ];
+}
+
+/// Every tile URL the fixed 20×20 km 3D terrain needs around [lat]/[lon]:
+/// the outer, mid and pad imagery windows plus the DEM window. Pure —
+/// feeds the offline precache (same disk cache the 3D view reads), so a
+/// pre-downloaded site opens the satellite view instantly in the field.
+List<String> satTerrainTileUrls(double lat, double lon) {
+  final urls = <String>[];
+  for (final (x, y, z) in satImageryWindow(lat, lon, satFixedHalfMeters,
+      targetPixels: satOuterTargetPixels,
+      maxTileRadius: satOuterTileRadius)) {
+    urls.add(satelliteTileUrl(x, y, z));
+  }
+  for (final (x, y, z) in satImageryWindow(lat, lon, satMidHalfMeters,
+      targetPixels: satMidTargetPixels,
+      maxTileRadius: satMidTileRadius)) {
+    urls.add(satelliteTileUrl(x, y, z));
+  }
+  for (final (x, y, z) in satImageryWindow(lat, lon, satPadHalfMeters,
+      targetPixels: satPadTargetPixels,
+      maxTileRadius: satPadTileRadius)) {
+    urls.add(satelliteTileUrl(x, y, z));
+  }
+  for (final (x, y, z) in satDemWindow(lat, lon)) {
+    urls.add(demTileUrl(x, y, z));
+  }
+  return urls.toSet().toList();
+}
+
+/// Stitched terrain: nested imagery tiers — [outer] context (up to 20×20
+/// km), [mid] flight area (up to 10×10 km), [pad] sharp centre (2.5×2.5 km
+/// at ~0.77 m/px) — plus an optional elevation grid. Painted back to front
+/// with feathered rims, so tier seams cross-fade instead of drawing hard
+/// crawl lines while panning. Mid/pad/dem are nullable to allow progressive
+/// staging (outer first) and DEM failure; without a DEM the drape renders
+/// flat like before.
+class SatelliteTerrain {
+  final SatellitePatch outer;
+  final SatellitePatch? mid;
+  final SatellitePatch? pad;
+
+  /// Low-res elevation model for relief shading/displacement (`null` when
+  /// the DEM fetch failed — the drape renders flat like before).
+  final ElevationGrid? dem;
+
+  const SatelliteTerrain(
+      {required this.outer, this.mid, this.pad, this.dem});
+
+  /// Mean imagery color for the procedural far terrain: prefer the
+  /// sharpest tier present (what the camera actually looks at).
+  ui.Color get averageColor =>
+      pad?.averageColor ?? mid?.averageColor ?? outer.averageColor;
+}
+
+/// Whether a progressive terrain stage may replace the current display:
+/// a new site always applies; for the same site only strict upgrades do —
+/// never a downgrade or a stale re-arrival over what's showing (which
+/// would read as the terrain flickering between flat and relief). Pure —
+/// unit-tested.
+bool shouldApplyTerrainStage({
+  required String? currentKey,
+  required int currentStage,
+  required String key,
+  required int stage,
+}) {
+  if (currentKey != key) return true;
+  return stage > currentStage;
+}
+
+/// View-dependent emission order for one retained terrain tier.
+///
+/// `Canvas.drawVertices` has no depth buffer: overlapping triangles resolve
+/// purely by draw order (later overwrites earlier), so a fixed north→south
+/// grid order draws far hills over near ground from half of all viewing
+/// directions. The painter must emit quads far-to-near along the view
+/// direction instead.
+///
+/// [dirX]/[dirZ] is the horizontal view direction (target − eye): far means
+/// +direction. Rows run north (j=0) → south, columns west (i=0) → east, so
+/// looking north emits rows ascending, looking south descending; looking
+/// east emits columns descending (east first), looking west ascending. The
+/// dominant axis runs outermost so diagonal views stay close to true depth
+/// order. Pure — unit-tested.
+({bool jAsc, bool iEastFirst, bool outerIsJ}) terrainTierDrawOrder(
+  double dirX,
+  double dirZ,
+) {
+  return (
+    jAsc: dirZ <= 0,
+    iEastFirst: dirX > 0,
+    outerIsJ: dirZ.abs() >= dirX.abs(),
+  );
+}
+
+/// Grid resolutions (vertices per side) for the retained world-space
+/// terrain meshes: coarse far context, medium flight area, dense pad
+/// centre where the chase camera flies low. Built once per terrain —
+/// frames only transform, never resample.
+const int satMeshOuterRes = 80;
+const int satMeshMidRes = 96;
+const int satMeshPadRes = 160;
+
+/// Distance fade for DEM displacement: full relief within
+/// [demLiftFullMeters] of the anchor, fading to flat by
+/// [demLiftFadeMeters] (far-field displacement swam while panning, so
+/// only the near field bulges). Pure — unit-tested.
+double demDistanceFade(double distM) {
+  final lt = ((distM - demLiftFullMeters) /
+          (demLiftFadeMeters - demLiftFullMeters))
+      .clamp(0.0, 1.0);
+  return 1 - lt * lt * (3 - 2 * lt);
+}
+
+/// One retained world-space drape tier: a regular grid over
+/// [-half, +half]² metres (X east, Z south) around the anchor, with baked
+/// DEM heights, imagery UVs (image pixels), surface normals, rim-feather
+/// alphas, plus static triangle indices and prebuilt UV points.
+///
+/// Built once per terrain; per frame the painter only projects vertices
+/// through the view-projection matrix, shades from the cached normals and
+/// near-clips straddling triangles. Geometry is never recomputed from the
+/// camera, so it cannot swim, pop or reshuffle while panning/zooming —
+/// frames just rotate/scale/project the same mesh.
+class TerrainMesh {
+  final Float32List world;
+  final Float32List normals;
+  final Float32List alpha;
+  final List<ui.Offset> uvPts;
+  final List<int> indices;
+  final int rows;
+  final int cols;
+  final double half;
+
+  const TerrainMesh({
+    required this.world,
+    required this.normals,
+    required this.alpha,
+    required this.uvPts,
+    required this.indices,
+    required this.rows,
+    required this.cols,
+    required this.half,
+  });
+
+  int get vertexCount => rows * cols;
+}
+
+/// Retained meshes for every present tier of a terrain.
+typedef TerrainMeshSet = ({
+  TerrainMesh outer,
+  TerrainMesh? mid,
+  TerrainMesh? pad,
+});
+
+/// Builds one retained tier mesh over ±[halfMeters] around the anchor.
+/// [imgW]/[imgH] are the imagery pixel dimensions (UVs are baked as
+/// pixels, so frames never touch UV math). Pure — unit-tested.
+TerrainMesh buildTerrainMesh({
+  required double northLat,
+  required double southLat,
+  required double westLon,
+  required double eastLon,
+  required double imgW,
+  required double imgH,
+  required double coverageHalfMeters,
+  required ElevationGrid? dem,
+  required double lat0,
+  required double lon0,
+  required double cosLat0,
+  required double halfMeters,
+  required int resolution,
+}) {
+  final n = resolution;
+  final world = Float32List(n * n * 3);
+  final normals = Float32List(n * n * 3);
+  final alpha = Float32List(n * n);
+  final uvPts = <ui.Offset>[];
+  for (var j = 0; j < n; j++) {
+    final southM = -halfMeters + 2 * halfMeters * j / (n - 1);
+    for (var i = 0; i < n; i++) {
+      final eastM = -halfMeters + 2 * halfMeters * i / (n - 1);
+      final k = j * n + i;
+      final d = math.sqrt(eastM * eastM + southM * southM);
+      final h = dem == null
+          ? 0.0
+          : dem.sampleRel(eastM, southM, lat0, lon0, cosLat0) *
+              demDistanceFade(d);
+      world[k * 3] = eastM;
+      world[k * 3 + 1] = h;
+      world[k * 3 + 2] = southM;
+      final nrm = dem?.normalAt(eastM, southM, lat0, lon0, cosLat0);
+      normals[k * 3] = nrm?.x ?? 0.0;
+      normals[k * 3 + 1] = nrm?.y ?? 1.0;
+      normals[k * 3 + 2] = nrm?.z ?? 0.0;
+      final uvFrac = satUvFraction(
+        eastM,
+        southM,
+        lat0,
+        lon0,
+        cosLat0,
+        northLat: northLat,
+        southLat: southLat,
+        westLon: westLon,
+        eastLon: eastLon,
+      );
+      final fade = satEdgeFade(uvFrac.u, uvFrac.v);
+      alpha[k] = satRimAlpha(d, coverageHalfMeters) * fade;
+      uvPts.add(ui.Offset(
+        uvFrac.u.clamp(0.0, 1.0) * imgW,
+        uvFrac.v.clamp(0.0, 1.0) * imgH,
+      ));
+    }
+  }
+  final indices = <int>[];
+  for (var j = 0; j + 1 < n; j++) {
+    for (var i = 0; i + 1 < n; i++) {
+      final a = j * n + i;
+      final b = a + 1;
+      final c = a + n;
+      final d2 = c + 1;
+      indices.addAll([a, b, d2, a, d2, c]);
+    }
+  }
+  return TerrainMesh(
+    world: world,
+    normals: normals,
+    alpha: alpha,
+    uvPts: uvPts,
+    indices: indices,
+    rows: n,
+    cols: n,
+    half: halfMeters,
+  );
+}
+
+/// Builds retained meshes for every present tier of [terrain] around the
+/// anchor (world origin). Reads patch bounds and image sizes only — never
+/// pixels, so it stays cheap and synchronous.
+TerrainMeshSet buildTerrainMeshes(
+  SatelliteTerrain terrain, {
+  required double lat0,
+  required double lon0,
+  required double cosLat0,
+}) {
+  TerrainMesh one(
+    SatellitePatch patch,
+    double halfMeters,
+    int resolution,
+  ) =>
+      buildTerrainMesh(
+        northLat: patch.northLat,
+        southLat: patch.southLat,
+        westLon: patch.westLon,
+        eastLon: patch.eastLon,
+        imgW: patch.image.width.toDouble(),
+        imgH: patch.image.height.toDouble(),
+        coverageHalfMeters: patch.coverageHalfMeters,
+        dem: terrain.dem,
+        lat0: lat0,
+        lon0: lon0,
+        cosLat0: cosLat0,
+        halfMeters: halfMeters,
+        resolution: resolution,
+      );
+  return (
+    outer: one(terrain.outer, satFixedHalfMeters, satMeshOuterRes),
+    mid: terrain.mid == null
+        ? null
+        : one(terrain.mid!, satMidHalfMeters, satMeshMidRes),
+    pad: terrain.pad == null
+        ? null
+        : one(terrain.pad!, satPadHalfMeters, satMeshPadRes),
+  );
+}
+
+final Map<String, Future<SatelliteTerrain?>> _terrainCache = {};
+
+final Map<String, Future<SatellitePatch?>> _outerCache = {};
+final Map<String, Future<SatellitePatch?>> _midCache = {};
+final Map<String, Future<SatellitePatch?>> _padCache = {};
+
+/// Memory-cached single-tier fetch shared by the progressive stages and the
+/// full fetch, so no stitch is ever built twice.
+Future<SatellitePatch?> _cachedTier(
+  Map<String, Future<SatellitePatch?>> cache,
+  double lat,
+  double lon,
+  double halfMeters,
+  SatTileFetcher fetcher, {
+  required int targetPixels,
+  required int maxTileRadius,
+}) {
+  final key = _key(lat, lon, halfMeters);
+  final hit = cache[key];
+  if (hit != null) return hit;
+  final future = () async {
+    try {
+      return await _fetch(lat, lon, halfMeters, fetcher,
+          targetPixels: targetPixels, maxTileRadius: maxTileRadius);
+    } catch (_) {
+      return null;
+    }
+  }().then<SatellitePatch?>((patch) {
+    if (patch == null) cache.remove(key);
+    return patch;
+  });
+  cache[key] = future;
+  return future;
+}
+
+/// Fetches just the outer context patch (cached). The 3D view paints this
+/// first for a fast first image, then upgrades through the mid tier to the
+/// full [fetchSatelliteTerrain] (pad + DEM) as they land.
+Future<SatellitePatch?> fetchTerrainOuter({
+  required double lat,
+  required double lon,
+  SatTileFetcher fetcher = _cachedFetcher,
+}) =>
+    _cachedTier(_outerCache, lat, lon, satFixedHalfMeters, fetcher,
+        targetPixels: satOuterTargetPixels,
+        maxTileRadius: satOuterTileRadius);
+
+/// Fetches just the mid flight-area tier (cached) — the second progressive
+/// stage between [fetchTerrainOuter] and [fetchSatelliteTerrain].
+Future<SatellitePatch?> fetchTerrainMid({
+  required double lat,
+  required double lon,
+  SatTileFetcher fetcher = _cachedFetcher,
+}) =>
+    _cachedTier(_midCache, lat, lon, satMidHalfMeters, fetcher,
+        targetPixels: satMidTargetPixels, maxTileRadius: satMidTileRadius);
+
+/// Fetches the (cached) fixed three-tier terrain centred on [lat]/[lon]:
+/// outer 20×20 km context, mid 10×10 km flight area, sharp 2.5×2.5 km pad
+/// tier, plus the elevation grid. One key per site — the extent never grows
+/// with the flight, so a flight triggers at most one stitch. `null` when
+/// offline or on any tile failure (callers fall back to plain ground).
+/// Failures are NOT cached, so a later call retries. Mid, pad and
+/// elevation fetch concurrently with the outer patch so they never add
+/// serial latency; pair with [fetchTerrainOuter]/[fetchTerrainMid] for a
+/// progressive first paint (all stages share the tier caches).
+///
+/// [groundMslM] is the launch pad's MSL altitude: relief renders as true
+/// height above the pad at 1:1 scale. When `null` (no site), relief falls
+/// back to DEM-relative like before.
+Future<SatelliteTerrain?> fetchSatelliteTerrain({
+  required double lat,
+  required double lon,
+  double? groundMslM,
+  SatTileFetcher fetcher = _cachedFetcher,
+}) {
+  final key = _key(lat, lon, satFixedHalfMeters);
+  final hit = _terrainCache[key];
+  if (hit != null) return hit;
+  final future = () async {
+    try {
+      final outerFuture =
+          fetchTerrainOuter(lat: lat, lon: lon, fetcher: fetcher);
+      final midFuture =
+          fetchTerrainMid(lat: lat, lon: lon, fetcher: fetcher);
+      final padFuture = _cachedTier(
+          _padCache, lat, lon, satPadHalfMeters, fetcher,
+          targetPixels: satPadTargetPixels,
+          maxTileRadius: satPadTileRadius);
+      final demFuture = fetchDemGrid(
+          lat: lat, lon: lon, groundMslM: groundMslM, fetcher: fetcher);
+      final outer = await outerFuture;
+      if (outer == null) return null;
+      final mid = await midFuture;
+      final pad = await padFuture;
+      final dem = await demFuture;
+      return SatelliteTerrain(outer: outer, mid: mid, pad: pad, dem: dem);
+    } catch (_) {
+      return null;
+    }
+  }().then<SatelliteTerrain?>((terrain) {
+    if (terrain == null) _terrainCache.remove(key);
+    return terrain;
+  });
+  _terrainCache[key] = future;
+  return future;
+}
+
+// ── Elevation (Terrarium DEM relief) ─────────────────────────────────────────
+
+/// AWS Terrain Tiles in Terrarium encoding, no key required. Same slippy
+/// tiling as the imagery, so [satTileX]/[satTileY] apply.
+String demTileUrl(int x, int y, int z) =>
+    'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/$z/$x/$y.png';
+
+/// Decodes one Terrarium pixel to metres above sea level. Pure.
+double terrariumHeight(int r, int g, int b) =>
+    r * 256.0 + g + b / 256.0 - 32768.0;
+
+/// DEM zoom: z12 tiles are ~6.3 km wide at 50° latitude, so a 5×5 window
+/// covers the whole 20 km terrain with margin.
+const int demZoom = 12;
+
+/// DEM tile radius: a (2×[demTileRadius]+1)² window around the centre.
+const int demTileRadius = 2;
+
+/// DEM grid cells per tile after downsampling (5×5 tiles → 160×160).
+const int demCellPixels = 32;
+
+/// Clamp for relative heights (m) — guards sea/void spikes.
+const double demMaxReliefMeters = 400;
+
+/// Step (m) for the hillshade central differences — matched to the DEM
+/// posting (~200 m) so normals are smooth instead of facet-noisy. Smaller
+/// steps sampled facet edges and made the shading shimmer while panning.
+const double demNormalEps = 100.0;
+
+/// DEM relief applies fully within [demLiftFullMeters] of the launch site
+/// and fades out by [demLiftFadeMeters]. Far-field displacement is what
+/// made the horizon swim: out there a pixel of camera motion swings the
+/// ground hit across whole DEM posts, so lifted vertices jumped while
+/// panning. Hillshading stays global (it varies smoothly); only the
+/// geometric lift fades.
+const double demLiftFullMeters = 3000;
+const double demLiftFadeMeters = 8000;
+
+/// Fraction of a tier's coverage radius where its alpha rim feather starts
+/// (1.0 = fully transparent at the rim). Feathered rims cross-fade tiers
+/// into each other and the outer tier into the far-terrain ring, so there
+/// are no hard dropped-cell edges to crawl while panning.
+const double satFeatherStart = 0.7;
+
+/// Downsampled elevation grid (row 0 = north) backing drape displacement
+/// and hillshading. Tiny (≈160×160 floats) and cached per launch site.
+///
+/// Relief is true height above [datumMsl] at 1:1 scale, so it agrees with
+/// the rocket's baro-AGL altitude exactly. [datumMsl] is the launch pad's
+/// MSL altitude when a site is configured (so surrounding hills sit at
+/// their true height above the pad); without a site it falls back to the
+/// DEM height at the grid centre (pad pinned to 0 like before).
+class ElevationGrid {
+  final double northLat;
+  final double southLat;
+  final double westLon;
+  final double eastLon;
+  final double datumMsl;
+  final int cols;
+  final int rows;
+  final Float32List heights;
+
+  /// Precomputed unit surface normals (3 floats per cell, X east / Y up /
+  /// Z south), so per-frame hillshading is one bilinear sample instead of
+  /// four height samples. `null` for hand-built grids (tests), which use
+  /// the central-difference path in [normalAt].
+  final Float32List? normals;
+
+  const ElevationGrid({
+    required this.northLat,
+    required this.southLat,
+    required this.westLon,
+    required this.eastLon,
+    required this.datumMsl,
+    required this.cols,
+    required this.rows,
+    required this.heights,
+    this.normals,
+  });
+
+  double _absAt(double u, double v) {
+    final x = u * (cols - 1);
+    final y = v * (rows - 1);
+    final x0 = x.floor().clamp(0, cols - 1);
+    final y0 = y.floor().clamp(0, rows - 1);
+    final x1 = (x0 + 1).clamp(0, cols - 1);
+    final y1 = (y0 + 1).clamp(0, rows - 1);
+    final fx = (x - x0).clamp(0.0, 1.0);
+    final fy = (y - y0).clamp(0.0, 1.0);
+    final h00 = heights[y0 * cols + x0];
+    final h10 = heights[y0 * cols + x1];
+    final h01 = heights[y1 * cols + x0];
+    final h11 = heights[y1 * cols + x1];
+    return (h00 * (1 - fx) + h10 * fx) * (1 - fy) +
+        (h01 * (1 - fx) + h11 * fx) * fy;
+  }
+
+  /// Bilinear height (m) above the launch pad datum, at true 1:1 scale and
+  /// clamped. Returns 0 outside the grid and fades to 0 within 5% of the
+  /// grid edge, so the drape settles onto the flat far terrain instead of
+  /// ending in a relief cliff that would swim while panning. Pure.
+  double sampleRel(
+    double eastM,
+    double southM,
+    double lat0,
+    double lon0,
+    double cosLat0,
+  ) {
+    final lon = lon0 + eastM / (metresPerDegreeLat * cosLat0);
+    final lat = lat0 - southM / metresPerDegreeLat;
+    final spanLon = (eastLon - westLon).clamp(1e-12, 360.0);
+    final spanLat = (northLat - southLat).clamp(1e-12, 180.0);
+    final u = (lon - westLon) / spanLon;
+    final v = (northLat - lat) / spanLat;
+    if (u < 0 || u > 1 || v < 0 || v > 1) return 0;
+    final edge = math.min(math.min(u, 1 - u), math.min(v, 1 - v));
+    final fade = _smoothstep((edge / 0.05).clamp(0.0, 1.0));
+    if (fade <= 0) return 0;
+    final rel = (_absAt(u, v) - datumMsl) * fade;
+    return rel.clamp(-demMaxReliefMeters, demMaxReliefMeters).toDouble();
+  }
+
+  /// Surface normal at ([eastM], [southM]), in world axes (X east, Y up,
+  /// Z south). Prefers the precomputed [normals] grid (one bilinear
+  /// sample); hand-built grids without it fall back to central differences
+  /// ([demNormalEps] step). Pure.
+  Vector3 normalAt(
+    double eastM,
+    double southM,
+    double lat0,
+    double lon0,
+    double cosLat0,
+  ) {
+    final pre = normals;
+    if (pre != null) {
+      final lon = lon0 + eastM / (metresPerDegreeLat * cosLat0);
+      final lat = lat0 - southM / metresPerDegreeLat;
+      final spanLon = (eastLon - westLon).clamp(1e-12, 360.0);
+      final spanLat = (northLat - southLat).clamp(1e-12, 180.0);
+      final u = ((lon - westLon) / spanLon).clamp(0.0, 1.0);
+      final v = ((northLat - lat) / spanLat).clamp(0.0, 1.0);
+      final x = u * (cols - 1);
+      final y = v * (rows - 1);
+      final x0 = x.floor().clamp(0, cols - 1);
+      final y0 = y.floor().clamp(0, rows - 1);
+      final x1 = (x0 + 1).clamp(0, cols - 1);
+      final y1 = (y0 + 1).clamp(0, rows - 1);
+      final fx = (x - x0).clamp(0.0, 1.0);
+      final fy = (y - y0).clamp(0.0, 1.0);
+      var nx = 0.0, ny = 0.0, nz = 0.0;
+      for (var j = 0; j < 2; j++) {
+        final wy = j == 0 ? 1 - fy : fy;
+        final r = (j == 0 ? y0 : y1) * cols;
+        for (var i = 0; i < 2; i++) {
+          final w = (i == 0 ? 1 - fx : fx) * wy;
+          final c = (r + (i == 0 ? x0 : x1)) * 3;
+          nx += pre[c] * w;
+          ny += pre[c + 1] * w;
+          nz += pre[c + 2] * w;
+        }
+      }
+      final n = Vector3(nx, ny, nz);
+      if (n.length2 > 1e-12) return n.normalized();
+      return Vector3(0, 1, 0);
+    }
+    const eps = demNormalEps;
+    final dhdx = (sampleRel(eastM + eps, southM, lat0, lon0, cosLat0) -
+            sampleRel(eastM - eps, southM, lat0, lon0, cosLat0)) /
+        (2 * eps);
+    final dhdz = (sampleRel(eastM, southM + eps, lat0, lon0, cosLat0) -
+            sampleRel(eastM, southM - eps, lat0, lon0, cosLat0)) /
+        (2 * eps);
+    return Vector3(-dhdx, 1, -dhdz).normalized();
+  }
+
+  /// Builds the per-cell unit-normal grid for [heights] over the given
+  /// geo bounds (metres via [metresPerDegreeLat]). Pure — runs once per
+  /// DEM fetch so frames never pay central differences.
+  static Float32List buildNormals({
+    required Float32List heights,
+    required int cols,
+    required int rows,
+    required double northLat,
+    required double southLat,
+    required double westLon,
+    required double eastLon,
+  }) {
+    final out = Float32List(cols * rows * 3);
+    final midLat = (northLat + southLat) / 2;
+    final gridWm = (eastLon - westLon) *
+        metresPerDegreeLat *
+        math.cos(midLat * math.pi / 180);
+    final gridHm = (northLat - southLat) * metresPerDegreeLat;
+    final cellW = gridWm / math.max(1, cols - 1);
+    final cellH = gridHm / math.max(1, rows - 1);
+    for (var j = 0; j < rows; j++) {
+      final jm = math.max(0, j - 1);
+      final jp = math.min(rows - 1, j + 1);
+      for (var i = 0; i < cols; i++) {
+        final im = math.max(0, i - 1);
+        final ip = math.min(cols - 1, i + 1);
+        final dhdx =
+            (heights[j * cols + ip] - heights[j * cols + im]) /
+                (math.max(1, ip - im) * cellW);
+        final dhdz =
+            (heights[jp * cols + i] - heights[jm * cols + i]) /
+                (math.max(1, jp - jm) * cellH);
+        final inv = 1 / math.sqrt(dhdx * dhdx + 1 + dhdz * dhdz);
+        final c = (j * cols + i) * 3;
+        out[c] = -dhdx * inv;
+        out[c + 1] = inv;
+        out[c + 2] = -dhdz * inv;
+      }
+    }
+    return out;
+  }
+}
+
+final Map<String, Future<ElevationGrid?>> _demCache = {};
+
+/// Fetches a low-res DEM around [lat]/[lon] (z12 5×5 window, downsampled
+/// to ~160×160). Cached per site + datum; `null` on any failure (callers
+/// render flat). Failures are NOT cached.
+///
+/// [groundMslM] is the launch pad's MSL altitude and becomes the grid's
+/// relief datum, so the drape renders at its true height above the pad.
+/// When `null` (no configured site) the datum falls back to the DEM height
+/// at the centre, pinning the pad to 0 like before.
+Future<ElevationGrid?> fetchDemGrid({
+  required double lat,
+  required double lon,
+  double? groundMslM,
+  SatTileFetcher fetcher = _cachedFetcher,
+}) {
+  final key =
+      '${lat.toStringAsFixed(3)},${lon.toStringAsFixed(3)},${groundMslM?.toStringAsFixed(1) ?? 'dem'}';
+  final hit = _demCache[key];
+  if (hit != null) return hit;
+  final future = () async {
+    try {
+      return await _fetchDem(lat, lon, fetcher, groundMslM);
+    } catch (_) {
+      return null;
+    }
+  }().then<ElevationGrid?>((grid) {
+    if (grid == null) _demCache.remove(key);
+    return grid;
+  });
+  _demCache[key] = future;
+  return future;
+}
+
+Future<ElevationGrid?> _fetchDem(
+  double lat,
+  double lon,
+  SatTileFetcher fetcher,
+  double? groundMslM,
+) async {
+  const zoom = demZoom;
+  const r = demTileRadius;
+  final n = 1 << zoom;
+  final cx = satTileX(lon, zoom);
+  final cy = satTileY(lat, zoom);
+  // Per-tile pixels after downsampling; 5×5 tiles → 160×160 grid.
+  const cell = demCellPixels;
+  const size = (2 * r + 1) * cell;
+  final minY = math.max(0, cy - r);
+  final maxY = math.min(n - 1, cy + r);
+
+  // Tile bytes first, all at once: 25 sequential HTTP round-trips were the
+  // bulk of DEM latency. S3 tolerates the burst; drawing stays ordered.
+  final coords = <(int x, int y)>[
+    for (var y = minY; y <= maxY; y++)
+      for (var x = cx - r; x <= cx + r; x++) (x, y),
+  ];
+  final byteResults = await Future.wait([
+    for (final (x, y) in coords)
+      () async {
+        final wx = ((x % n) + n) % n;
+        return fetcher(Uri.parse(demTileUrl(wx, y, zoom)));
+      }(),
+  ]);
+  final bytesByCoord = <(int, int), Uint8List?>{
+    for (var i = 0; i < coords.length; i++) coords[i]: byteResults[i],
+  };
+
+  final recorder = ui.PictureRecorder();
+  final canvas = ui.Canvas(recorder);
+  canvas.drawRect(
+    ui.Rect.fromLTWH(0, 0, size.toDouble(), size.toDouble()),
+    ui.Paint()..color = const ui.Color(0xFF000000),
+  );
+  var anyTile = false;
+  for (final (x, y) in coords) {
+    final bytes = bytesByCoord[(x, y)];
+    if (bytes == null || !looksLikeImage(bytes)) continue;
+    try {
+      final codec = await ui.instantiateImageCodec(bytes);
+      final frame = await codec.getNextFrame();
+      final tile = frame.image;
+      canvas.drawImageRect(
+        tile,
+        ui.Rect.fromLTWH(
+            0, 0, tile.width.toDouble(), tile.height.toDouble()),
+        ui.Rect.fromLTWH(
+          (x - (cx - r)) * cell.toDouble(),
+          (y - minY) * cell.toDouble(),
+          cell.toDouble(),
+          cell.toDouble(),
+        ),
+        ui.Paint()..filterQuality = ui.FilterQuality.low,
+      );
+      tile.dispose();
+      anyTile = true;
+    } catch (_) {
+      // Skip undecodable tiles; neighbours interpolate over them.
+    }
+  }
+  if (!anyTile) return null;
+  final picture = recorder.endRecording();
+  final image = await picture.toImage(size, size);
+  picture.dispose();
+  try {
+    final data =
+        await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+    if (data == null) return null;
+    final px = data.buffer.asUint8List();
+    final heights = Float32List(size * size);
+    for (var i = 0; i < size * size; i++) {
+      heights[i] = terrariumHeight(
+          px[i * 4], px[i * 4 + 1], px[i * 4 + 2]);
+    }
+    final north = satTileLatNorth(minY, zoom);
+    final south = satTileLatNorth(maxY + 1, zoom);
+    final west = (cx - r) / (1 << zoom) * 360 - 180;
+    final east = (cx + r + 1) / (1 << zoom) * 360 - 180;
+    // Relief datum: the launch pad's MSL altitude when known, so the
+    // drape sits at its true height above the pad; otherwise the DEM
+    // height at the centre (pad pinned to 0). A DEM/site disagreement
+    // then shows honestly as the pad terrain sitting slightly off y=0.
+    var datumMsl = groundMslM;
+    datumMsl ??= ElevationGrid(
+      northLat: north,
+      southLat: south,
+      westLon: west,
+      eastLon: east,
+      datumMsl: 0,
+      cols: size,
+      rows: size,
+      heights: heights,
+    )._absAt(
+      ((lon - west) / (east - west).clamp(1e-12, 360.0)),
+      ((north - lat) / (north - south).clamp(1e-12, 180.0)),
+    );
+    return ElevationGrid(
+      northLat: north,
+      southLat: south,
+      westLon: west,
+      eastLon: east,
+      datumMsl: datumMsl,
+      cols: size,
+      rows: size,
+      heights: heights,
+      normals: ElevationGrid.buildNormals(
+        heights: heights,
+        cols: size,
+        rows: size,
+        northLat: north,
+        southLat: south,
+        westLon: west,
+        eastLon: east,
+      ),
+    );
+  } finally {
+    image.dispose();
+  }
 }
 
 Future<SatellitePatch?> _fetch(
   double lat,
   double lon,
   double halfMeters,
-  SatTileFetcher fetcher,
-) async {
-  final zoom = satZoomForHalfMeters(halfMeters, lat);
+  SatTileFetcher fetcher, {
+  int targetPixels = 1024,
+  int maxTileRadius = 2,
+}) async {
+  final zoom = satZoomForHalfMeters(halfMeters, lat,
+      targetPixels: targetPixels);
   final mpp = satMetresPerPixel(lat, zoom);
   final tileM = mpp * 256;
   // Tile window around the centre, with margin for the scene plus label room.
-  final r = (halfMeters * 1.4 / tileM).ceil().clamp(1, 4);
+  // Capped at (2*maxTileRadius+1)² tiles (9×9 = 2304 px at the terrain
+  // radius 4): the far-terrain ring shows through outside instead of
+  // growing the stitch without bound.
+  final r =
+      (halfMeters * 1.4 / tileM).ceil().clamp(1, maxTileRadius);
   final cx = satTileX(lon, zoom);
   final cy = satTileY(lat, zoom);
   final n = 1 << zoom;
@@ -380,41 +1299,81 @@ Future<SatellitePatch?> _fetch(
   );
 
   var anyTile = false;
-  for (var y = minY; y <= maxY; y++) {
-    for (var x = minX; x <= maxX; x++) {
-      // Wrap horizontally (tiles repeat around the antimeridian).
-      final wx = ((x % n) + n) % n;
-      final (bytes, qx, qy, qz) =
-          await _fetchTileImage(fetcher, wx, y, zoom);
-      if (bytes == null) continue;
-      try {
-        final codec = await ui.instantiateImageCodec(bytes);
-        final frame = await codec.getNextFrame();
-        final tile = frame.image;
-        // Native tile: full image. Parent fallback: the quadrant we stand in,
-        // upscaled to full size.
-        final src = qz == zoom
-            ? ui.Rect.fromLTWH(
-                0, 0, tile.width.toDouble(), tile.height.toDouble())
-            : ui.Rect.fromLTWH(
-                qx * tile.width / 2,
-                qy * tile.height / 2,
-                tile.width / 2,
-                tile.height / 2,
-              );
-        final dst = ui.Rect.fromLTWH(
-          (x - minX) * 256.0,
-          (y - minY) * 256.0,
-          256.0,
-          256.0,
-        );
-        canvas.drawImageRect(tile, src, dst, ui.Paint());
-        tile.dispose();
-        anyTile = true;
-      } catch (_) {
-        // Skip undecodable tiles; the underlay shows through.
-      }
+  // Fetch first with bounded parallelism, then decode in parallel batches,
+  // then draw in tile order: sequential HTTP was the bulk of patch latency
+  // (up to 81 tiles), and sequential codec work came second. 12 requests
+  // in flight keeps tile servers happy.
+  final coords = <(int x, int y)>[
+    for (var y = minY; y <= maxY; y++)
+      for (var x = minX; x <= maxX; x++) (x, y),
+  ];
+  final fetched = <(int, int), (Uint8List?, int, int, int)>{};
+  const fetchConcurrency = 12;
+  for (var i = 0; i < coords.length; i += fetchConcurrency) {
+    final batch =
+        coords.sublist(i, math.min(i + fetchConcurrency, coords.length));
+    final results = await Future.wait([
+      for (final (x, y) in batch)
+        () async {
+          // Wrap horizontally (tiles repeat around the antimeridian).
+          final wx = ((x % n) + n) % n;
+          final tile = await _fetchTileImage(fetcher, wx, y, zoom);
+          return (x, y, tile);
+        }(),
+    ]);
+    for (final (x, y, tile) in results) {
+      fetched[(x, y)] = tile;
     }
+  }
+  // Parallel decode (CPU-bound); drawing below stays ordered. Holding the
+  // decoded tiles costs ~21 MB transiently at 9×9.
+  final images = <(int, int), ui.Image?>{};
+  const decodeConcurrency = 8;
+  final decodable = [
+    for (final c in coords)
+      if (fetched[c]?.$1 != null) c,
+  ];
+  for (var i = 0; i < decodable.length; i += decodeConcurrency) {
+    final batch = decodable.sublist(
+        i, math.min(i + decodeConcurrency, decodable.length));
+    await Future.wait([
+      for (final (x, y) in batch)
+        () async {
+          try {
+            final codec =
+                await ui.instantiateImageCodec(fetched[(x, y)]!.$1!);
+            images[(x, y)] = (await codec.getNextFrame()).image;
+          } catch (_) {
+            // Skip undecodable tiles; the underlay shows through.
+          }
+        }(),
+    ]);
+  }
+  for (final (x, y) in coords) {
+    final tile = images[(x, y)];
+    if (tile == null) continue;
+    final (_, qx, qy, qz) = fetched[(x, y)]!;
+    // Native tile: full image. Ancestor fallback: the cell we stand in
+    // (2^(zoom-qz) split), upscaled to full size.
+    final scale = qz == zoom ? 1 : 1 << (zoom - qz);
+    final src = qz == zoom
+        ? ui.Rect.fromLTWH(
+            0, 0, tile.width.toDouble(), tile.height.toDouble())
+        : ui.Rect.fromLTWH(
+            qx * tile.width / scale,
+            qy * tile.height / scale,
+            tile.width / scale,
+            tile.height / scale,
+          );
+    final dst = ui.Rect.fromLTWH(
+      (x - minX) * 256.0,
+      (y - minY) * 256.0,
+      256.0,
+      256.0,
+    );
+    canvas.drawImageRect(tile, src, dst, ui.Paint());
+    tile.dispose();
+    anyTile = true;
   }
   if (!anyTile) return null;
 

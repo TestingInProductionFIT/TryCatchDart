@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vector_math/vector_math_64.dart';
 
+import '../../state/replay_controller.dart';
 import '../../state/telemetry_store.dart';
 import '../components/waiting_for_data.dart';
 import './shared/trackpad_zoom.dart' show scrollZoomFactor;
@@ -64,15 +65,36 @@ class _Rocket3dWidgetState extends ConsumerState<Rocket3dTile> {
   Widget build(BuildContext context) {
     final latest = ref.watch(telemetryStoreProvider).latest;
     final camera = ref.watch(orbitCameraProvider);
+    final replay = ref.watch(replayProvider);
 
     if (latest == null) {
       return Center(child: WaitingForData());
     }
 
     // Airframe configuration comes straight from the FSM state: the cone
-    // pops at apogee and the canopy opens under parachute.
+    // pops at apogee, the canopy renders under parachute only (landed
+    // keeps the nose-cone tile UNLOCKED but hides the collapsed chute).
     final showNoseCone = latest.fsmState.hasNosecone;
-    final showParachute = latest.fsmState.hasParachute;
+    final showParachute = latest.fsmState.showsParachute;
+
+    // Replay smoothing also steadies the rotation: same trailing-average
+    // attitude the flight views use, so the orientation viewer stops
+    // jittering when the toggle is on. Raw replay and live stay untouched.
+    var pitchDeg = latest.pitch;
+    var yawDeg = latest.yaw;
+    var rollDeg = latest.roll;
+    if (replay.isActive &&
+        replay.frames.isNotEmpty &&
+        replay.smoothingEnabled) {
+      final attitude = replayAttitude(
+        frames: replay.frames,
+        positionMs: replay.positionMs,
+        smoothingEnabled: true,
+      );
+      pitchDeg = attitude.pitchDeg;
+      yawDeg = attitude.yawDeg;
+      rollDeg = attitude.rollDeg;
+    }
 
     return Listener(
       onPointerSignal: (event) {
@@ -97,9 +119,9 @@ class _Rocket3dWidgetState extends ConsumerState<Rocket3dTile> {
         onDoubleTap: () => setState(() => _zoom = 1.0),
         child: CustomPaint(
           painter: _RocketPainter(
-            pitchDeg: latest.pitch,
-            yawDeg: latest.yaw,
-            rollDeg: latest.roll,
+            pitchDeg: pitchDeg,
+            yawDeg: yawDeg,
+            rollDeg: rollDeg,
             cameraAzimuthDeg: camera.azimuthDeg,
             cameraElevationDeg: camera.elevationDeg,
             showNoseCone: showNoseCone,

@@ -25,6 +25,21 @@ double haversineDistanceM(
   return 2 * 6371000 * math.asin(math.sqrt(a));
 }
 
+/// 3D distance in metres between two WGS84 + altitude points: the
+/// horizontal great-circle distance combined with the vertical difference.
+double distance3dM(
+  double lat1,
+  double lon1,
+  double alt1,
+  double lat2,
+  double lon2,
+  double alt2,
+) {
+  final horizontal = haversineDistanceM(lat1, lon1, lat2, lon2);
+  final vertical = alt2 - alt1;
+  return math.sqrt(horizontal * horizontal + vertical * vertical);
+}
+
 /// Adds a north/east offset (metres) to a WGS84 point using a flat-earth
 /// approximation — accurate to well under a metre for the few-kilometre
 /// ranges of a model rocket flight.

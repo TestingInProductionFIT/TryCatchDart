@@ -9,7 +9,8 @@ import '../components/centered_stat.dart';
 /// Peak barometric altitude (m AGL) reached in the current session.
 ///
 /// Split out of the old stats panel so the headline number can live in its
-/// own tile; the position panel keeps the live GPS / dead-reckoning readout.
+/// own tile; the GPS position and dead-reckoning tiles keep the live
+/// position readouts.
 /// Just the peak — no live value.
 class MaxAltitudeTile extends ConsumerWidget {
   const MaxAltitudeTile({super.key});

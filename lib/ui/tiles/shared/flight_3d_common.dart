@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 // `Colors` collides with material's — material's wins here.
 import 'package:vector_math/vector_math_64.dart' hide Colors;
+import 'package:serial/serial.dart';
 
 import '../../../state/launch_site_store.dart';
 import '../../../core/geo.dart';
@@ -23,6 +24,7 @@ import './rocket_mesh.dart';
 /// Camera behaviour of the 3D flight views.
 enum FlightCameraMode {
   chase('Chase rocket', Icons.center_focus_strong),
+  pad('Launch pad', Icons.rocket_launch),
   orbit('Orbit field', Icons.threesixty),
   free('Free orbit', Icons.control_camera);
 
@@ -119,9 +121,42 @@ FlightAnchor? flightAnchor(TelemetryState state, LaunchSite? site) {
   return null;
 }
 
+/// Fixed trail time bucket (ms): GPS fixes decimate on absolute buckets so
+/// sampled points never move as history grows. (A span-derived bucket
+/// resampled the whole trail every tick and the line visibly crawled.)
+const int flightTrailBucketMs = 100;
+
+/// Maximum trail points per scene; longer trails stride from the end via
+/// [capTrailPoints] so the tip stays exact.
+const int flightTrailMaxPoints = 400;
+
+/// Caps a chronological point list to about [maxPoints], striding from the
+/// END so the tip is always exact and the start is always kept. Pure —
+/// unit-tested.
+List<Vector3> capTrailPoints(List<Vector3> points,
+    {int maxPoints = flightTrailMaxPoints}) {
+  if (points.length <= maxPoints) return points;
+  final stride = (points.length / maxPoints).ceil();
+  final rev = <Vector3>[];
+  var first = points.length - 1;
+  for (var i = points.length - 1; i >= 0; i -= stride) {
+    rev.add(points[i]);
+    first = i;
+  }
+  final out = rev.reversed.toList();
+  if (first != 0) out.insert(0, points[0]);
+  // Prepending the start can push the count one over budget; drop the
+  // second point (start, order and tip stay exact).
+  if (out.length > maxPoints) out.removeAt(1);
+  return out;
+}
+
 /// Builds the metric scene from the flight history: GPS trail, rocket
 /// position, extents and readout. `null` when no position anchor exists yet
 /// (frames arriving but no fix and no configured site).
+///
+/// This is the live path and always renders raw frames. Replays use
+/// [buildReplayScene], which can smooth over the whole recording.
 FlightScene? buildFlightScene(TelemetryState state, LaunchSite? site) {
   final history = state.history;
   if (history.isEmpty) return null;
@@ -137,23 +172,23 @@ FlightScene? buildFlightScene(TelemetryState state, LaunchSite? site) {
   Vector3 enu(double lat, double lon, double agl) =>
       worldFromLatLon(lat, lon, agl, lat0, lon0, cosLat0);
 
-  // Trail: GPS fixes only, decimated on absolute time buckets. Dead
-  // reckoning is intentionally NOT part of the trail — when GPS is stale
-  // the estimate is shown as a single violet point (see showDr).
-  final spanMs =
-      history[0].receivedAtMs - history.getChronological(0).receivedAtMs;
-  final bucketMs = math.max(1, spanMs ~/ 400);
-  final trail = <Vector3>[];
+  // Trail: GPS fixes only, decimated on FIXED absolute time buckets so
+  // points never move as history grows, then capped from the end so the
+  // tip stays exact. Dead reckoning is intentionally NOT part of the
+  // trail — when GPS is stale the estimate is shown as a single violet
+  // point (see showDr).
+  final all = <Vector3>[];
   var lastGpsBucket = -1;
 
   for (var i = 0; i < history.length; i++) {
     final f = history.getChronological(i);
     if (!f.gpsHasFix) continue;
-    final bucket = f.receivedAtMs ~/ bucketMs;
+    final bucket = f.receivedAtMs ~/ flightTrailBucketMs;
     if (bucket == lastGpsBucket) continue;
-    trail.add(enu(f.latitude, f.longitude, f.baroAltitude));
+    all.add(enu(f.latitude, f.longitude, f.baroAltitude));
     lastGpsBucket = bucket;
   }
+  final trail = capTrailPoints(all);
 
   // Current rocket position: GPS when available, dead reckoning otherwise.
   // Before the first fix (pad wait) the rocket sits on the pad — show it
@@ -198,12 +233,264 @@ FlightScene? buildFlightScene(TelemetryState state, LaunchSite? site) {
     yawDeg: latest.yaw,
     rollDeg: latest.roll,
     showNoseCone: latest.fsmState.hasNosecone,
-    showParachute: latest.fsmState.hasParachute,
+    showParachute: latest.fsmState.showsParachute,
     siteName: site?.name,
   );
 }
 
+/// Replay scene built from a recording's full pre-decoded frames.
+///
+/// Unlike [buildFlightScene] (bounded live ring, raw), the whole flight is
+/// addressable here, so with [smoothingEnabled] the trail AND the rocket
+/// position share one centered moving average with full lookahead — exactly
+/// like the legacy web visualizer — and the rocket always sits on the trail
+/// tip instead of teleporting ahead of a lagging line. Raw frames are
+/// smoothed first and decimated after: decimating first aliases the GPS
+/// quantization grid (1e-5 deg ≈ 1.1 m) into visible wiggles no post-hoc
+/// average can remove. Altitude stays raw in both modes; the recorded
+/// frames, charts and map are unaffected (always raw).
+FlightScene? buildReplayScene({
+  required List<TelemetryFrame> frames,
+  required int positionMs,
+  required LaunchSite? site,
+  bool smoothingEnabled = false,
+}) {
+  if (frames.isEmpty) return null;
+  final t0 = frames.first.receivedAtMs;
+  var lo = 0;
+  var hi = frames.length;
+  while (lo < hi) {
+    final mid = (lo + hi) >> 1;
+    if (frames[mid].receivedAtMs - t0 <= positionMs) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  var idx = lo - 1;
+  if (idx < 0) idx = 0;
+  if (idx > frames.length - 1) idx = frames.length - 1;
+
+  // Anchor: file site, else the first GPS fix in the recording.
+  late final double lat0;
+  late final double lon0;
+  if (site != null) {
+    lat0 = site.latitude;
+    lon0 = site.longitude;
+  } else {
+    TelemetryFrame? fix;
+    for (final f in frames) {
+      if (f.gpsHasFix) {
+        fix = f;
+        break;
+      }
+    }
+    if (fix == null) return null;
+    lat0 = fix.latitude;
+    lon0 = fix.longitude;
+  }
+  final cosLat0 = math.cos(radians(lat0));
+
+  Vector3 worldOf(TelemetryFrame f) => worldFromLatLon(
+        f.latitude,
+        f.longitude,
+        f.baroAltitude,
+        lat0,
+        lon0,
+        cosLat0,
+      );
+
+  // Fix-only subsequence (matches the live builder: the trail is GPS).
+  final fixIdx = <int>[];
+  for (var i = 0; i < frames.length; i++) {
+    if (frames[i].gpsHasFix) fixIdx.add(i);
+  }
+  // Tip: last fix at or before the playhead.
+  lo = 0;
+  hi = fixIdx.length;
+  while (lo < hi) {
+    final mid = (lo + hi) >> 1;
+    if (fixIdx[mid] <= idx) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  final tip = lo - 1;
+  final tipFrame = frames[idx];
+
+  if (tip < 0) {
+    // No fix yet: the rocket waits on the pad like in the live builder.
+    final pad =
+        worldFromLatLon(lat0, lon0, tipFrame.baroAltitude, lat0, lon0, cosLat0);
+    final padAttitude = replayAttitude(
+      frames: frames,
+      positionMs: positionMs,
+      smoothingEnabled: smoothingEnabled,
+    );
+    return FlightScene(
+      trail: const [],
+      rocketPos: pad,
+      rocketIsDr: false,
+      maxAlt: pad.y,
+      maxHoriz: 0,
+      pitchDeg: padAttitude.pitchDeg,
+      yawDeg: padAttitude.yawDeg,
+      rollDeg: padAttitude.rollDeg,
+      showNoseCone: tipFrame.fsmState.hasNosecone,
+      showParachute: tipFrame.fsmState.showsParachute,
+      siteName: site?.name,
+    );
+  }
+
+  Vector3 rawAt(int k) => worldOf(frames[fixIdx[k]]);
+
+  Vector3 smoothAt(int k) {
+    // Centered ±35 over the fix subsequence, clamped to the FULL recording
+    // (lookahead into not-yet-played frames — the legacy visualizer smoothed
+    // its whole dataset the same way). Horizontal only; altitude stays raw.
+    var a = k - replayTrailHalfWindow;
+    var b = k + replayTrailHalfWindow;
+    if (a < 0) a = 0;
+    if (b > fixIdx.length - 1) b = fixIdx.length - 1;
+    var sx = 0.0;
+    var sz = 0.0;
+    for (var j = a; j <= b; j++) {
+      final p = rawAt(j);
+      sx += p.x;
+      sz += p.z;
+    }
+    final n = b - a + 1;
+    return Vector3(sx / n, rawAt(k).y, sz / n);
+  }
+
+  // Decimate to a paintable point count via capTrailPoints: tip-exact,
+  // start-kept, and stable as the playhead advances (the old tip-derived
+  // stride resampled earlier points on every seek step).
+  final rawTrail = <Vector3>[];
+  for (var k = 0; k <= tip; k++) {
+    rawTrail.add(smoothingEnabled ? smoothAt(k) : rawAt(k));
+  }
+  final trail = capTrailPoints(rawTrail);
+  final tipPoint = trail.last;
+
+  var maxAlt = tipPoint.y;
+  var maxHoriz = math.sqrt(
+      tipPoint.x * tipPoint.x + tipPoint.z * tipPoint.z);
+  for (final p in trail) {
+    if (p.y > maxAlt) maxAlt = p.y;
+    final h = math.sqrt(p.x * p.x + p.z * p.z);
+    if (h > maxHoriz) maxHoriz = h;
+  }
+
+  final attitude = replayAttitude(
+    frames: frames,
+    positionMs: positionMs,
+    smoothingEnabled: smoothingEnabled,
+  );
+  final pitchDeg = attitude.pitchDeg;
+  final yawDeg = attitude.yawDeg;
+  final rollDeg = attitude.rollDeg;
+
+  return FlightScene(
+    trail: trail,
+    // Same smoothing as the trail tip: the rocket can never disagree
+    // with the line it sits on.
+    rocketPos: tipPoint,
+    rocketIsDr: false,
+    maxAlt: maxAlt,
+    maxHoriz: maxHoriz,
+    pitchDeg: pitchDeg,
+    yawDeg: yawDeg,
+    rollDeg: rollDeg,
+    showNoseCone: tipFrame.fsmState.hasNosecone,
+    showParachute: tipFrame.fsmState.showsParachute,
+    siteName: site?.name,
+  );
+}
+
+/// Half-width of the centered trail average ([buildReplayScene]) and the
+/// length of the trailing rotation average ([replayAttitude]).
+const int replayTrailHalfWindow = 35;
+const int replayAttitudeWindow = 35;
+
+/// Replay rotation at [positionMs]: raw frame angles by default, or the
+/// smoothed display attitude when [smoothingEnabled].
+///
+/// The smoothed path matches [buildReplayScene]: a trailing
+/// [replayAttitudeWindow]-frame averaged specific-force vector via
+/// [smoothedAttitude] with yaw forced to 0 (compass heading is unknown —
+/// the legacy yaw was always 0). Shared by the flight views (via
+/// [buildReplayScene]) and the orientation viewer so the toggle smooths
+/// every rotating airframe, not just the trail views.
+({double pitchDeg, double yawDeg, double rollDeg}) replayAttitude({
+  required List<TelemetryFrame> frames,
+  required int positionMs,
+  required bool smoothingEnabled,
+}) {
+  final t0 = frames.first.receivedAtMs;
+  var lo = 0;
+  var hi = frames.length;
+  while (lo < hi) {
+    final mid = (lo + hi) >> 1;
+    if (frames[mid].receivedAtMs - t0 <= positionMs) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  var idx = lo - 1;
+  if (idx < 0) idx = 0;
+  if (idx > frames.length - 1) idx = frames.length - 1;
+  if (!smoothingEnabled) {
+    final f = frames[idx];
+    return (pitchDeg: f.pitch, yawDeg: f.yaw, rollDeg: f.roll);
+  }
+  var from = idx - (replayAttitudeWindow - 1);
+  if (from < 0) from = 0;
+  final attitude = smoothedAttitude(frames.sublist(from, idx + 1),
+      window: replayAttitudeWindow);
+  return (
+    pitchDeg: attitude.pitchDeg,
+    yawDeg: 0.0,
+    rollDeg: attitude.rollDeg,
+  );
+}
+
+/// Display attitude from an averaged specific-force vector, using the same
+/// tilt-from-accelerometer formula the legacy ground station applied per
+/// packet. Averaging the vector (not the angles) keeps `atan2` stable when
+/// the per-frame estimate swings — near free-fall at apogee, chute swing,
+/// vibration — while still tracking real orientation changes. `frames` must
+/// be chronological with the newest last; at most the trailing [window]
+/// entries are used. Pure: safe to unit-test.
+({double rollDeg, double pitchDeg}) smoothedAttitude(
+  List<TelemetryFrame> frames, {
+  int window = 25,
+}) {
+  if (frames.isEmpty) return (rollDeg: 0.0, pitchDeg: 0.0);
+  final n = math.min(window, frames.length);
+  var ax = 0.0;
+  var ay = 0.0;
+  var az = 0.0;
+  for (var i = frames.length - n; i < frames.length; i++) {
+    ax += frames[i].accelX;
+    ay += frames[i].accelY;
+    az += frames[i].accelZ;
+  }
+  ax /= n;
+  ay /= n;
+  az /= n;
+  return (
+    rollDeg: math.atan2(ay, az) * 180 / math.pi,
+    pitchDeg: math.atan2(-ax, math.sqrt(ay * ay + az * az)) * 180 / math.pi,
+  );
+}
+
 // ── Camera ───────────────────────────────────────────────────────────────────
+
+/// Vertical field of view (radians) shared by the flight cameras.
+const double flightFovY = 50 * math.pi / 180;
 
 /// Computed camera for one frame.
 class FlightCamera {
@@ -212,6 +499,12 @@ class FlightCamera {
   final Vector3 eye;
   final Vector3 target;
   final double dist;
+
+  /// Vertical field of view (radians) and aspect ratio, so the satellite
+  /// drape can build analytic ground rays without inverting [vp] per frame
+  /// (the inverse jittered at grazing angles and read as terrain wobble).
+  final double fovY;
+  final double aspect;
   final Vector3 lightDir;
 
   const FlightCamera({
@@ -220,6 +513,8 @@ class FlightCamera {
     required this.eye,
     required this.target,
     required this.dist,
+    required this.fovY,
+    required this.aspect,
     required this.lightDir,
   });
 }
@@ -232,14 +527,15 @@ FlightCamera computeFlightCamera({
   required double zoom,
   required double aspect,
 }) {
-  // Camera target/distance: on the rocket, or orbiting the whole field.
+  // Camera target/distance. Chase keeps a constant standoff from the
+  // rocket (it used to scale with the flight extents, so the camera drifted
+  // away as the flight grew); orbit-field frames the whole scene; pad sits
+  // by the launch rail and tracks the rocket like the legacy visualizer.
   final center = Vector3(0, scene.maxAlt * 0.45, 0);
   final sceneRadius = math.max(40.0, math.max(scene.maxHoriz, scene.maxAlt));
   final (Vector3 target, double dist) = switch (mode) {
-    FlightCameraMode.chase => (
-        scene.rocketPos,
-        math.max(24.0, sceneRadius * 0.16) / zoom,
-      ),
+    FlightCameraMode.chase => (scene.rocketPos, 7.0 / zoom),
+    FlightCameraMode.pad => (scene.rocketPos, 0),
     _ => (
         center,
         math.max(60.0, sceneRadius * 2.2) / zoom,
@@ -256,23 +552,81 @@ FlightCamera computeFlightCamera({
     math.cos(el) * math.cos(az),
   );
   var eye = target + camDir * dist;
+  if (mode == FlightCameraMode.pad) {
+    // Fixed spectator spot by the pad, tracking the rocket.
+    eye = Vector3(22, 3, 38) * (1 / zoom);
+  }
   if (eye.y < 2.0) eye = Vector3(eye.x, 2.0, eye.z);
-
-  final proj = makePerspectiveMatrix(
-      radians(50), aspect, 0.5, dist + sceneRadius * 4 + 120000);
-  final view = makeViewMatrix(eye, target, Vector3(0, 1, 0));
-  final vp = proj * view;
 
   // Headlight slightly above the camera, like the orientation viewer.
   final light = (camDir.clone()..scale(0.6)) + Vector3(-0.25, 0.8, 0.1);
 
+  return flightCameraFromEyeTarget(
+    eye: eye,
+    target: target,
+    dist: dist,
+    fovY: flightFovY,
+    aspect: aspect,
+    lightDir: light.normalized(),
+  );
+}
+
+/// Projection whose near/far hug the actual eye distance so it stays
+/// well-conditioned: a fixed 0.5 m near against a ~120 km far made the
+/// old inverse view-projection jitter at grazing angles. The far plane
+/// still clears the 45 km far-terrain ring from any camera.
+Matrix4 flightProjection({
+  required double eyeDist,
+  required double fovY,
+  required double aspect,
+}) {
+  final near = (eyeDist * 0.02).clamp(0.05, 50.0);
+  final far = eyeDist + 90000.0;
+  return makePerspectiveMatrix(fovY, aspect, near, far);
+}
+
+/// Assembles a [FlightCamera] from an explicit eye/target pair (shared by
+/// [computeFlightCamera] and [clampEyeAboveTerrain] so both agree exactly).
+FlightCamera flightCameraFromEyeTarget({
+  required Vector3 eye,
+  required Vector3 target,
+  required double dist,
+  required double fovY,
+  required double aspect,
+  required Vector3 lightDir,
+}) {
+  final view = makeViewMatrix(eye, target, Vector3(0, 1, 0));
+  final vp = flightProjection(
+        eyeDist: eye.distanceTo(target),
+        fovY: fovY,
+        aspect: aspect,
+      ) *
+      view;
   return FlightCamera(
     view: view,
     vp: vp,
     eye: eye,
     target: target,
     dist: dist,
-    lightDir: light.normalized(),
+    fovY: fovY,
+    aspect: aspect,
+    lightDir: lightDir,
+  );
+}
+
+/// Lifts a camera that ended up under the terrain surface back above it,
+/// keeping the target (the clamped rocket) fixed. Without this, chase/pad
+/// views dive underground whenever the raw target sits below a DEM hill —
+/// the camera must follow the clamped rocket, not the reported one.
+FlightCamera clampEyeAboveTerrain(FlightCamera cam, double minEyeY) {
+  if (cam.eye.y >= minEyeY) return cam;
+  return flightCameraFromEyeTarget(
+    eye: Vector3(cam.eye.x, minEyeY, cam.eye.z),
+    target: cam.target,
+    dist: cam.dist,
+    fovY: cam.fovY,
+    aspect: cam.aspect,
+    lightDir: cam.lightDir,
   );
 }
 
@@ -281,7 +635,7 @@ FlightCamera computeFlightCamera({
 /// Clip-space → NDC → pixel coordinates; `null` when at/behind the camera.
 Offset? projectToScreen(Vector3 world, Matrix4 vp, Size size) {
   final clip = vp.transformed(Vector4(world.x, world.y, world.z, 1));
-  if (clip.w <= 0.5) return null;
+  if (clip.w <= clipEps) return null;
   final ndc = clip.xyz / clip.w;
   return Offset(
     (ndc.x * 0.5 + 0.5) * size.width,
@@ -294,20 +648,22 @@ void drawWorldSegment(Canvas canvas, Vector3 a, Vector3 b, Matrix4 vp,
   var ca = _clipOf(a, vp);
   var cb = _clipOf(b, vp);
   // Fully behind the camera: nothing to draw.
-  if (ca.w <= _clipEps && cb.w <= _clipEps) return;
+  if (ca.w <= clipEps && cb.w <= clipEps) return;
   // Partially behind: pull the outside end to the near-plane intersection
   // instead of dropping the whole line (receding lines used to vanish at
   // low camera angles).
-  if (ca.w <= _clipEps) {
+  if (ca.w <= clipEps) {
     ca = _clipNear(ca, cb);
-  } else if (cb.w <= _clipEps) {
+  } else if (cb.w <= clipEps) {
     cb = _clipNear(cb, ca);
   }
   canvas.drawLine(_divideClip(ca, size), _divideClip(cb, size), paint);
 }
 
-/// Near-plane guard matching [projectToScreen]'s cutoff.
-const double _clipEps = 0.5;
+/// Near-plane guard matching [projectToScreen]'s cutoff: any positive w is
+/// in front of the camera and drawable. (A previous 0.5 m cutoff ate the
+/// rocket mesh and ground cells close to the lens.)
+const double clipEps = 1e-6;
 
 Vector4 _clipOf(Vector3 world, Matrix4 vp) =>
     vp.transformed(Vector4(world.x, world.y, world.z, 1));
@@ -317,11 +673,11 @@ Offset _divideClip(Vector4 c, Size size) => Offset(
       (0.5 - c.y / c.w * 0.5) * size.height,
     );
 
-/// Intersection of segment out→inn with the w = [_clipEps] plane.
+/// Intersection of segment out→inn with the w = [clipEps] plane.
 Vector4 _clipNear(Vector4 out, Vector4 inn) {
   final denom = inn.w - out.w;
   if (denom.abs() < 1e-12) return inn;
-  final t = ((_clipEps - out.w) / denom).clamp(0.0, 1.0);
+  final t = ((clipEps - out.w) / denom).clamp(0.0, 1.0);
   return out * (1 - t) + inn * t;
 }
 
@@ -335,8 +691,8 @@ void fillWorldQuad(
   for (var i = 0; i < poly.length; i++) {
     final cur = poly[i];
     final prev = poly[(i + poly.length - 1) % poly.length];
-    final curIn = cur.w > _clipEps;
-    final prevIn = prev.w > _clipEps;
+    final curIn = cur.w > clipEps;
+    final prevIn = prev.w > clipEps;
     if (curIn) {
       if (!prevIn) clipped.add(_clipNear(prev, cur));
       clipped.add(cur);
@@ -396,9 +752,15 @@ double niceCeil(double v) {
 
 /// Ground grid extents for a scene (shared by the plain and textured ground
 /// so the satellite patch can be sized to cover them).
+///
+/// Capped at 10 km half-side (20×20 km): the camera still frames flights
+/// that drift further, but the detailed ground/imagery stops growing and
+/// the far-terrain ring takes over behind it.
 ({double half, double step}) flightGroundGrid(FlightScene scene) {
-  final gridHalf = niceCeil(
-      math.max(60.0, math.max(scene.maxHoriz * 1.3, scene.maxAlt * 0.6)));
+  final gridHalf = math.min(
+      10000.0,
+      niceCeil(
+          math.max(60.0, math.max(scene.maxHoriz * 1.3, scene.maxAlt * 0.6))));
   final step = niceCeil(gridHalf / 8);
   final n = (gridHalf / step).ceil();
   return (half: n * step, step: step);
@@ -466,9 +828,16 @@ void paintSkyAndFarTerrain(Canvas canvas, Size size, FlightCamera cam,
   );
 }
 
-/// GPS trail (solid blue). DR is never part of the trail.
+/// GPS trail (solid blue). DR is never part of the trail — when
+/// [FlightScene.rocketIsDr] the trail stops at the last GPS fix and the
+/// dead-reckoning leg is drawn separately as a violet dashed connector (see
+/// [paintDropLineAndDr]). With [tipOverride] (and a GPS-locked rocket) the
+/// last leg runs to the override (the CG-anchored, ground-clamped rocket
+/// position) instead of the raw reported fix, so the trail meets the
+/// rocket's middle.
 void paintFlightTrail(
-    Canvas canvas, FlightScene scene, Matrix4 vp, Size size) {
+    Canvas canvas, FlightScene scene, Matrix4 vp, Size size,
+    {Vector3? tipOverride}) {
   final gpsPaint = Paint()
     ..color = AppColors.seriesGpsTrack.withValues(alpha: 0.85)
     ..style = PaintingStyle.stroke
@@ -478,15 +847,93 @@ void paintFlightTrail(
   for (var i = 1; i < scene.trail.length; i++) {
     drawWorldSegment(canvas, scene.trail[i - 1], scene.trail[i], vp, size, gpsPaint);
   }
+  if (tipOverride != null && scene.trail.isNotEmpty && !scene.rocketIsDr) {
+    final last = scene.trail.last;
+    if ((tipOverride - last).length > 1e-6) {
+      drawWorldSegment(canvas, last, tipOverride, vp, size, gpsPaint);
+    }
+  }
 }
 
-/// Drop line rocket→ground plus the violet DR ring when dead-reckoned.
+/// CG-anchored, ground-clamped rocket position for the flight views.
+///
+/// The mesh pivots about its CG ([RocketMesh.cgY]) so pitch/roll rotate the
+/// airframe about its centre; the anchor is the reported position lifted
+/// just enough to keep the tail (vertical) or belly (horizontal) out of the
+/// ground surface. [groundY] is the terrain height under the rocket (0 on
+/// the flat plain view); aloft the lift is zero and the trail meets the CG
+/// exactly.
+Vector3 cgAnchorPos({
+  required Vector3 rocketPos,
+  required double pitchDeg,
+  required double yawDeg,
+  required double scale,
+  double groundY = 0.0,
+}) {
+  final orientation = RocketMesh.orientationMatrix(
+    pitchDeg: pitchDeg,
+    yawDeg: yawDeg,
+    scale: 1.0,
+  );
+  final bodyAxis = orientation.transformed3(Vector3(0, 1, 0)).normalized();
+  final tailOff = (RocketMesh.finBottom - RocketMesh.cgY) * scale;
+  final noseOff = (RocketMesh.noseTip - RocketMesh.cgY) * scale;
+  final radius = RocketMesh.bodyRadius * scale;
+  final lowest = rocketPos.y +
+      math.min(math.min(tailOff * bodyAxis.y, noseOff * bodyAxis.y), -radius);
+  if (lowest >= groundY) return rocketPos;
+  return rocketPos + Vector3(0, groundY - lowest, 0);
+}
+
+/// Screen-space dashed segment between two world points, clipped against
+/// the near plane like [drawWorldSegment]. Pure screen-space dashing keeps
+/// dash lengths uniform regardless of perspective depth.
+void drawWorldDashedSegment(Canvas canvas, Vector3 a, Vector3 b, Matrix4 vp,
+    Size size, Paint paint,
+    {double dashPx = 6, double gapPx = 4}) {
+  var ca = _clipOf(a, vp);
+  var cb = _clipOf(b, vp);
+  if (ca.w <= clipEps && cb.w <= clipEps) return;
+  if (ca.w <= clipEps) {
+    ca = _clipNear(ca, cb);
+  } else if (cb.w <= clipEps) {
+    cb = _clipNear(cb, ca);
+  }
+  final pa = _divideClip(ca, size);
+  final pb = _divideClip(cb, size);
+  final dx = pb.dx - pa.dx;
+  final dy = pb.dy - pa.dy;
+  final len = math.sqrt(dx * dx + dy * dy);
+  if (len < 1e-6) return;
+  final ux = dx / len;
+  final uy = dy / len;
+  var dist = 0.0;
+  while (dist < len) {
+    final end = math.min(dist + dashPx, len);
+    canvas.drawLine(
+      Offset(pa.dx + ux * dist, pa.dy + uy * dist),
+      Offset(pa.dx + ux * end, pa.dy + uy * end),
+      paint,
+    );
+    dist = end + gapPx;
+  }
+}
+
+/// Drop line rocket→ground plus the violet DR marker when dead-reckoned:
+/// a ring at the estimate and a dashed connector from the last known GPS
+/// position ([FlightScene.trail].last) to the estimate, so the DR position
+/// never leaves a solid trail.
+/// With [anchorOverride] the line hangs from the CG anchor instead of the
+/// raw reported fix. [groundY] is the terrain surface under the rocket
+/// (0 on the flat plain view).
 void paintDropLineAndDr(
-    Canvas canvas, FlightScene scene, Matrix4 vp, Size size) {
+    Canvas canvas, FlightScene scene, Matrix4 vp, Size size,
+    {Vector3? anchorOverride, double groundY = 0.0}) {
+  final top = anchorOverride ?? scene.rocketPos;
   drawWorldSegment(
     canvas,
-    scene.rocketPos,
-    Vector3(scene.rocketPos.x, 0, scene.rocketPos.z),
+    top,
+    Vector3(top.x, groundY, top.z),
     vp,
     size,
     Paint()
@@ -494,7 +941,24 @@ void paintDropLineAndDr(
       ..strokeWidth = 1,
   );
   if (scene.rocketIsDr) {
-    final s = projectToScreen(scene.rocketPos, vp, size);
+    if (scene.trail.isNotEmpty) {
+      final last = scene.trail.last;
+      if ((top - last).length > 1e-6) {
+        drawWorldDashedSegment(
+          canvas,
+          last,
+          top,
+          vp,
+          size,
+          Paint()
+            ..color = AppColors.seriesDeadReckoning.withValues(alpha: 0.9)
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1.6
+            ..strokeCap = StrokeCap.round,
+        );
+      }
+    }
+    final s = projectToScreen(top, vp, size);
     if (s != null) {
       canvas.drawCircle(
         s,
@@ -513,11 +977,74 @@ void paintDropLineAndDr(
   }
 }
 
+/// Formats a below-terrain depth for the rocket badge: one decimal under
+/// 10 m, whole metres above. Pure — unit-tested.
+String formatUnderMeters(double meters) {
+  final m = meters.clamp(0.0, 99999.0);
+  return m < 10
+      ? '${m.toStringAsFixed(1)} m under ground'
+      : '${m.round()} m under ground';
+}
+
+/// Cheap Minecraft-style shadow disk: a flat translucent ellipse on the
+/// terrain surface under the rocket, so the eye can anchor the airframe to
+/// the ground it is flying over. Skipped when the surface point is behind
+/// the camera.
+void paintShadowDisk(
+    Canvas canvas, Matrix4 vp, Size size, Vector3 surfaceCenter, double radius,
+    {double alpha = 0.30}) {
+  final path = Path();
+  var started = false;
+  for (var i = 0; i <= 24; i++) {
+    final a = i * 2 * math.pi / 24;
+    final s = projectToScreen(
+      surfaceCenter +
+          Vector3(radius * math.cos(a), 0, radius * math.sin(a)),
+      vp,
+      size,
+    );
+    // Behind the camera (lens inside the disk): skip rather than smear.
+    if (s == null) return;
+    if (started) {
+      path.lineTo(s.dx, s.dy);
+    } else {
+      path.moveTo(s.dx, s.dy);
+      started = true;
+    }
+  }
+  path.close();
+  canvas.drawPath(
+    path,
+    Paint()..color = const Color(0xFF000000).withValues(alpha: alpha),
+  );
+}
+
+/// "N m under ground" badge next to a terrain-clamped rocket. No-op when
+/// the anchor projects behind the camera.
+void paintUnderGroundLabel(
+    Canvas canvas, Matrix4 vp, Size size, Vector3 anchorWorld, String text) {
+  final pos = projectToScreen(anchorWorld, vp, size);
+  if (pos == null) return;
+  final tp = TextPainter(
+    text: TextSpan(
+      text: text,
+      style: AppText.microLabel.copyWith(
+        fontSize: 10,
+        letterSpacing: 0.5,
+        color: AppColors.warning,
+        fontWeight: FontWeight.w700,
+      ),
+    ),
+    textDirection: TextDirection.ltr,
+  )..layout();
+  tp.paint(canvas, pos + const Offset(12, -30));
+}
+
 /// Rocket mesh at [rocketPos] with the shared attitude. [baseLift] (in model
-/// units, [RocketMesh.baseExtent] = lowest fin point) raises the mesh so its
-/// base — not its middle — sits at the position: the flight views stand the
-/// rocket on the ground instead of sinking its tail through the plane. The
-/// attitude viewer passes 0 to keep rotating about the centre.
+/// units) is the pre-rotation lift: the flight views pass `-RocketMesh.cgY`
+/// so the mesh pivots about its CG (see [cgAnchorPos], which also keeps the
+/// airframe out of the ground plane). The attitude viewer passes 0 to keep
+/// rotating about the mesh origin (already ~the CG).
 ///
 /// [showNoseCone] hides the popped cone; [showParachute] hangs the canopy
 /// world-up from the body top: the attach point follows the (possibly
@@ -722,21 +1249,22 @@ void paintGroundLabels(Canvas canvas, Matrix4 vp, Size size,
 void paintLaunchSite(
     Canvas canvas, FlightScene scene, Matrix4 vp, Size size) {
   // The flag marks a real configured/file launch site — never a fallback
-  // origin (first fix). Without a site there is nothing to flag.
+  // origin (first fix). Without a site there is nothing to flag. Real-life
+  // scale: 2 m pole, 2 m diameter ground circle.
   if (scene.siteName == null || scene.siteName!.isEmpty) return;
   drawWorldSegment(
     canvas,
     Vector3.zero(),
-    Vector3(0, 10, 0),
+    Vector3(0, 2, 0),
     vp,
     size,
     Paint()
       ..color = AppColors.pinkDeep
       ..strokeWidth = 1.6,
   );
-  final tip = projectToScreen(Vector3(0, 10, 0), vp, size);
-  final tail = projectToScreen(Vector3(0, 7.5, 0), vp, size);
-  final point = projectToScreen(Vector3(2.6, 8.75, 0), vp, size);
+  final tip = projectToScreen(Vector3(0, 2, 0), vp, size);
+  final tail = projectToScreen(Vector3(0, 1.5, 0), vp, size);
+  final point = projectToScreen(Vector3(0.52, 1.75, 0), vp, size);
   if (tip != null && tail != null && point != null) {
     canvas.drawPath(
       Path()
@@ -750,7 +1278,7 @@ void paintLaunchSite(
   drawGroundCircle(
     canvas,
     Vector3.zero(),
-    8,
+    1,
     vp,
     size,
     Paint()
@@ -759,7 +1287,7 @@ void paintLaunchSite(
       ..strokeWidth = 1.4,
   );
 
-  final labelPos = projectToScreen(Vector3(0, 13, 0), vp, size);
+  final labelPos = projectToScreen(Vector3(0, 2.6, 0), vp, size);
   if (labelPos == null) return;
   final tp = TextPainter(
     text: TextSpan(

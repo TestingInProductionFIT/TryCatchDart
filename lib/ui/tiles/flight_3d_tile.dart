@@ -33,6 +33,7 @@ class _Flight3dWidgetState extends ConsumerState<Flight3dTile>
   Widget build(BuildContext context) {
     final state = ref.watch(telemetryStoreProvider);
     final site = ref.watch(effectiveLaunchSiteProvider);
+    final replay = ref.watch(replayProvider);
     final latest = state.latest;
     final camera = ref.watch(orbitCameraProvider);
 
@@ -40,7 +41,19 @@ class _Flight3dWidgetState extends ConsumerState<Flight3dTile>
       return Center(child: WaitingForData());
     }
 
-    final scene = buildFlightScene(state, site);
+    // Replays render from the recording's full frames (whole flight
+    // addressable, shared trail/rocket smoothing); live renders raw.
+    final FlightScene? scene;
+    if (replay.isActive && replay.frames.isNotEmpty) {
+      scene = buildReplayScene(
+        frames: replay.frames,
+        positionMs: replay.positionMs,
+        site: site,
+        smoothingEnabled: replay.smoothingEnabled,
+      );
+    } else {
+      scene = buildFlightScene(state, site);
+    }
     if (scene == null) {
       // Frames are arriving but no position anchor (no fix, no site) yet.
       return Center(child: WaitingForData());
@@ -72,8 +85,8 @@ class _FlightPainter extends CustomPainter {
   final double elevationDeg;
   final double zoom;
 
-  /// Rocket mesh scaled to a ~5 m airframe so it reads at chase distance.
-  static const double _rocketScale = 3.5;
+  /// Real-life scale: the mesh spans 2.15 model units for an ~80 cm airframe.
+  static const double _rocketScale = 0.8 / 2.15;
 
   _FlightPainter({
     required this.scene,
@@ -97,25 +110,33 @@ class _FlightPainter extends CustomPainter {
       zoom: zoom,
       aspect: aspect,
     );
+    // The airframe pivots about its CG (Raketa.ork mass budget) and the
+    // trail meets its middle; near the ground the anchor lifts just enough
+    // to keep the tail/belly out of the plane.
+    final anchor = cgAnchorPos(
+      rocketPos: scene.rocketPos,
+      pitchDeg: scene.pitchDeg,
+      yawDeg: scene.yawDeg,
+      scale: _rocketScale,
+    );
     paintGroundPlain(canvas, scene, cam.vp, size);
-    paintFlightTrail(canvas, scene, cam.vp, size);
+    paintFlightTrail(canvas, scene, cam.vp, size, tipOverride: anchor);
     paintLaunchSite(canvas, scene, cam.vp, size);
-    paintDropLineAndDr(canvas, scene, cam.vp, size);
+    paintDropLineAndDr(canvas, scene, cam.vp, size, anchorOverride: anchor);
     paintRocketMesh(
       canvas,
       size,
       cam.vp,
       cam.view,
       cam.lightDir,
-      rocketPos: scene.rocketPos,
+      rocketPos: anchor,
       pitchDeg: scene.pitchDeg,
       yawDeg: scene.yawDeg,
       rollDeg: scene.rollDeg,
       scale: _rocketScale,
-      // Stand the airframe on its tail so it never sinks through the plane.
-      baseLift: RocketMesh.baseExtent,
+      baseLift: -RocketMesh.cgY,
       // Airframe configuration comes from the FSM state (cone pops at
-      // apogee, canopy opens under parachute).
+      // apogee, canopy renders under parachute only).
       showNoseCone: scene.showNoseCone,
       showParachute: scene.showParachute,
     );

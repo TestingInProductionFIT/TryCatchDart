@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -5,14 +6,43 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:serial/serial.dart';
 
 import '../../core/format.dart';
+import '../../core/geo.dart';
+import '../../core/flight_events.dart';
 import '../../theme/app_colors.dart';
 import '../components/app_card.dart';
+import '../components/flight_event_style.dart';
+import '../../state/launch_site_store.dart';
 import '../../state/workspace_controller.dart';
 import '../../state/telemetry_provider.dart';
 import '../../services/flight_trim.dart';
 import './orbit_preview.dart';
 import '../../state/replay_controller.dart';
+import '../tiles/shared/map_tiles.dart';
 import './router.dart';
+
+/// Returns true when [site] already exists in [presets] — either under the
+/// same name or within [toleranceM] horizontally of a saved preset (same
+/// pad, re-recorded or renamed). Used to hide the per-recording
+/// "extract launch position" button when there is nothing new to save.
+bool isLaunchSiteSaved(
+  List<LaunchSite> presets,
+  LaunchSite site, {
+  double toleranceM = 50,
+}) {
+  for (final preset in presets) {
+    if (preset.name == site.name) return true;
+    if (haversineDistanceM(
+          preset.latitude,
+          preset.longitude,
+          site.latitude,
+          site.longitude,
+        ) <=
+        toleranceM) {
+      return true;
+    }
+  }
+  return false;
+}
 
 /// Recorded flights: preview cards with decoded stats, replay, trim-to-new
 /// ("save part of a flight") and delete, plus an open-folder shortcut.
@@ -26,6 +56,7 @@ class RecordingsScreen extends ConsumerStatefulWidget {
 class _RecordingsScreenState extends ConsumerState<RecordingsScreen> {
   late Future<List<RecordingInfo>> _recordings;
   String? _dirPath;
+  String? _loadingPath;
 
   @override
   void initState() {
@@ -72,10 +103,13 @@ class _RecordingsScreenState extends ConsumerState<RecordingsScreen> {
         );
         try {
           final header = await tryReadRecordingHeader(entity.path);
-          if (header != null && header.hasStats) {
-            info.durationMs = header.durationMs;
-            info.packets = header.packetCount;
-            info.maxAltM = header.maxBaroAltM;
+          if (header != null) {
+            info.launchSite = launchSiteFromHeader(header);
+            if (header.hasStats) {
+              info.durationMs = header.durationMs;
+              info.packets = header.packetCount;
+              info.maxAltM = header.maxBaroAltM;
+            }
           }
         } catch (_) {
           // Header read is best-effort; the card decode fills stats instead.
@@ -111,20 +145,80 @@ class _RecordingsScreenState extends ConsumerState<RecordingsScreen> {
   }
 
   Future<void> _play(RecordingInfo recording) async {
-    await ref.read(replayProvider.notifier).play(recording.path);
+    if (_loadingPath != null) return;
+    // Opening a replay clears live buffers and hides the radio UI, so
+    // confirm first when a recording is running or the radio is connected.
+    // Replacing an already-open replay needs no confirmation.
+    final serialStatus = ref.read(serialStatusProvider).value;
+    final isRecording = serialStatus?.isRecording ?? false;
+    final isConnected = serialStatus?.isConnected ?? false;
+    if (isRecording) {
+      if (!context.mounted) return;
+      final confirm = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Stop recording and open replay?'),
+          content: const Text(
+            'Opening a replay stops the current recording and clears live '
+            'data. The recording file is kept.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Stop & open'),
+            ),
+          ],
+        ),
+      );
+      if (confirm != true) return;
+      ref.read(serialConfigProvider.notifier).stopRecording();
+    } else if (isConnected) {
+      if (!context.mounted) return;
+      final confirm = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Open replay while connected?'),
+          content: const Text(
+            'Live telemetry is paused during a replay and current live '
+            'data is cleared. The connection stays open — Back to live '
+            '(×) returns to it.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Open replay'),
+            ),
+          ],
+        ),
+      );
+      if (confirm != true) return;
+    }
+    setState(() => _loadingPath = recording.path);
+    try {
+      await ref.read(replayProvider.notifier).play(recording.path);
+    } finally {
+      if (mounted) setState(() => _loadingPath = null);
+    }
     // Jump to the dashboard once a replay actually loaded;
     // load errors stay on this screen.
     if (!context.mounted) return;
     final replay = ref.read(replayProvider);
     if (replay.isActive && replay.errorMsg == null) {
-      // Prefer the dedicated Replay workspace when present.
+      // Always show the first layout — no heuristics.
       final workspaces =
           ref.read(workspaceProvider).value?.workspaces ?? const [];
-      for (final ws in workspaces) {
-        if (ws.name == 'Replay') {
-          await ref.read(workspaceProvider.notifier).setActive(ws.id);
-          break;
-        }
+      if (workspaces.isNotEmpty) {
+        await ref
+            .read(workspaceProvider.notifier)
+            .setActive(workspaces.first.id);
       }
       ref.read(appRouterProvider.notifier).go(AppScreen.dashboard);
     }
@@ -134,9 +228,19 @@ class _RecordingsScreenState extends ConsumerState<RecordingsScreen> {
   Widget build(BuildContext context) {
     final replay = ref.watch(replayProvider);
 
+    final isLoading = _loadingPath != null || replay.isLoading;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        // Reserved slot: inserting the progress bar must not push the grid
+        // down (that 2px jump coincides with the pink card outline and
+        // reads as the outline shifting the layout).
+        SizedBox(
+          height: 2,
+          child: isLoading
+              ? const LinearProgressIndicator(minHeight: 2)
+              : const SizedBox.shrink(),
+        ),
         if (replay.isActive && replay.errorMsg != null)
           // Playback controls live in the top bar; surface only load errors.
           Container(
@@ -229,9 +333,12 @@ class _RecordingsScreenState extends ConsumerState<RecordingsScreen> {
                 ),
                 gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
                   maxCrossAxisExtent: 440,
-                  // Content budget: 20 card padding + ~32 header + 6 + 156
-                  // preview + 6 + ~12 stats + 8 + 40 buttons ≈ 280.
-                  mainAxisExtent: 288,
+                  // Content budget: 18 card padding + ~32 header + 6 + 200
+                  // preview + 6 + ~12 stats (≈ 274). The transport lives on
+                  // the preview (whole-preview tap target + center play
+                  // button) and the rest hides in the header … menu, so no
+                  // button rows and no dead space below the stats.
+                  mainAxisExtent: 284,
                   mainAxisSpacing: 8,
                   crossAxisSpacing: 8,
                 ),
@@ -239,9 +346,12 @@ class _RecordingsScreenState extends ConsumerState<RecordingsScreen> {
                 itemBuilder: (context, index) {
                   final recording = recordings[index];
                   final isLoaded = replay.filePath == recording.path;
+                  final cardLoading = _loadingPath == recording.path;
                   return _RecordingCard(
                     info: recording,
                     isLoaded: isLoaded,
+                    isLoading: cardLoading,
+                    busy: _loadingPath != null,
                     onPlay: () => _play(recording),
                     onDelete: () async {
                       await recording.delete();
@@ -274,11 +384,19 @@ class RecordingInfo {
   int? packets;
   double? maxAltM;
 
+  /// Launch pad position stamped into the file header (`null` for legacy
+  /// siteless or unreadable files — nothing to extract then).
+  LaunchSite? launchSite;
+
   /// Decimated barometric altitude series (≤160 pts) for thumbnails.
   List<double> altProfile = const [];
 
   /// Decimated GPS track (≤160 pts, oldest first) for the 3D orbit preview.
   List<TrackPoint> track = const [];
+
+  /// Flight milestones (launch / apogee / …) detected from the preview decode,
+  /// in frame order — shown as markers in the trim view.
+  List<FlightEvent> events = const [];
 
   /// Whether the preview decode already ran (successfully or not) — cards
   /// skip re-decoding when the session cache hands them a known file.
@@ -291,6 +409,7 @@ class RecordingInfo {
     this.durationMs,
     this.packets,
     this.maxAltM,
+    this.launchSite,
   });
 
   String get name => path.split(Platform.pathSeparator).last;
@@ -303,9 +422,11 @@ class RecordingInfo {
   }
 }
 
-class _RecordingCard extends StatefulWidget {
+class _RecordingCard extends ConsumerStatefulWidget {
   final RecordingInfo info;
   final bool isLoaded;
+  final bool isLoading;
+  final bool busy;
   final VoidCallback onPlay;
   final VoidCallback onDelete;
   final VoidCallback onTrim;
@@ -313,16 +434,19 @@ class _RecordingCard extends StatefulWidget {
   const _RecordingCard({
     required this.info,
     required this.isLoaded,
+    this.isLoading = false,
+    this.busy = false,
     required this.onPlay,
     required this.onDelete,
     required this.onTrim,
   });
 
   @override
-  State<_RecordingCard> createState() => _RecordingCardState();
+  ConsumerState<_RecordingCard> createState() => _RecordingCardState();
 }
 
-class _RecordingCardState extends State<_RecordingCard> {
+class _RecordingCardState extends ConsumerState<_RecordingCard> {
+  bool _savingSite = false;
   @override
   void initState() {
     super.initState();
@@ -358,6 +482,7 @@ class _RecordingCardState extends State<_RecordingCard> {
           }
           info.altProfile = buildAltProfile(frames);
           info.track = buildTrackProfile(frames);
+          info.events = detectFlightEvents(frames);
         }
         info.previewDone = true;
       });
@@ -375,10 +500,39 @@ class _RecordingCardState extends State<_RecordingCard> {
     return '${(widget.info.sizeBytes / 1024).toStringAsFixed(0)} KB';
   }
 
+  /// Saves this recording's header launch position as a preset. The button
+  /// hides itself on completion because the preset list (watched in [build])
+  /// then covers the site.
+  Future<void> _saveLaunchSite(LaunchSite site) async {
+    if (_savingSite) return;
+    setState(() => _savingSite = true);
+    try {
+      await ref.read(launchSiteProvider.notifier).savePreset(site);
+      unawaited(precacheLaunchSites([site]));
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Saved launch site "${site.name}".')),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not save the launch site.')),
+      );
+    } finally {
+      if (mounted) setState(() => _savingSite = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final info = widget.info;
     final isLoaded = widget.isLoaded;
+    final presets =
+        ref.watch(launchSiteProvider).value?.presets ?? const <LaunchSite>[];
+    final fileSite = info.launchSite;
+    final showExtractSite =
+        fileSite != null && !isLaunchSiteSaved(presets, fileSite);
+    final canTrim = info.durationMs != null && info.durationMs! > 2000;
     final stats = <String>[
       if (info.durationMs != null) formatMinSec(info.durationMs!),
       if (info.packets != null) '${info.packets} packets',
@@ -388,7 +542,7 @@ class _RecordingCardState extends State<_RecordingCard> {
     final date = formatDateTime(info.modified);
 
     return AppCard(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      padding: const EdgeInsets.fromLTRB(14, 10, 14, 8),
       borderColor: isLoaded ? AppColors.primary : null,
       // NOTE: fixed heights only — grid tiles can arrive with an unbounded
       // height during layout, which an Expanded child would explode on.
@@ -427,45 +581,145 @@ class _RecordingCardState extends State<_RecordingCard> {
                   ],
                 ),
               ),
-              InkWell(
-                onTap: widget.onDelete,
-                borderRadius: BorderRadius.circular(4),
-                child: Tooltip(
-                  message: 'Delete recording',
-                  child: const Padding(
-                    padding: EdgeInsets.all(4),
-                    child: Icon(Icons.delete_outline, size: 17),
+              PopupMenuButton<String>(
+                tooltip: 'Recording actions',
+                iconSize: 18,
+                onSelected: (value) {
+                  switch (value) {
+                    case 'trim':
+                      widget.onTrim();
+                    case 'extract':
+                      final site = fileSite;
+                      if (site != null) _saveLaunchSite(site);
+                    case 'delete':
+                      widget.onDelete();
+                  }
+                },
+                itemBuilder: (context) => [
+                  PopupMenuItem(
+                    value: 'trim',
+                    enabled: canTrim,
+                    child: const Row(
+                      children: [
+                        Icon(Icons.content_cut_outlined, size: 16),
+                        SizedBox(width: 8),
+                        Text('Trim…'),
+                      ],
+                    ),
                   ),
-                ),
+                  if (showExtractSite)
+                    PopupMenuItem(
+                      value: 'extract',
+                      enabled: !_savingSite,
+                      child: Row(
+                        children: [
+                          const Icon(Icons.pin_drop_outlined, size: 16),
+                          const SizedBox(width: 8),
+                          Text(_savingSite ? 'Saving…' : 'Extract site'),
+                        ],
+                      ),
+                    ),
+                  PopupMenuItem(
+                    value: 'delete',
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.delete_outline,
+                          size: 16,
+                          color: AppColors.destructive,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Delete',
+                          style: TextStyle(color: AppColors.destructive),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
           const SizedBox(height: 6),
           // Orbiting 3D track preview (altitude sparkline when the
           // recording holds no GPS fixes): the flight at a glance. Shows a
-          // spinner until this card's own decode lands.
+          // spinner until this card's own decode lands. The whole preview
+          // is the play affordance, as if it was a video — pink button in
+          // the middle, pointer cursor, tap anywhere to open the replay.
           SizedBox(
-            height: 156,
-            child: Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-              decoration: BoxDecoration(
-                color: AppColors.muted,
-                borderRadius: BorderRadius.circular(AppDimens.radiusSmall),
-                border: Border.all(color: AppColors.border),
-              ),
-              child: info.previewDone
-                  ? OrbitOrSparkline(
-                      track: info.track,
-                      altProfile: info.altProfile,
-                    )
-                  : const Center(
-                      child: SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(strokeWidth: 2),
+            height: 200,
+            child: Material(
+              color: Colors.transparent,
+              borderRadius: BorderRadius.circular(AppDimens.radiusSmall),
+              clipBehavior: Clip.hardEdge,
+              child: InkWell(
+                onTap: widget.busy ? null : widget.onPlay,
+                mouseCursor: widget.busy
+                    ? SystemMouseCursors.basic
+                    : SystemMouseCursors.click,
+                child: Stack(
+                  children: [
+                    Positioned.fill(
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: AppColors.muted,
+                          borderRadius: BorderRadius.circular(
+                            AppDimens.radiusSmall,
+                          ),
+                          border: Border.all(color: AppColors.border),
+                        ),
+                        child: info.previewDone
+                            ? OrbitOrSparkline(
+                                track: info.track,
+                                altProfile: info.altProfile,
+                              )
+                            : const Center(
+                                child: SizedBox(
+                                  width: 14,
+                                  height: 14,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                ),
+                              ),
                       ),
                     ),
+                    Center(
+                      child: Opacity(
+                        opacity: widget.busy && !widget.isLoading ? 0.55 : 1,
+                        child: Container(
+                          width: 50,
+                          height: 50,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: AppColors.primary.withValues(alpha: 0.4),
+                          ),
+                          child: widget.isLoading
+                              ? const SizedBox(
+                                  width: 26,
+                                  height: 26,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2.5,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : Icon(
+                                  isLoaded ? Icons.replay : Icons.play_arrow,
+                                  size: 30,
+                                  color: Colors.white,
+                                ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
           ),
           const SizedBox(height: 6),
@@ -479,35 +733,6 @@ class _RecordingCardState extends State<_RecordingCard> {
               color: AppColors.mutedForeground,
             ),
           ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              FilledButton.icon(
-                onPressed: widget.onPlay,
-                style: isLoaded
-                    ? FilledButton.styleFrom(backgroundColor: AppColors.primary)
-                    : null,
-                icon: Icon(
-                  isLoaded ? Icons.replay : Icons.play_arrow,
-                  size: 16,
-                ),
-                label: Text(isLoaded ? 'Replay' : 'Open'),
-              ),
-              const SizedBox(width: 8),
-              Tooltip(
-                message: info.durationMs != null && info.durationMs! > 2000
-                    ? 'Save part of this flight as a new file'
-                    : 'Trim needs a flight longer than 2 s',
-                child: OutlinedButton.icon(
-                  onPressed: info.durationMs != null && info.durationMs! > 2000
-                      ? widget.onTrim
-                      : null,
-                  icon: const Icon(Icons.content_cut_outlined, size: 16),
-                  label: const Text('Trim…'),
-                ),
-              ),
-            ],
-          ),
         ],
       ),
     );
@@ -515,7 +740,164 @@ class _RecordingCardState extends State<_RecordingCard> {
 }
 
 /// Trim preview: the full altitude profile dimmed, the kept window at full
-/// strength with edge markers.
+/// strength with edge markers, plus flight-event dots on the curve.
+///
+/// Public (not `_`-private) so widget tests can pump it directly — the
+/// surrounding card/dialog touch the filesystem and can't run in the
+/// fake-async test zone.
+class TrimChart extends StatelessWidget {
+  final List<double> values;
+  final List<FlightEvent> events;
+  final int totalMs;
+  final int startMs;
+  final int endMs;
+  final Color color;
+
+  /// Diameter of one event dot on the trim chart.
+  static const double dotSize = 14;
+
+  const TrimChart({
+    super.key,
+    required this.values,
+    required this.events,
+    required this.totalMs,
+    required this.startMs,
+    required this.endMs,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final startFrac = totalMs <= 0
+        ? 0.0
+        : (startMs / totalMs).clamp(0.0, 1.0).toDouble();
+    final endFrac = totalMs <= 0
+        ? 1.0
+        : (endMs / totalMs).clamp(0.0, 1.0).toDouble();
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final w = constraints.maxWidth;
+        final h = constraints.maxHeight;
+        return Stack(
+          children: [
+            Positioned.fill(
+              child: CustomPaint(
+                painter: _TrimChartPainter(
+                  values: values,
+                  startFrac: startFrac,
+                  endFrac: endFrac,
+                  color: color,
+                ),
+              ),
+            ),
+            for (final dot in _placeDots(w, h))
+              Positioned(
+                left: dot.x - dotSize / 2,
+                top: dot.y - dotSize / 2,
+                width: dotSize,
+                height: dotSize,
+                child: Tooltip(
+                  message:
+                      '${dot.event.type.label} at ${formatMinSec(dot.event.positionMs)}'
+                      '${dot.kept ? '' : ' — outside kept slice'}',
+                  child: FlightEventDot(
+                    type: dot.event.type,
+                    size: dotSize,
+                    dimmed: !dot.kept,
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// Resolves each event to a dot centre on the altitude curve: x from the
+  /// flight-clock fraction (the same time base as the kept-window edges), y
+  /// from the decimated profile value nearest that fraction. Dots landing
+  /// within one diameter of an earlier dot nudge downward so stacked markers
+  /// never paint on top of each other; x (the true position) never moves.
+  List<_TrimDot> _placeDots(double w, double h) {
+    final dots = <_TrimDot>[];
+    if (events.isEmpty ||
+        totalMs <= 0 ||
+        w <= 0 ||
+        h <= 0 ||
+        !_wHFinite(w, h)) {
+      return dots;
+    }
+    var lo = double.infinity;
+    var hi = double.negativeInfinity;
+    for (final v in values) {
+      if (v < lo) lo = v;
+      if (v > hi) hi = v;
+    }
+    final flat = values.length < 2 || !lo.isFinite || (hi - lo).abs() < 1e-9;
+    const pad = 4.0;
+    double yAt(double frac) {
+      if (flat) return h / 2;
+      final idx = (frac * (values.length - 1)).round().clamp(
+        0,
+        values.length - 1,
+      );
+      return pad + (h - 2 * pad) * (1 - (values[idx] - lo) / (hi - lo));
+    }
+
+    for (final event in events) {
+      final frac = (event.positionMs / totalMs).clamp(0.0, 1.0).toDouble();
+      var y = yAt(frac);
+      // De-collide against already-placed dots (time order = list order).
+      var nudges = 0;
+      while (nudges < 2) {
+        var collides = false;
+        final x = pad + (w - 2 * pad) * frac;
+        for (final other in dots) {
+          final dx = x - other.x;
+          final dy = y - other.y;
+          if (dx * dx + dy * dy < dotSize * dotSize) {
+            collides = true;
+            break;
+          }
+        }
+        if (!collides) break;
+        y += dotSize;
+        nudges++;
+      }
+      final x = pad + (w - 2 * pad) * frac;
+      dots.add(
+        _TrimDot(
+          event: event,
+          x: x.clamp(0.0, w),
+          y: y.clamp(0.0, h),
+          kept: event.positionMs >= startMs && event.positionMs <= endMs,
+        ),
+      );
+    }
+    return dots;
+  }
+
+  static bool _wHFinite(double w, double h) => w.isFinite && h.isFinite;
+}
+
+/// One trim-chart marker resolved to a pixel centre.
+class _TrimDot {
+  final FlightEvent event;
+  final double x;
+  final double y;
+  final bool kept;
+
+  const _TrimDot({
+    required this.event,
+    required this.x,
+    required this.y,
+    required this.kept,
+  });
+}
+
+/// Paints the trim preview: the full altitude profile dimmed, the kept
+/// window at full strength with edge markers. (Event dots are widgets
+/// overlaid by [TrimChart], not paint, so they keep tooltips.)
 class _TrimChartPainter extends CustomPainter {
   final List<double> values;
   final double startFrac;
@@ -611,12 +993,15 @@ class _TrimDialogState extends State<_TrimDialog> {
     final base = widget.info.name.replaceAll('.bin', '');
     _name = TextEditingController(text: '${base}_trim');
     // Self-heal: if the card preview never decoded (stale/empty profile),
-    // decode on demand so the altitude graph still shows.
-    if (widget.info.altProfile.length < 2) {
+    // decode on demand so the altitude graph and event markers still show.
+    if (widget.info.altProfile.length < 2 || !widget.info.previewDone) {
       decodeRecordingFrames(widget.info.path).then((flight) {
         if (!mounted || flight.isEmpty) return;
         setState(() {
-          widget.info.altProfile = buildAltProfile(flight.frames);
+          if (widget.info.altProfile.length < 2) {
+            widget.info.altProfile = buildAltProfile(flight.frames);
+          }
+          widget.info.events = detectFlightEvents(flight.frames);
         });
       });
     }
@@ -697,7 +1082,8 @@ class _TrimDialogState extends State<_TrimDialog> {
                 fontFeatures: const [FontFeature.tabularFigures()],
               ),
             ),
-            // Altitude context with the kept window highlighted.
+            // Altitude context with the kept window highlighted and flight
+            // milestones marked on the curve (dimmed outside the kept slice).
             if (widget.info.altProfile.length >= 2) ...[
               const SizedBox(height: 8),
               SizedBox(
@@ -712,14 +1098,13 @@ class _TrimDialogState extends State<_TrimDialog> {
                     borderRadius: BorderRadius.circular(AppDimens.radiusSmall),
                     border: Border.all(color: AppColors.border),
                   ),
-                  child: CustomPaint(
-                    painter: _TrimChartPainter(
-                      values: widget.info.altProfile,
-                      startFrac: totalS <= 0 ? 0 : _startS / totalS,
-                      endFrac: totalS <= 0 ? 1 : _endS / totalS,
-                      color: AppColors.seriesAltitude,
-                    ),
-                    child: const SizedBox.expand(),
+                  child: TrimChart(
+                    values: widget.info.altProfile,
+                    events: widget.info.events,
+                    totalMs: widget.info.durationMs ?? 0,
+                    startMs: (_startS * 1000).round(),
+                    endMs: (_endS * 1000).round(),
+                    color: AppColors.seriesAltitude,
                   ),
                 ),
               ),

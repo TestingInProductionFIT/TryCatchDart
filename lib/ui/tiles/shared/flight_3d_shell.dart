@@ -39,7 +39,7 @@ mixin Flight3dShellState<T extends ConsumerStatefulWidget> on ConsumerState<T> {
   }
 
   void zoomBy(double factor) {
-    setState(() => zoom = (zoom * factor).clamp(0.25, 6.0));
+    setState(() => zoom = (zoom * factor).clamp(0.2, 8.0));
   }
 
   void resetZoom() => setState(() => zoom = 1.0);
@@ -55,8 +55,8 @@ mixin Flight3dShellState<T extends ConsumerStatefulWidget> on ConsumerState<T> {
 }
 
 /// Shared chrome around both 3D flight painters: gesture canvas (drag orbits,
-/// wheel zooms, double-tap resets) and the camera-mode + zoom tool column.
-/// Satellite-only extras (imagery credit) go in [extraOverlays].
+/// wheel/pinch zooms, double-tap resets zoom) and the camera-mode tool
+/// column. Satellite-only extras (imagery credit) go in [extraOverlays].
 ///
 /// Trackpad gestures arrive as pointer pan/zoom events rather than wheel
 /// scrolls, and the framework routes their swipe component to drag
@@ -131,7 +131,7 @@ class _Flight3dShellState extends State<Flight3dShell> {
             ),
           ),
         ),
-        // Camera mode + zoom buttons.
+        // Camera mode buttons (zoom lives in wheel/pinch/double-tap only).
         Positioned(
           right: 8,
           top: 8,
@@ -147,20 +147,6 @@ class _Flight3dShellState extends State<Flight3dShell> {
                     onTap: () => widget.onMode(m),
                   ),
                 ),
-              const SizedBox(height: 2),
-              ToolFab(
-                icon: Icons.add,
-                tooltip: 'Zoom in',
-                active: false,
-                onTap: () => widget.onZoomBy(1.25),
-              ),
-              const SizedBox(height: 6),
-              ToolFab(
-                icon: Icons.remove,
-                tooltip: 'Zoom out',
-                active: false,
-                onTap: () => widget.onZoomBy(1 / 1.25),
-              ),
             ],
           ),
         ),

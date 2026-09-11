@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart' show consolidateHttpClientResponseBytes;
 import 'package:flutter_map/flutter_map.dart'
     show BuiltInMapCachingProvider, CachedMapTileMetadata;
@@ -62,6 +63,36 @@ bool looksLikeImage(Uint8List bytes) {
       bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF;
   return png || jpeg;
 }
+
+/// SHA-256 of Esri's static "Map data not yet available" tile served with
+/// HTTP 200 where World_Imagery has no coverage at that zoom (2521 bytes).
+const String _imageryPlaceholderSha256 =
+    '9eafd300d61393184a4abc1d458564cfd1cd9b6f9c4e9c74687045c0a0e5b858';
+
+/// SHA-256 of Esri's static blank tile served where World_Street_Map has no
+/// coverage at that zoom (2421 bytes).
+const String _streetPlaceholderSha256 =
+    '36622585df6263b641747047ed97fa11b55d89b2cd33af98e8c2865eee6000d5';
+
+/// Whether [bytes] are one of Esri's static "no data here" placeholder tiles.
+///
+/// Esri answers HTTP 200 with a real image for missing detail zooms, so magic
+/// bytes alone can't filter them — without this check the precache would
+/// store (and the map would render) "Map data not yet available" instead of
+/// falling back to lower-res cached imagery. Exact SHA-256 match, so real
+/// imagery never false-positives; worst case if Esri ever redesigns the
+/// placeholder is the old behaviour (placeholder shown).
+bool isEsriPlaceholderTile(Uint8List bytes) {
+  if (bytes.length != 2521 && bytes.length != 2421) return false;
+  final digest = sha256.convert(bytes).toString();
+  return digest == _imageryPlaceholderSha256 ||
+      digest == _streetPlaceholderSha256;
+}
+
+/// Valid, storable tile bytes: decodable image magic and not an Esri
+/// no-data placeholder.
+bool isUsableTileBytes(Uint8List bytes) =>
+    looksLikeImage(bytes) && !isEsriPlaceholderTile(bytes);
 
 /// Stores [bytes] in flutter_map's shared disk cache for 30 days.
 /// Best-effort: cache write failures are swallowed.

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:trycatch/core/format.dart';
 import 'package:trycatch/core/packet_rate_tracker.dart';
 import 'package:trycatch/state/telemetry_provider.dart';
 
@@ -40,10 +41,7 @@ class _PacketRateIndicatorState extends ConsumerState<PacketRateIndicator> {
   String _ago() {
     final d = _tracker.timeSinceLastPacket();
     if (d == null) return 'no data yet';
-    final s = d.inMilliseconds / 1000.0;
-    if (s < 1.0) return '${d.inMilliseconds} ms ago';
-    if (s < 60) return '${s.toStringAsFixed(1)} s ago';
-    return '${d.inMinutes}m ${d.inSeconds % 60}s ago';
+    return formatPacketAge(d);
   }
 
   @override

@@ -27,6 +27,7 @@ class CopyButton extends StatelessWidget {
       child: MouseRegion(
         cursor: SystemMouseCursors.click,
         child: InkWell(
+          mouseCursor: SystemMouseCursors.click,
           onTap: () async {
             await Clipboard.setData(ClipboardData(text: text));
             if (context.mounted) {

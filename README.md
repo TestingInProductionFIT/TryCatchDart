@@ -9,9 +9,9 @@ No hardware? The built-in **MOCK** port runs a full-flight simulator (pad → as
 ## What it can do
 
 - **Live telemetry** — 10 Hz serial frames, parsed and CRC-checked in a background isolate.
-- **Tiling dashboard** — hyprland-style workspaces with drag-to-resize splits, drag-to-swap tiles, and per-workspace persistence. Factory presets: Flight view, Prep, Replay.
-- **Telemetry tiles** — altitude / velocity / acceleration / battery / hall-sensor charts, GPS + dead-reckoning map, 3D rocket attitude, 3D flight path (plain + satellite), flight-state machine, position, max altitude, parachute status, and a command panel.
-- **Recording & replay** — one-click recording to `Documents/TryCatch/recordings/*.bin`, with seek + speed control on replay. Recordings carry launch site, time span, packet count and peaks in the file header.
+- **Tiling dashboard** — hyprland-style workspaces with drag-to-resize splits, drag-to-swap tiles, and per-workspace persistence. Factory presets: Flight control, Pre-flight check, Recovery, Replay.
+- **Telemetry tiles** — altitude / velocity / acceleration / battery / hall-sensor charts, GPS + dead-reckoning map, 3D rocket attitude, 3D flight path (plain + satellite), flight-state machine, GPS position, dead-reckoning estimate (packet loss only, live only), max altitude, nose-cone lock state, and a command panel.
+- **Recording & replay** — one-click recording to `Documents/TryCatch/recordings/*.bin`, with seek + speed control on replay. Recordings carry launch site, time span, packet count and peaks in the file header. The playback bar has a display-smoothing toggle (3D trail + rotation, on by default); recordings, charts and map stay raw.
 - **GPS gap filling** — ground-side dead reckoning bridges GPS outages so tracks stay connected.
 - **Channel health** — checks whether your frequency is free before launch (clear / activity / interference), mirrored live in the top bar.
 - **Command uplink** — send commands to the rocket with two-click confirmation for arming/pyro.
@@ -32,7 +32,7 @@ Verify downloads with `SHA256SUMS.txt` in the release.
 
 ## Quick start / how to use
 
-1. **Connect** — pick a port in the top bar and hit **Connect**. Use `MOCK` for the simulator, or the rocket's serial port for real hardware.
+1. **Connect** — pick a port in the top bar and hit **Connect**. Use `MOCK` for the simulator (`MOCK-BQ` is the same flight but cuts out for ~5 s every ~15 s to test link-loss behavior), or the rocket's serial port for real hardware.
 2. **Set a launch site** — click the flag / `SET SITE` button in the top bar and pick a saved site (or save the rocket's current GPS as one). Recording stays disabled until a site is set.
 3. **Arrange the dashboard** — toggle **Edit layout** to drag dividers, swap tiles by dragging them onto each other, double-click a divider to flip horizontal/vertical, or use Add-tile / per-tile split. Tabs (`Ctrl+1..9`) are separate workspaces.
 4. **Record** — hit **Record** in the top bar during a live session. Files land in `Documents/TryCatch/recordings/`.

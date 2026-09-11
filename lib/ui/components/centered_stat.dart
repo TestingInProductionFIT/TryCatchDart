@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../../theme/app_colors.dart';
 
 /// Centred headline readout shared by the single-value tiles (FSM state,
-/// max altitude, parachute, position cards): optional icon, big centred
+/// max altitude, nose cone, position cards): optional icon, big centred
 /// value, small sublabel line under it.
 ///
 /// Layout-neutral (a `min`-axis [Column]) — callers provide the surrounding

@@ -9,8 +9,10 @@ import 'dart:math' as math;
 /// relied upon when serializing — always use [id].
 ///
 /// Each state carries the physical configuration it implies: whether the
-/// nosecone is on and whether the parachute is open. The 3D views render
-/// directly from these flags.
+/// nosecone is on, whether the parachute is deployed, and whether the 3D
+/// views render the open canopy. The nose-cone tile reports
+/// [FsmState.hasNosecone] as LOCKED/UNLOCKED; the 3D views render the canopy
+/// from [FsmState.showsParachute].
 enum FsmState {
   /// Sitting on the pad, pre-flight checks, GPS acquiring. Assembled.
   idle(0, 'Idle'),
@@ -27,7 +29,8 @@ enum FsmState {
   /// Descending under the open parachute (nosecone gone).
   parachute(4, 'Parachute'),
 
-  /// Touchdown, flight over. Recovery gear jettisoned/collapsed.
+  /// Touchdown, flight over. Parachute still deployed (collapsed on the
+  /// ground), nosecone gone.
   landed(5, 'Landed'),
 
   /// Bench debug with the airframe open (no nosecone, no parachute).
@@ -62,8 +65,17 @@ enum FsmState {
           false,
       };
 
-  /// Whether the parachute is open in this state.
-  bool get hasParachute => this == FsmState.parachute;
+  /// Whether the parachute is deployed in this state. True under the open
+  /// canopy ([parachute]) and after touchdown ([landed], collapsed on the
+  /// ground). Retained from the previous parachute tile; the nose-cone tile
+  /// reports [hasNosecone] instead.
+  bool get hasParachute =>
+      this == FsmState.parachute || this == FsmState.landed;
+
+  /// Whether the 3D views should render the open canopy. Only [parachute]:
+  /// once landed the chute is collapsed on the ground and hidden from the
+  /// model (the nose-cone tile still reports UNLOCKED via [hasNosecone]).
+  bool get showsParachute => this == FsmState.parachute;
 
   /// Maps a wire value to a state, falling back to [unknown].
   static FsmState fromId(int id) =>
@@ -191,6 +203,11 @@ class TelemetryFrame {
 
   /// Horizontal body acceleration magnitude in m/s².
   double get accelHorizontal => _sqrt(accelX * accelX + accelY * accelY);
+
+  /// Vertical (longitudinal, body-frame Z) acceleration in m/s², signed
+  /// specific force (≈ +9.81 on the pad). Equals world-vertical acceleration
+  /// while the rocket flies upright.
+  double get accelVertical => accelZ;
 
   const TelemetryFrame({
     this.receivedAtMs = 0,

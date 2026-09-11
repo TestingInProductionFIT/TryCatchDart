@@ -155,6 +155,7 @@ void main() {
       for (final ws in [
         TileRegistry.defaultFlightLayout(),
         TileRegistry.defaultPrepLayout(),
+        TileRegistry.defaultRecoveryLayout(),
         TileRegistry.defaultReplayLayout(),
       ]) {
         expect(ws.root, isNotNull);

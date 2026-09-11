@@ -18,70 +18,112 @@ class SettingsScreen extends ConsumerStatefulWidget {
 }
 
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
-  bool _precaching = false;
-  String? _precacheStatus;
-  bool _checking = false;
-  String? _coverageStatus;
+  bool _loadingCoverage = false;
+  bool _downloading = false;
+  int _done = 0;
+  int _total = 0;
+  String? _notice;
+  Timer? _noticeTimer;
   List<SiteCacheCoverage> _coverage = const [];
+  bool _coverageReady = false;
 
-  Future<void> _checkCoverage(List<LaunchSite> presets) async {
-    setState(() {
-      _checking = true;
-      _coverageStatus = null;
-      _coverage = const [];
-    });
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _refreshIfNeeded());
+  }
+
+  @override
+  void dispose() {
+    _noticeTimer?.cancel();
+    super.dispose();
+  }
+
+  static String _presetsKey(List<LaunchSite> presets) => presets
+      .map((p) =>
+          '${p.name}|${p.latitude.toStringAsFixed(5)}|${p.longitude.toStringAsFixed(5)}')
+      .join(';');
+
+  void _refreshIfNeeded() {
+    final asyncVal = ref.read(launchSiteProvider);
+    if (!asyncVal.hasValue) return;
+    final presets = asyncVal.value?.presets ?? const <LaunchSite>[];
+    if (presets.isEmpty) {
+      if (mounted && !_coverageReady) {
+        setState(() {
+          _coverage = const [];
+          _coverageReady = true;
+        });
+      }
+      return;
+    }
+    unawaited(_refreshCoverage(presets));
+  }
+
+  /// Reads cache coverage and keeps it visible persistently (no auto-clear:
+  /// the card always reflects the current cache state).
+  Future<void> _refreshCoverage(List<LaunchSite> presets) async {
+    if (_loadingCoverage || _downloading) return;
+    if (!mounted) return;
+    setState(() => _loadingCoverage = true);
     try {
-      final coverage = await tileCacheCoverage(
-        presets,
-        onProgress: (done, total) {
-          if (!mounted) return;
-          setState(() =>
-              _coverageStatus = 'Checking cached tiles… $done / $total');
-        },
-      );
+      final coverage = await tileCacheCoverage(presets);
       if (!mounted) return;
       setState(() {
         _coverage = coverage;
-        var cached = 0;
-        var total = 0;
-        for (final c in coverage) {
-          cached += c.cached;
-          total += c.total;
-        }
-        _coverageStatus =
-            'Cached $cached / $total tiles around ${coverage.length} site(s).';
+        _coverageReady = true;
       });
     } catch (_) {
       if (!mounted) return;
-      setState(() => _coverageStatus = 'Check failed.');
+      setState(() => _coverageReady = true);
+      _flashNotice('Could not check downloads.');
     } finally {
-      if (mounted) setState(() => _checking = false);
+      if (mounted) setState(() => _loadingCoverage = false);
     }
   }
 
-  Future<void> _precacheAll(List<LaunchSite> presets) async {
+  void _flashNotice(String message) {
+    _noticeTimer?.cancel();
+    setState(() => _notice = message);
+    _noticeTimer = Timer(const Duration(seconds: 8), () {
+      if (!mounted) return;
+      setState(() => _notice = null);
+    });
+  }
+
+  Future<void> _downloadAll(List<LaunchSite> presets) async {
+    if (_downloading) return;
+    _noticeTimer?.cancel();
     setState(() {
-      _precaching = true;
-      _precacheStatus = null;
+      _downloading = true;
+      _done = 0;
+      _total = 0;
+      _notice = null;
     });
     try {
       final (:fetched, :total) = await precacheLaunchSites(
         presets,
         onProgress: (done, total) {
           if (!mounted) return;
-          setState(() =>
-              _precacheStatus = 'Downloading tiles… $done / $total');
+          setState(() {
+            _done = done;
+            _total = total;
+          });
         },
       );
       if (!mounted) return;
-      setState(() => _precacheStatus =
-          'Done — $fetched new tiles cached ($total checked).');
+      // Success needs no extra message — the status below flips to Ready.
+      // Only surface failures, inline in the status line.
+      if (fetched == 0 && total == 0) {
+        _flashNotice('Nothing to download.');
+      }
     } catch (_) {
       if (!mounted) return;
-      setState(
-          () => _precacheStatus = 'Preload failed — check the connection.');
+      _flashNotice('Download stopped — check connection.');
     } finally {
-      if (mounted) setState(() => _precaching = false);
+      if (mounted) setState(() => _downloading = false);
+      // Re-read the cache so the always-visible state reflects the download.
+      if (mounted) await _refreshCoverage(presets);
     }
   }
 
@@ -89,6 +131,105 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   Widget build(BuildContext context) {
     final state = ref.watch(launchSiteProvider);
     final siteState = state.value ?? const LaunchSiteState();
+
+    // Refresh the persistent cache state when the saved sites change
+    // (including the first load). Listener fires outside build, so
+    // setState inside [_refreshCoverage] is safe.
+    ref.listen(launchSiteProvider, (prev, next) {
+      final p = next.value?.presets ?? const <LaunchSite>[];
+      final pp = prev?.value?.presets ?? const <LaunchSite>[];
+      if (_presetsKey(p) != _presetsKey(pp)) {
+        if (p.isEmpty) {
+          _noticeTimer?.cancel();
+          setState(() {
+            _coverage = const [];
+            _coverageReady = true;
+            _notice = null;
+          });
+        } else {
+          unawaited(_refreshCoverage(p));
+        }
+      }
+    });
+
+    var cached = 0;
+    var total = 0;
+    for (final c in _coverage) {
+      cached += c.cached;
+      total += c.total;
+    }
+    final busy = _downloading || _loadingCoverage;
+    final hasSites = siteState.presets.isNotEmpty;
+    final checking = _loadingCoverage || !_coverageReady;
+
+    // One status line + one bar for every state. Only the text, fraction
+    // and colours change — the widgets stay put, so no layout shift.
+    final double overallFraction =
+        total <= 0 ? 0 : (cached / total).clamp(0.0, 1.0);
+    final String statusText;
+    final Color statusColor;
+    final double? barValue;
+    final Color barColor;
+    if (!hasSites) {
+      statusText = 'No launch sites yet';
+      statusColor = AppColors.mutedForeground;
+      barValue = 0;
+      barColor = AppColors.mutedForeground;
+    } else if (_downloading) {
+      final f = _total > 0 ? (_done / _total).clamp(0.0, 1.0) : null;
+      statusText = f == null
+          ? 'Starting download…'
+          : 'Downloading… ${(f * 100).round()}%';
+      statusColor = AppColors.mutedForeground;
+      barValue = f;
+      barColor = AppColors.info;
+    } else if (_notice != null) {
+      statusText = _notice!;
+      statusColor = AppColors.destructive;
+      barValue = overallFraction;
+      barColor = overallFraction >= 1
+          ? AppColors.success
+          : (overallFraction <= 0 ? AppColors.mutedForeground : AppColors.warning);
+    } else if (checking) {
+      statusText = 'Checking…';
+      statusColor = AppColors.mutedForeground;
+      barValue = null;
+      barColor = AppColors.mutedForeground;
+    } else if (total <= 0 || cached <= 0) {
+      statusText = 'Nothing saved yet';
+      statusColor = AppColors.mutedForeground;
+      barValue = 0;
+      barColor = AppColors.mutedForeground;
+    } else if (cached >= total) {
+      statusText = 'Ready for offline use';
+      statusColor = AppColors.success;
+      barValue = 1;
+      barColor = AppColors.success;
+    } else {
+      statusText = 'Partly ready — still works offline';
+      statusColor = AppColors.warning;
+      barValue = overallFraction;
+      barColor = AppColors.warning;
+    }
+    final statusStyle = AppText.mono.copyWith(
+      fontSize: 11,
+      fontWeight: FontWeight.w600,
+      color: statusColor,
+      fontFeatures: const [FontFeature.tabularFigures()],
+    );
+    // Rows are built from presets (known immediately) with coverage looked
+    // up per site, so rows exist from the first frame and only their
+    // trailing label changes — no pop-in shift while checking.
+    SiteCacheCoverage? coverageFor(LaunchSite site) {
+      for (final c in _coverage) {
+        if (c.site.name == site.name &&
+            (c.site.latitude - site.latitude).abs() < 1e-9 &&
+            (c.site.longitude - site.longitude).abs() < 1e-9) {
+          return c;
+        }
+      }
+      return null;
+    }
 
     return Center(
       child: ConstrainedBox(
@@ -101,129 +242,134 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  // 1. What this is.
                   Text(
-                    'Street and satellite tiles are cached on disk as you '
-                    'browse. Preload every saved launch site (about 1 km '
-                    'around each, zooms 13–17) for offline field use. '
-                    'Launch sites are managed from the flag button in the '
-                    'top bar.',
+                    'Save maps for your launch sites so they work '
+                    'without internet in the field.',
                     style: TextStyle(
                         fontSize: 12.5, color: AppColors.mutedForeground),
                   ),
-                  const SizedBox(height: 10),
-                  // Wrap (not Row): the pair must survive narrow windows
-                  // and wide fonts without overflowing.
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      FilledButton.icon(
-                        onPressed: _precaching || siteState.presets.isEmpty
-                            ? null
-                            : () => _precacheAll(siteState.presets),
-                        icon: _precaching
-                            ? const SizedBox(
-                                width: 14,
-                                height: 14,
-                                child: CircularProgressIndicator(
-                                    strokeWidth: 2),
-                              )
-                            : const Icon(Icons.download_outlined, size: 16),
-                        label: Text(_precaching
-                            ? 'Preloading…'
-                            : 'Preload tiles around saved sites'),
-                      ),
-                      OutlinedButton.icon(
-                        onPressed: _checking ||
-                                _precaching ||
-                                siteState.presets.isEmpty
-                            ? null
-                            : () => _checkCoverage(siteState.presets),
-                        icon: _checking
-                            ? const SizedBox(
-                                width: 14,
-                                height: 14,
-                                child: CircularProgressIndicator(
-                                    strokeWidth: 2),
-                              )
-                            : const Icon(
-                                Icons.fact_check_outlined,
-                                size: 16),
-                        label: Text(
-                            _checking ? 'Checking…' : 'Check cached tiles'),
-                      ),
-                    ],
-                  ),
-                  if (_precacheStatus != null) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      _precacheStatus!,
-                      style: AppText.mono.copyWith(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.mutedForeground,
-                      ),
-                    ),
-                  ],
-                  if (_coverageStatus != null) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      _coverageStatus!,
-                      style: AppText.mono.copyWith(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.mutedForeground,
-                      ),
-                    ),
-                  ],
-                  for (final c in _coverage) ...[
-                    const SizedBox(height: 4),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            c.site.name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 12.5,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          '${c.cached} / ${c.total}',
-                          style: AppText.mono.copyWith(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                            color: c.cached >= c.total
-                                ? AppColors.success
-                                : AppColors.warning,
-                            fontFeatures: const [
-                              FontFeature.tabularFigures()
+                  const SizedBox(height: 12),
+                  // 2. Which sites + how ready each one is. Rows are built
+                  // from presets (known immediately) so they exist from the
+                  // first frame and only the trailing label changes.
+                  if (hasSites)
+                    for (final site in siteState.presets)
+                      Builder(builder: (context) {
+                        final cov = coverageFor(site);
+                        final String label;
+                        final Color dot;
+                        final Color labelColor;
+                        if (cov == null) {
+                          label = '…';
+                          dot = AppColors.faint;
+                          labelColor = AppColors.mutedForeground;
+                        } else if (cov.total <= 0 || cov.cached >= cov.total) {
+                          label = 'Ready';
+                          dot = AppColors.success;
+                          labelColor = AppColors.success;
+                        } else if (cov.cached <= 0) {
+                          label = 'Empty';
+                          dot = AppColors.faint;
+                          labelColor = AppColors.mutedForeground;
+                        } else {
+                          final pct =
+                              ((cov.cached / cov.total) * 100).round();
+                          label = '$pct%';
+                          dot = AppColors.warning;
+                          labelColor = AppColors.warning;
+                        }
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 3),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 8,
+                                height: 8,
+                                decoration: BoxDecoration(
+                                  color: dot,
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  site.name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 12.5,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                label,
+                                style: AppText.mono.copyWith(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                  color: labelColor,
+                                  fontFeatures: const [
+                                    FontFeature.tabularFigures()
+                                  ],
+                                ),
+                              ),
                             ],
                           ),
-                        ),
-                      ],
+                        );
+                      })
+                  else
+                    Text(
+                      'No launch sites yet — add one with the flag '
+                      'button above to get started.',
+                      style: TextStyle(
+                          fontSize: 12.5, color: AppColors.mutedForeground),
                     ),
-                    const SizedBox(height: 2),
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(3),
-                      child: LinearProgressIndicator(
-                        value: c.total <= 0
-                            ? 1
-                            : (c.cached / c.total).clamp(0.0, 1.0),
-                        minHeight: 5,
-                        backgroundColor: AppColors.muted,
-                        valueColor: AlwaysStoppedAnimation<Color>(
-                          c.cached >= c.total
-                              ? AppColors.success
-                              : AppColors.warning,
-                        ),
-                      ),
+                  const SizedBox(height: 8),
+                  // 3. Overall state: one line + one bar for every state.
+                  // Only text, value and colour change, so nothing shifts.
+                  Text(
+                    statusText,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: statusStyle,
+                  ),
+                  const SizedBox(height: 6),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(3),
+                    child: LinearProgressIndicator(
+                      value: barValue,
+                      minHeight: 5,
+                      backgroundColor: AppColors.muted,
+                      valueColor: AlwaysStoppedAnimation<Color>(barColor),
                     ),
-                  ],
+                  ),
+                  const SizedBox(height: 12),
+                  // 4. The action.
+                  FilledButton.icon(
+                    onPressed: busy || !hasSites
+                        ? null
+                        : () => _downloadAll(siteState.presets),
+                    icon: _downloading
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.download_outlined, size: 16),
+                    label: Text(_downloading
+                        ? 'Downloading…'
+                        : 'Download offline maps'),
+                  ),
+                  const SizedBox(height: 8),
+                  // 5. What to expect: static, so it never shifts layout.
+                  Text(
+                    'Detailed maps are not available everywhere. '
+                    'Missing areas fill in automatically with less detail.',
+                    style: TextStyle(
+                        fontSize: 12, color: AppColors.mutedForeground),
+                  ),
                 ],
               ),
             ),

@@ -37,7 +37,6 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         child: Column(
           children: [
             _buildTabStrip(context, workspaces, activeId),
-            if (_editMode) _buildEditHint(),
             Expanded(child: WorkspaceGrid(editMode: _editMode)),
           ],
         ),
@@ -72,6 +71,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                       workspaces[i],
                       workspaces[i].id == activeId,
                       i,
+                      workspaces.length,
                     ),
                   _StripButton(
                     icon: Icons.add,
@@ -112,107 +112,133 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     );
   }
 
-  /// One-line how-to shown while editing so every gesture reads plainly.
-  Widget _buildEditHint() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppDimens.outerPadding,
-        vertical: 6,
-      ),
-      decoration: BoxDecoration(
-        color: AppColors.muted,
-        border: Border(bottom: BorderSide(color: AppColors.border)),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.info_outline, size: 13, color: AppColors.mutedForeground),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Text(
-              'Drag a tile onto another to swap · drag a divider to resize · '
-              'double-click a divider to flip it',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: AppText.microLabel.copyWith(
-                fontSize: 9.5,
-                letterSpacing: 0.4,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTab(BuildContext context, Workspace ws, bool active, int index) {
+  Widget _buildTab(
+    BuildContext context,
+    Workspace ws,
+    bool active,
+    int index,
+    int total,
+  ) {
     final canDelete =
         (ref.read(workspaceProvider).value?.workspaces.length ?? 1) > 1;
 
     // Full strip height so the active underline sits flush on the strip's
     // bottom hairline and every tab aligns identically.
-    return Container(
-      height: double.infinity,
-      margin: const EdgeInsets.only(right: 4),
-      decoration: active
-          ? BoxDecoration(
-              border: Border(
-                bottom: BorderSide(color: AppColors.pink, width: 2.5),
-              ),
-            )
-          : null,
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        child: Tooltip(
-          message: index < 9
-              ? '${ws.name} (Ctrl+${index + 1}, right-click for options)'
-              : '${ws.name} (right-click for options)',
-          child: InkWell(
-            // Renaming lives in the right-click menu only — double-click is
-            // reserved for canvas interactions, not the tab strip.
-            onTap: () => ref.read(workspaceProvider.notifier).setActive(ws.id),
-            onSecondaryTapUp: (details) =>
-                _workspaceContextMenu(context, ws, details.globalPosition),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    ws.name,
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: active ? FontWeight.w700 : FontWeight.w500,
-                      color: active
-                          ? AppColors.foreground
-                          : AppColors.mutedForeground,
-                    ),
+    Widget tabContent({bool dragging = false}) => Container(
+          height: double.infinity,
+          margin: const EdgeInsets.only(right: 4),
+          decoration: active
+              ? BoxDecoration(
+                  border: Border(
+                    bottom: BorderSide(color: AppColors.pink, width: 2.5),
                   ),
-                  if (_editMode && canDelete) ...[
-                    const SizedBox(width: 6),
-                    InkWell(
-                      onTap: () => ref
-                          .read(workspaceProvider.notifier)
-                          .deleteWorkspace(ws.id),
-                      child: Icon(
-                        Icons.close,
-                        size: 13,
-                        color: AppColors.mutedForeground,
+                )
+              : null,
+          child: MouseRegion(
+            cursor: SystemMouseCursors.click,
+            child: Tooltip(
+              message: index < 9
+                  ? '${ws.name} (Ctrl+${index + 1}, drag to reorder, right-click for options)'
+                  : '${ws.name} (drag to reorder, right-click for options)',
+              child: InkWell(
+                // Renaming lives in the right-click menu only — double-click is
+                // reserved for canvas interactions, not the tab strip.
+                onTap: () =>
+                    ref.read(workspaceProvider.notifier).setActive(ws.id),
+                mouseCursor: SystemMouseCursors.click,
+                onSecondaryTapUp: (details) => _workspaceContextMenu(
+                    context, ws, index, total, details.globalPosition),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Opacity(
+                        opacity: dragging ? 0.4 : 1.0,
+                        child: Text(
+                          ws.name,
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight:
+                                active ? FontWeight.w700 : FontWeight.w500,
+                            color: active
+                                ? AppColors.foreground
+                                : AppColors.mutedForeground,
+                          ),
+                        ),
                       ),
-                    ),
-                  ],
-                ],
+                      if (_editMode && canDelete) ...[
+                        const SizedBox(width: 6),
+                        InkWell(
+                          onTap: () => ref
+                              .read(workspaceProvider.notifier)
+                              .deleteWorkspace(ws.id),
+                          mouseCursor: SystemMouseCursors.click,
+                          child: Icon(
+                            Icons.close,
+                            size: 13,
+                            color: AppColors.mutedForeground,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
               ),
             ),
           ),
-        ),
-      ),
+        );
+
+    // Drag-to-reorder: dropping a tab onto another moves it to that slot.
+    return DragTarget<String>(
+      onWillAcceptWithDetails: (details) => details.data != ws.id,
+      onAcceptWithDetails: (details) => ref
+          .read(workspaceProvider.notifier)
+          .moveWorkspace(details.data, index),
+      builder: (context, candidate, rejected) {
+        final hovering = candidate.isNotEmpty;
+        return Container(
+          decoration: hovering
+              ? BoxDecoration(
+                  border: Border.all(color: AppColors.pink, width: 1.5),
+                  borderRadius: BorderRadius.circular(6),
+                )
+              : null,
+          child: Draggable<String>(
+            data: ws.id,
+            feedback: Material(
+              color: Colors.transparent,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: AppColors.card,
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: AppColors.pink, width: 1.5),
+                ),
+                child: Text(
+                  ws.name,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.foreground,
+                  ),
+                ),
+              ),
+            ),
+            childWhenDragging: tabContent(dragging: true),
+            child: tabContent(),
+          ),
+        );
+      },
     );
   }
 
   void _workspaceContextMenu(
     BuildContext context,
     Workspace ws,
+    int index,
+    int total,
     Offset position,
   ) {
     final notifier = ref.read(workspaceProvider.notifier);
@@ -226,6 +252,18 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         overlay.size.height - position.dy,
       ),
       items: [
+        PopupMenuItem(
+          value: 'move-left',
+          enabled: index > 0,
+          child: const _MenuRow(
+              icon: Icons.arrow_back, label: 'Move left'),
+        ),
+        PopupMenuItem(
+          value: 'move-right',
+          enabled: index < total - 1,
+          child: const _MenuRow(
+              icon: Icons.arrow_forward, label: 'Move right'),
+        ),
         PopupMenuItem(
           value: 'rename',
           child: const _MenuRow(icon: Icons.edit, label: 'Rename'),
@@ -247,6 +285,10 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     ).then((value) {
       if (!mounted) return;
       switch (value) {
+        case 'move-left':
+          notifier.moveWorkspace(ws.id, index - 1);
+        case 'move-right':
+          notifier.moveWorkspace(ws.id, index + 1);
         case 'rename':
           _renameWorkspaceDialog(this.context, ws);
         case 'duplicate':
@@ -259,12 +301,25 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
 
   // ── Dialogs ─────────────────────────────────────────────────────────────────
 
-  Future<void> _createWorkspaceDialog(BuildContext context) => _nameDialog(
-    context,
-    'New workspace',
-    'Prep 2',
-    (name) => ref.read(workspaceProvider.notifier).createWorkspace(name),
-  );
+  Future<void> _createWorkspaceDialog(BuildContext context) {
+    final workspaces =
+        ref.read(workspaceProvider).value?.workspaces ?? const <Workspace>[];
+    return _nameDialog(
+      context,
+      'New workspace',
+      _nextNewLayoutName(workspaces),
+      (name) => ref.read(workspaceProvider.notifier).createWorkspace(name),
+    );
+  }
+
+  /// Next free "New workspace N" name (1, 2, 3, …).
+  static String _nextNewLayoutName(List<Workspace> existing) {
+    var n = 1;
+    while (existing.any((w) => w.name == 'New workspace $n')) {
+      n++;
+    }
+    return 'New workspace $n';
+  }
 
   Future<void> _renameWorkspaceDialog(BuildContext context, Workspace ws) =>
       _nameDialog(
@@ -343,88 +398,183 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   }
 }
 
-/// The add-tile sheet. With [splitTileId] the picked tile replaces that
-/// tile by splitting it into two; otherwise it splits the largest tile.
+/// The add-tile dialog. With [splitTileId] the picked tile splits that
+/// tile in two; with [changeTileId] it replaces that tile in place;
+/// otherwise it splits the largest tile. Grid layout uses the dialog width
+/// instead of one long single-column list.
 void showTilePicker(
   BuildContext context,
   WidgetRef ref, {
   String? splitTileId,
+  String? changeTileId,
 }) {
-  showModalBottomSheet(
+  final isChange = changeTileId != null;
+  final title = isChange
+      ? 'Change tile type'
+      : (splitTileId == null ? 'Add a tile' : 'Split tile — pick tile');
+  showDialog(
     context: context,
-    backgroundColor: AppColors.card,
-    shape: const RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(
-        top: Radius.circular(AppDimens.radius),
+    builder: (dialogContext) => Dialog(
+      backgroundColor: AppColors.card,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppDimens.radius),
       ),
-    ),
-    builder: (sheetContext) => SafeArea(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
-            child: Row(
-              children: [
-                Container(
-                  width: 7,
-                  height: 7,
-                  decoration: BoxDecoration(
-                    color: AppColors.pink,
-                    borderRadius: BorderRadius.circular(2),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 680, maxHeight: 520),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 7,
+                    height: 7,
+                    decoration: BoxDecoration(
+                      color: AppColors.pink,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  (splitTileId == null
-                          ? 'Add a tile'
-                          : 'Split tile — pick tile')
-                      .toUpperCase(),
-                  style: AppText.microLabel,
-                ),
-              ],
-            ),
-          ),
-          Flexible(
-            child: ListView(
-              shrinkWrap: true,
-              padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-              children: [
-                for (final descriptor in TileRegistry.all)
-                  ListTile(
-                    dense: true,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(
-                        AppDimens.radiusSmall,
-                      ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      title.toUpperCase(),
+                      style: AppText.microLabel,
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    leading: const Icon(Icons.widgets_outlined, size: 20),
-                    title: Text(
-                      descriptor.title,
-                      style: const TextStyle(
-                        fontSize: 13.5,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    subtitle: Text(
-                      descriptor.description,
-                      style: const TextStyle(fontSize: 12),
-                    ),
-                    onTap: () {
-                      Navigator.of(sheetContext).pop();
-                      ref
-                          .read(workspaceProvider.notifier)
-                          .addTile(descriptor.id, splitTileId: splitTileId);
-                    },
                   ),
-              ],
-            ),
+                  IconButton(
+                    tooltip: 'Close',
+                    iconSize: 18,
+                    onPressed: () => Navigator.of(dialogContext).pop(),
+                    icon: Icon(Icons.close, color: AppColors.mutedForeground),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                isChange
+                    ? 'Pick a replacement — position and size stay the same.'
+                    : 'Pick a tile — it splits the available space.',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: AppColors.mutedForeground,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Flexible(
+                child: GridView.builder(
+                  shrinkWrap: true,
+                  gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                    maxCrossAxisExtent: 200,
+                    mainAxisExtent: 96,
+                    mainAxisSpacing: 8,
+                    crossAxisSpacing: 8,
+                  ),
+                  itemCount: TileRegistry.all.length,
+                  itemBuilder: (context, index) {
+                    final descriptor = TileRegistry.all[index];
+                    return _TilePickCard(
+                      descriptor: descriptor,
+                      onTap: () {
+                        Navigator.of(dialogContext).pop();
+                        final notifier = ref.read(workspaceProvider.notifier);
+                        if (changeTileId != null) {
+                          notifier.changeTileType(changeTileId, descriptor.id);
+                        } else {
+                          notifier.addTile(
+                            descriptor.id,
+                            splitTileId: splitTileId,
+                          );
+                        }
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     ),
   );
+}
+
+class _TilePickCard extends StatelessWidget {
+  final TileDescriptor descriptor;
+  final VoidCallback onTap;
+
+  const _TilePickCard({required this.descriptor, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: Material(
+        color: AppColors.muted,
+        borderRadius: BorderRadius.circular(AppDimens.radiusSmall),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(AppDimens.radiusSmall),
+          child: Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(AppDimens.radiusSmall),
+              border: Border.all(color: AppColors.border),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(7),
+                  decoration: BoxDecoration(
+                    color: AppColors.card,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: AppColors.border),
+                  ),
+                  child: Icon(
+                    descriptor.icon,
+                    size: 18,
+                    color: AppColors.pinkDeep,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        descriptor.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        descriptor.description,
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          color: AppColors.mutedForeground,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 // ── Small strip building blocks ───────────────────────────────────────────────
@@ -448,6 +598,7 @@ class _StripButton extends StatelessWidget {
         message: tooltip,
         child: InkWell(
           onTap: onTap,
+          mouseCursor: SystemMouseCursors.click,
           borderRadius: BorderRadius.circular(AppDimens.radiusSmall),
           child: Padding(
             padding: const EdgeInsets.all(6),
@@ -474,8 +625,9 @@ class _StripToggle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final enabled = onTap != null;
     return MouseRegion(
-      cursor: SystemMouseCursors.click,
+      cursor: enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
       child: Material(
         color: active ? AppColors.pink : AppColors.card,
         shape: StadiumBorder(
@@ -483,6 +635,8 @@ class _StripToggle extends StatelessWidget {
         ),
         child: InkWell(
           onTap: onTap,
+          mouseCursor:
+              enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
           customBorder: const StadiumBorder(),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),

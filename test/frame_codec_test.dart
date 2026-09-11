@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -70,6 +71,22 @@ void main() {
       expect(decoded.hallRaw, 2543);
       expect(decoded.fsmState, FsmState.parachute);
       expect(decoded.receivedAtMs, 42);
+    });
+
+    test('negative vertical accel round-trips with sign preserved', () {
+      const probe = TelemetryFrame(accelX: 0.5, accelY: -0.3, accelZ: -12.7);
+      final decoded =
+          FrameCodec.decode(FrameCodec.encode(probe), receivedAtMs: 0)!;
+      expect(decoded.accelVertical, closeTo(-12.7, 0.05));
+      expect(decoded.accelVertical, lessThan(0));
+      // Total stays a non-negative magnitude over the same sample.
+      expect(
+        decoded.accelTotal,
+        closeTo(
+          math.sqrt(0.5 * 0.5 + 0.3 * 0.3 + 12.7 * 12.7),
+          0.05,
+        ),
+      );
     });
 
     test('encodePacket prepends the sync word', () {
