@@ -27,6 +27,8 @@ class EventsTile extends ConsumerStatefulWidget {
 
 class _EventsTileState extends ConsumerState<EventsTile> {
   Timer? _ticker;
+  final ScrollController _scrollController = ScrollController();
+  int _prevEventCount = 0;
 
   @override
   void initState() {
@@ -41,6 +43,7 @@ class _EventsTileState extends ConsumerState<EventsTile> {
   @override
   void dispose() {
     _ticker?.cancel();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -68,15 +71,32 @@ class _EventsTileState extends ConsumerState<EventsTile> {
       );
     }
 
+    // Live auto-scrolls to the bottom when new events arrive.
+    if (!replaying && events.length > _prevEventCount) {
+      _prevEventCount = events.length;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_scrollController.hasClients) {
+          _scrollController.animateTo(
+            _scrollController.position.maxScrollExtent,
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOut,
+          );
+        }
+      });
+    } else if (replaying) {
+      _prevEventCount = events.length;
+    }
+
     final nowMs = DateTime.now().millisecondsSinceEpoch;
     return ListView.separated(
+      controller: _scrollController,
       padding: const EdgeInsets.symmetric(vertical: 2),
       itemCount: events.length,
       separatorBuilder: (_, _) =>
           Divider(height: 1, thickness: 1, color: AppColors.border),
-      // Newest first: a log reads top-down.
+      // Oldest first: chronological order (oldest at top, newest at bottom).
       itemBuilder: (context, index) {
-        final event = events[events.length - 1 - index];
+        final event = events[index];
         final time = replaying
             ? 'at ${formatMinSec(event.positionMs)}'
             : _formatAgo(nowMs - event.receivedAtMs);

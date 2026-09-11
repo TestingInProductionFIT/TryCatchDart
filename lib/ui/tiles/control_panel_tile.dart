@@ -7,80 +7,17 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../state/replay_controller.dart';
 import '../../state/telemetry_provider.dart';
 import '../../theme/app_colors.dart';
+import 'package:serial/serial.dart';
 
-/// One data-defined command to the rocket.
-///
-/// Everything about a command — label, icon, exact wire bytes — lives here;
-/// the tile renders and sends whatever is in this catalog. To add a
-/// command, append one entry.
-class RocketCommand {
-  final String id;
-  final String label;
-  final String description;
-  final IconData icon;
-  final List<int> bytes;
-
-  /// Destructive commands get red accents and a stronger confirmation style.
-  final bool danger;
-
-  const RocketCommand({
-    required this.id,
-    required this.label,
-    required this.description,
-    required this.icon,
-    required this.bytes,
-    this.danger = false,
-  });
-}
-
-/// Command catalog.
-///
-/// Byte format (made up, must match the flight software): `0x54 0x43` magic
-/// ('TC') + command byte + argument byte (0x00 for now).
-abstract final class RocketCommands {
-  static const magicT = 0x54;
-  static const magicC = 0x43;
-
-  static const List<RocketCommand> all = [
-    RocketCommand(
-      id: 'arm',
-      label: 'Arm',
-      description: 'Enable igniter and deployment circuits',
-      icon: Icons.gpp_good_outlined,
-      bytes: [magicT, magicC, 0x01, 0x00],
-      danger: true,
-    ),
-    RocketCommand(
-      id: 'disarm',
-      label: 'Disarm',
-      description: 'Disable all pyro and igniter circuits',
-      icon: Icons.gpp_bad_outlined,
-      bytes: [magicT, magicC, 0x02, 0x00],
-    ),
-    RocketCommand(
-      id: 'fire_parachute',
-      label: 'Fire chute',
-      description: 'Manual parachute deployment',
-      icon: Icons.paragliding,
-      bytes: [magicT, magicC, 0x03, 0x00],
-      danger: true,
-    ),
-    RocketCommand(
-      id: 'beep',
-      label: 'Beep',
-      description: 'Play the locator beep on the rocket',
-      icon: Icons.campaign_outlined,
-      bytes: [magicT, magicC, 0x05, 0x00],
-    ),
-    RocketCommand(
-      id: 'reset_fsm',
-      label: 'Reset FSM',
-      description: 'Force the flight computer back to Idle',
-      icon: Icons.restart_alt,
-      bytes: [magicT, magicC, 0x06, 0x00],
-      danger: true,
-    ),
-  ];
+extension RocketCommandUi on RocketCommand {
+  IconData get icon => switch (id) {
+        'arm' => Icons.gpp_good_outlined,
+        'disarm' => Icons.gpp_bad_outlined,
+        'fire_parachute' => Icons.paragliding,
+        'beep' => Icons.campaign_outlined,
+        'reset_fsm' => Icons.restart_alt,
+        _ => Icons.terminal,
+      };
 }
 
 /// Two-click command panel: every tile requires a second confirming click

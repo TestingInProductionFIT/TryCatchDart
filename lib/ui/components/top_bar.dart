@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/app_config.dart';
 import '../../state/replay_controller.dart';
 import '../../state/telemetry_store.dart';
 import '../../theme/app_colors.dart';
@@ -32,7 +33,7 @@ class TopBar extends ConsumerWidget {
   /// (logo + wordmark + tagline, ~250px with padding in the test font) is
   /// much wider than the 44px menu button, which used to push the center
   /// group's midpoint right of center.
-  static const double sideWidth = 264;
+  static const double sideWidth = AppConfig.topBarSideWidth;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {

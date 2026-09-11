@@ -26,6 +26,7 @@ void main() {
         description: 'test',
         icon: Icons.widgets_outlined,
         minSize: const Size(80, 60),
+        category: TileCategory.views,
         builder: (context) => SizedBox.expand(
           child: Center(child: Text('${label.toUpperCase()} BODY')),
         ),

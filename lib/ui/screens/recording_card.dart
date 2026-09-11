@@ -1,0 +1,332 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../core/flight_events.dart';
+import '../../core/format.dart';
+import '../../services/flight_trim.dart';
+import '../../state/launch_site_store.dart';
+import '../../theme/app_colors.dart';
+import '../components/app_card.dart';
+import '../tiles/shared/map_tiles.dart';
+import './orbit_preview.dart';
+import './recording_info.dart';
+
+class RecordingCard extends ConsumerStatefulWidget {
+  final RecordingInfo info;
+  final bool isLoaded;
+  final bool isLoading;
+  final bool busy;
+  final VoidCallback onPlay;
+  final VoidCallback onDelete;
+  final VoidCallback onTrim;
+
+  const RecordingCard({
+    super.key,
+    required this.info,
+    required this.isLoaded,
+    this.isLoading = false,
+    this.busy = false,
+    required this.onPlay,
+    required this.onDelete,
+    required this.onTrim,
+  });
+
+  @override
+  ConsumerState<RecordingCard> createState() => RecordingCardState();
+}
+
+class RecordingCardState extends ConsumerState<RecordingCard> {
+  bool _savingSite = false;
+  @override
+  void initState() {
+    super.initState();
+    // Each card decodes its own file concurrently after the grid is already
+    // on screen — the list never waits for the slowest recording.
+    if (!widget.info.previewDone) _loadPreview();
+  }
+
+  /// Decode pass for packet count, duration, max altitude, the altitude
+  /// profile and the 3D track.
+  ///
+  /// Chunks hold raw stream fragments (not one packet each), so they go
+  /// through the packet parser before decoding — decoding chunks directly
+  /// yields nothing and renders a flat preview. Stats already known from
+  /// the file header are kept; the decode only adds the visual profiles.
+  Future<void> _loadPreview() async {
+    try {
+      final flight = await decodeRecordingFrames(widget.info.path);
+      if (!mounted) return;
+      setState(() {
+        final info = widget.info;
+        if (!flight.isEmpty) {
+          final frames = flight.frames;
+          info.packets ??= frames.length;
+          info.durationMs ??=
+              frames.last.receivedAtMs - frames.first.receivedAtMs;
+          if (info.maxAltM == null) {
+            var maxAlt = double.negativeInfinity;
+            for (final frame in frames) {
+              if (frame.baroAltitude > maxAlt) maxAlt = frame.baroAltitude;
+            }
+            if (maxAlt.isFinite) info.maxAltM = maxAlt;
+          }
+          info.altProfile = buildAltProfile(frames);
+          info.track = buildTrackProfile(frames);
+          info.events = detectFlightEvents(frames);
+        }
+        info.previewDone = true;
+      });
+    } catch (_) {
+      // Preview stays empty; the file can still (maybe) replay.
+      if (!mounted) return;
+      setState(() => widget.info.previewDone = true);
+    }
+  }
+
+  String get _sizeLabel {
+    if (widget.info.sizeBytes >= 1024 * 1024) {
+      return '${(widget.info.sizeBytes / 1024 / 1024).toStringAsFixed(1)} MB';
+    }
+    return '${(widget.info.sizeBytes / 1024).toStringAsFixed(0)} KB';
+  }
+
+  /// Saves this recording's header launch position as a preset. The button
+  /// hides itself on completion because the preset list (watched in [build])
+  /// then covers the site.
+  Future<void> _saveLaunchSite(LaunchSite site) async {
+    if (_savingSite) return;
+    setState(() => _savingSite = true);
+    try {
+      await ref.read(launchSiteProvider.notifier).savePreset(site);
+      unawaited(precacheLaunchSites([site]));
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Saved launch site "${site.name}".')),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not save the launch site.')),
+      );
+    } finally {
+      if (mounted) setState(() => _savingSite = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final info = widget.info;
+    final isLoaded = widget.isLoaded;
+    final presets =
+        ref.watch(launchSiteProvider).value?.presets ?? const <LaunchSite>[];
+    final fileSite = info.launchSite;
+    final showExtractSite =
+        fileSite != null && !isLaunchSiteSaved(presets, fileSite);
+    final canTrim = info.durationMs != null && info.durationMs! > 2000;
+    final stats = <String>[
+      if (info.durationMs != null) formatMinSec(info.durationMs!),
+      if (info.packets != null) '${info.packets} packets',
+      if (info.maxAltM != null) 'max ${formatAltitudeM(info.maxAltM)}',
+      _sizeLabel,
+    ];
+    final date = formatDateTime(info.modified);
+
+    return AppCard(
+      padding: const EdgeInsets.fromLTRB(14, 10, 14, 8),
+      borderColor: isLoaded ? AppColors.primary : null,
+      // NOTE: fixed heights only — grid tiles can arrive with an unbounded
+      // height during layout, which an Expanded child would explode on.
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.flight_takeoff,
+                size: 18,
+                color: isLoaded ? AppColors.primary : AppColors.mutedForeground,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      info.name,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    Text(
+                      date,
+                      style: AppText.mono.copyWith(
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.mutedForeground,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              PopupMenuButton<String>(
+                tooltip: 'Recording actions',
+                iconSize: 18,
+                onSelected: (value) {
+                  switch (value) {
+                    case 'trim':
+                      widget.onTrim();
+                    case 'extract':
+                      final site = fileSite;
+                      if (site != null) _saveLaunchSite(site);
+                    case 'delete':
+                      widget.onDelete();
+                  }
+                },
+                itemBuilder: (context) => [
+                  PopupMenuItem(
+                    value: 'trim',
+                    enabled: canTrim,
+                    child: const Row(
+                      children: [
+                        Icon(Icons.content_cut_outlined, size: 16),
+                        SizedBox(width: 8),
+                        Text('Trim…'),
+                      ],
+                    ),
+                  ),
+                  if (showExtractSite)
+                    PopupMenuItem(
+                      value: 'extract',
+                      enabled: !_savingSite,
+                      child: Row(
+                        children: [
+                          const Icon(Icons.pin_drop_outlined, size: 16),
+                          const SizedBox(width: 8),
+                          Text(_savingSite ? 'Saving…' : 'Extract site'),
+                        ],
+                      ),
+                    ),
+                  PopupMenuItem(
+                    value: 'delete',
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.delete_outline,
+                          size: 16,
+                          color: AppColors.destructive,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Delete',
+                          style: TextStyle(color: AppColors.destructive),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          // Orbiting 3D track preview (altitude sparkline when the
+          // recording holds no GPS fixes): the flight at a glance. Shows a
+          // spinner until this card's own decode lands. The whole preview
+          // is the play affordance, as if it was a video — pink button in
+          // the middle, pointer cursor, tap anywhere to open the replay.
+          SizedBox(
+            height: 200,
+            child: Material(
+              color: Colors.transparent,
+              borderRadius: BorderRadius.circular(AppDimens.radiusSmall),
+              clipBehavior: Clip.hardEdge,
+              child: InkWell(
+                onTap: widget.busy ? null : widget.onPlay,
+                mouseCursor: widget.busy
+                    ? SystemMouseCursors.basic
+                    : SystemMouseCursors.click,
+                child: Stack(
+                  children: [
+                    Positioned.fill(
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: AppColors.muted,
+                          borderRadius: BorderRadius.circular(
+                            AppDimens.radiusSmall,
+                          ),
+                          border: Border.all(color: AppColors.border),
+                        ),
+                        child: info.previewDone
+                            ? OrbitOrSparkline(
+                                track: info.track,
+                                altProfile: info.altProfile,
+                              )
+                            : const Center(
+                                child: SizedBox(
+                                  width: 14,
+                                  height: 14,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                ),
+                              ),
+                      ),
+                    ),
+                    Center(
+                      child: Opacity(
+                        opacity: widget.busy && !widget.isLoading ? 0.55 : 1,
+                        child: Container(
+                          width: 50,
+                          height: 50,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: AppColors.primary.withValues(alpha: 0.4),
+                          ),
+                          child: widget.isLoading
+                              ? const SizedBox(
+                                  width: 26,
+                                  height: 26,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2.5,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : Icon(
+                                  isLoaded ? Icons.replay : Icons.play_arrow,
+                                  size: 30,
+                                  color: Colors.white,
+                                ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            stats.join(' · ').toUpperCase(),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: AppText.microLabel.copyWith(
+              fontSize: 9,
+              letterSpacing: 0.8,
+              color: AppColors.mutedForeground,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}

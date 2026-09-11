@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../theme/app_colors.dart';
-import '../../state/tile_registry.dart';
 import '../../state/workspace_controller.dart';
+import './tile_picker_dialog.dart';
+export './tile_picker_dialog.dart';
 import './workspace_grid.dart';
 import '../../state/workspace_models.dart';
 
@@ -106,6 +108,15 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
               active: false,
               onTap: () => _confirmReset(context),
             ),
+            if (kDebugMode) ...[
+              const SizedBox(width: 6),
+              _StripToggle(
+                icon: Icons.save_as_outlined,
+                label: 'Make default',
+                active: false,
+                onTap: () => _confirmPromoteToDefaults(context),
+              ),
+            ],
           ],
         ],
       ),
@@ -396,182 +407,44 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       ),
     );
   }
-}
 
-/// The add-tile dialog. With [splitTileId] the picked tile splits that
-/// tile in two; with [changeTileId] it replaces that tile in place;
-/// otherwise it splits the largest tile. Grid layout uses the dialog width
-/// instead of one long single-column list.
-void showTilePicker(
-  BuildContext context,
-  WidgetRef ref, {
-  String? splitTileId,
-  String? changeTileId,
-}) {
-  final isChange = changeTileId != null;
-  final title = isChange
-      ? 'Change tile type'
-      : (splitTileId == null ? 'Add a tile' : 'Split tile — pick tile');
-  showDialog(
-    context: context,
-    builder: (dialogContext) => Dialog(
-      backgroundColor: AppColors.card,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(AppDimens.radius),
-      ),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 680, maxHeight: 520),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
-                children: [
-                  Container(
-                    width: 7,
-                    height: 7,
-                    decoration: BoxDecoration(
-                      color: AppColors.pink,
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      title.toUpperCase(),
-                      style: AppText.microLabel,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  IconButton(
-                    tooltip: 'Close',
-                    iconSize: 18,
-                    onPressed: () => Navigator.of(dialogContext).pop(),
-                    icon: Icon(Icons.close, color: AppColors.mutedForeground),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 4),
-              Text(
-                isChange
-                    ? 'Pick a replacement — position and size stay the same.'
-                    : 'Pick a tile — it splits the available space.',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: AppColors.mutedForeground,
-                ),
-              ),
-              const SizedBox(height: 12),
-              Flexible(
-                child: GridView.builder(
-                  shrinkWrap: true,
-                  gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                    maxCrossAxisExtent: 200,
-                    mainAxisExtent: 96,
-                    mainAxisSpacing: 8,
-                    crossAxisSpacing: 8,
-                  ),
-                  itemCount: TileRegistry.all.length,
-                  itemBuilder: (context, index) {
-                    final descriptor = TileRegistry.all[index];
-                    return _TilePickCard(
-                      descriptor: descriptor,
-                      onTap: () {
-                        Navigator.of(dialogContext).pop();
-                        final notifier = ref.read(workspaceProvider.notifier);
-                        if (changeTileId != null) {
-                          notifier.changeTileType(changeTileId, descriptor.id);
-                        } else {
-                          notifier.addTile(
-                            descriptor.id,
-                            splitTileId: splitTileId,
-                          );
-                        }
-                      },
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
+  Future<void> _confirmPromoteToDefaults(BuildContext context) {
+    return showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Make current workspaces the app default?'),
+        content: const Text(
+          'Developer tool: This takes all current workspaces and writes them '
+          'into lib/state/default_layouts.dart as the new factory default configuration.',
         ),
-      ),
-    ),
-  );
-}
-
-class _TilePickCard extends StatelessWidget {
-  final TileDescriptor descriptor;
-  final VoidCallback onTap;
-
-  const _TilePickCard({required this.descriptor, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      child: Material(
-        color: AppColors.muted,
-        borderRadius: BorderRadius.circular(AppDimens.radiusSmall),
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(AppDimens.radiusSmall),
-          child: Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(AppDimens.radiusSmall),
-              border: Border.all(color: AppColors.border),
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(7),
-                  decoration: BoxDecoration(
-                    color: AppColors.card,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: AppColors.border),
-                  ),
-                  child: Icon(
-                    descriptor.icon,
-                    size: 18,
-                    color: AppColors.pinkDeep,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        descriptor.title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        descriptor.description,
-                        maxLines: 3,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 11.5,
-                          color: AppColors.mutedForeground,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Cancel'),
           ),
-        ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: AppColors.pink,
+            ),
+            onPressed: () async {
+              Navigator.of(dialogContext).pop();
+              final err = await ref
+                  .read(workspaceProvider.notifier)
+                  .promoteToDefaults();
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    err == null
+                        ? 'Current workspaces saved to default_layouts.dart!'
+                        : 'Warning: $err',
+                  ),
+                ),
+              );
+            },
+            child: const Text('Make default'),
+          ),
+        ],
       ),
     );
   }

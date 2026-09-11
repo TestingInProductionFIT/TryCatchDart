@@ -37,11 +37,9 @@ class Workspace {
 
   factory Workspace.fromJson(Map<String, dynamic> json) {
     final rootJson = json['root'];
-    final LayoutNode? rawRoot = rootJson == null
+    final LayoutNode? root = rootJson == null
         ? null
         : LayoutNode.fromJson(rootJson as Map<String, dynamic>);
-    // Heal duplicate split ids from old installs (one drag moved many tiles).
-    final root = ensureUniqueSplitIds(rawRoot);
 
     return Workspace(
       id: json['id'] as String,

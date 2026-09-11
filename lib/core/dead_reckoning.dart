@@ -36,13 +36,32 @@ class DrPosition {
 /// velocity integral since that fix. Between fixes it drifts away from the
 /// true position as sensor error accumulates; each new fix re-anchors it.
 ///
-/// Touchdown freeze: once the estimate sinks to the lowest seen fix altitude
-/// (minus a small tolerance) it is pinned there with zeroed velocity — a
-/// landed rocket doesn't keep sliding, so the frozen point is the estimated
-/// landing spot. A fresh fix clearly above the floor unfreezes it.
+/// ### Gravity correction
+/// While telemetry frames still arrive ([update]), the avionics' IMU-integrated
+/// velocity already accounts for gravity — no correction is applied there.
+/// Once the link is lost entirely and [extrapolate] drives the position,
+/// `g = 9.81 m/s²` decelerates the vertical velocity so an ascending rocket
+/// arcs over and descends instead of flying to the stratosphere indefinitely.
+/// The exact-kinematics formula `Δh = v·dt − ½g·dt²` is used rather than
+/// Euler integration, so the result is correct even for large `dt` gaps.
+///
+/// ### Terrain floor
+/// [setTerrainFloor] accepts an MSL elevation from an external tile query
+/// (see `elevation_service.dart`). It is merged with the GPS-minimum
+/// heuristic via `max()`, so a stale or imprecise terrain value can only
+/// *raise* the clamp — never lower it below a confirmed GPS fix altitude.
+///
+/// ### Touchdown freeze
+/// Once the estimate sinks to the ground floor it is pinned there with zeroed
+/// velocity — a landed rocket doesn't keep sliding. A fresh fix clearly above
+/// the floor unfreezes it.
 class DeadReckoningEstimator {
   /// Touchdown tolerance below the lowest seen fix (GPS noise margin).
   static const double groundToleranceM = 2.0;
+
+  /// Standard gravity (m/s²).
+  static const double _gravity = 9.80665;
+
   // Anchor: the most recent GPS fix.
   double? _anchorLat;
   double? _anchorLon;
@@ -54,22 +73,46 @@ class DeadReckoningEstimator {
   double _offE = 0;
   double _offUp = 0;
 
-  // Last known NED velocity (m/s) for extrapolation without fresh frames.
+  // Last known NED velocity (m/s) from the IMU — used for horizontal
+  // extrapolation without fresh frames.
   double _lastVelN = 0;
   double _lastVelE = 0;
-  double _lastVelD = 0;
+
+  /// Vertical velocity (m/s, **upward positive**) used during link-loss
+  /// extrapolation.  Kept in sync with `-frame.velocityDown` while the link
+  /// is live; decays under gravity once [extrapolate] takes over, so the
+  /// rocket arcs over instead of flying straight.
+  double _drVelUp = 0;
 
   int? _lastUpdateMs;
 
-  /// Lowest GPS fix altitude seen (MSL) — the touchdown floor derives from it.
+  /// Lowest GPS fix altitude seen (MSL) — the touch-down floor heuristic.
   double? _lowestFixMsl;
 
   /// `true` once the estimate has been pinned to the ground.
   bool _grounded = false;
 
-  /// Touchdown floor (MSL), or `null` before the first fix.
-  double? get groundFloorMsl =>
-      _lowestFixMsl == null ? null : _lowestFixMsl! - groundToleranceM;
+  /// Terrain elevation (MSL) from an external query — overrides the GPS-min
+  /// heuristic when available.  Always merged via `max()` with the heuristic
+  /// so it can only raise the clamp, never lower it below a confirmed fix.
+  double? _terrainFloorMsl;
+
+  // ── Public getters ─────────────────────────────────────────────────────────
+
+  /// Ground floor (MSL): the higher of the terrain query and the GPS-min
+  /// heuristic, or `null` before the first fix.
+  ///
+  /// Taking `max()` means a terrain value that is lower than the launch-site
+  /// MSL (e.g. the tile covers a nearby valley) is safely overridden by the
+  /// confirmed GPS data.
+  double? get groundFloorMsl {
+    final heuristic =
+        _lowestFixMsl == null ? null : _lowestFixMsl! - groundToleranceM;
+    final terrain = _terrainFloorMsl;
+    if (terrain == null) return heuristic;
+    if (heuristic == null) return terrain;
+    return math.max(terrain, heuristic);
+  }
 
   /// Most recent computed DR position, if the estimator has been anchored.
   DrPosition? get position => _buildPosition(_lastUpdateMs ?? 0);
@@ -102,10 +145,25 @@ class DeadReckoningEstimator {
   /// Horizontal distance travelled since the anchor fix, in metres.
   double get distanceSinceAnchor => math.sqrt(_offN * _offN + _offE * _offE);
 
+  /// Whether the ground floor is backed by a real terrain elevation query
+  /// rather than just the GPS-minimum heuristic.
+  bool get hasRealTerrainFloor => _terrainFloorMsl != null;
+
+  // ── Mutation ───────────────────────────────────────────────────────────────
+
+  /// Sets the ground-collision floor from a terrain elevation query (MSL).
+  ///
+  /// Merged with the GPS-min heuristic via `max()`, so it only raises the
+  /// clamp.  Safe to call from an async context after a tile fetch resolves.
+  void setTerrainFloor(double msl) {
+    _terrainFloorMsl = msl;
+  }
+
   /// Feeds a telemetry frame and returns the updated DR position
   /// (`null` before the first GPS fix).
   DrPosition? update(TelemetryFrame frame) {
     final t = frame.receivedAtMs;
+
     // Frozen on the ground: only the clock advances, no integration and no
     // velocity adoption — the landing spot stays put.
     if (!_grounded) {
@@ -117,7 +175,10 @@ class DeadReckoningEstimator {
       }
       _lastVelN = frame.velocityNorth;
       _lastVelE = frame.velocityEast;
-      _lastVelD = frame.velocityDown;
+      // Keep the DR vertical velocity in sync with the IMU so that if the
+      // link dies, gravity-corrected extrapolation starts from the correct
+      // velocity and decelerates from there.
+      _drVelUp = -frame.velocityDown;
     }
     _lastUpdateMs = t;
 
@@ -144,15 +205,25 @@ class DeadReckoningEstimator {
   }
 
   /// Integrates the last known velocity forward to [atMs] without a fresh
-  /// frame — ground-side extrapolation while the link is silent. Advances the
-  /// internal clock so a later [update] resumes from here. Frozen once
+  /// frame — ground-side extrapolation while the link is silent.  Advances the
+  /// internal clock so a later [update] resumes from here.  Frozen once
   /// grounded (only the clock advances).
+  ///
+  /// **Gravity correction**: the vertical component is integrated with
+  /// `Δh = v·dt − ½g·dt²` (exact kinematics for constant gravity), so the
+  /// rocket decelerates, peaks, and descends naturally regardless of how long
+  /// the extrapolation window is.  Horizontal velocity is held constant
+  /// (conservatively assumes no drag — gives the widest plausible search area).
   DrPosition? extrapolate(int atMs) {
     if (!_grounded && _lastUpdateMs != null && atMs > _lastUpdateMs!) {
       final dt = (atMs - _lastUpdateMs!) / 1000.0;
       _offN += _lastVelN * dt;
       _offE += _lastVelE * dt;
-      _offUp += -_lastVelD * dt;
+      // Exact kinematics: Δh = v₀·dt − ½g·dt².  Update position first, then
+      // velocity, so the stored _drVelUp is the end-of-step value ready for
+      // the next call.
+      _offUp += _drVelUp * dt - 0.5 * _gravity * dt * dt;
+      _drVelUp -= _gravity * dt;
     }
     if (_lastUpdateMs == null || atMs > _lastUpdateMs!) {
       _lastUpdateMs = atMs;
@@ -170,7 +241,7 @@ class DeadReckoningEstimator {
       _offUp = floor - anchorAlt;
       _lastVelN = 0;
       _lastVelE = 0;
-      _lastVelD = 0;
+      _drVelUp = 0;
       _grounded = true;
     }
   }
@@ -186,9 +257,10 @@ class DeadReckoningEstimator {
     _offUp = 0;
     _lastVelN = 0;
     _lastVelE = 0;
-    _lastVelD = 0;
+    _drVelUp = 0;
     _lastUpdateMs = null;
     _lowestFixMsl = null;
+    _terrainFloorMsl = null;
     _grounded = false;
   }
 }

@@ -22,39 +22,30 @@ class PlaybackBar extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final state = ref.watch(replayProvider);
+    // Select only the fields the clock text + slider need so the outer row
+    // doesn't rebuild on every 50 ms positionMs tick. The two Tooltip-bearing
+    // buttons ([_PlayPauseButton] and [_SmoothingButton]) are leaf consumers
+    // that each subscribe to exactly the fields they render — this prevents
+    // their Tooltip overlay grafts from being re-created at ticker rate, which
+    // trips the Windows AXTree bridge (flutter/flutter#182444 family).
+    final duration = ref.watch(
+      replayProvider.select((s) => s.durationMs ?? 0),
+    );
+    final position = ref.watch(
+      replayProvider.select((s) => s.positionMs),
+    ).clamp(0, duration);
+    final isLoading = ref.watch(
+      replayProvider.select((s) => s.isLoading),
+    );
+    final speed = ref.watch(replayProvider.select((s) => s.speed));
     final controller = ref.read(replayProvider.notifier);
-
-    final duration = state.durationMs ?? 0;
-    final position = state.positionMs.clamp(0, duration);
-    final finished =
-        !state.playing && duration > 0 && state.positionMs >= duration;
-    // While a recording is decoding (play() in flight) the replay state is
-    // incomplete: no frames, no duration, no ticker. All transport actions
-    // must stay disabled until loading finishes. (The "Back to live" close
-    // action lives in the top-bar menu slot and is gated the same way.)
-    final isLoading = state.isLoading;
 
     return Row(
       children: [
         const _ReplayBadge(),
-        // At the end the transport becomes a restart affordance — toggle()
-        // seeks back to 0 when the recording is finished.
-        IconButton(
-          tooltip: finished
-              ? 'Replay from the start'
-              : (state.playing ? 'Pause' : 'Play'),
-          // toggle() keys off the live ticker, not just the last-published
-          // flag, so the button can never desync from actual playback.
-          onPressed: isLoading ? null : controller.toggle,
-          icon: Icon(
-            finished
-                ? Icons.replay
-                : (state.playing ? Icons.pause : Icons.play_arrow),
-            size: 20,
-            color: AppColors.pinkDeep,
-          ),
-        ),
+        // Isolated leaf consumer: rebuilds only when playing/finished/loading
+        // changes — not on every positionMs tick.
+        const _PlayPauseButton(),
         // Playhead clock (repaints ~20 Hz while playing) — display only.
         ExcludeSemantics(
           child: Text(
@@ -76,30 +67,101 @@ class PlaybackBar extends ConsumerWidget {
         ),
         const SizedBox(width: 4),
         _SpeedMenu(
-          speed: state.speed,
+          speed: speed,
           onSelect: controller.setSpeed,
           enabled: !isLoading,
         ),
-        // Replay-only 3D display smoothing (trail + rotation). The file,
-        // charts and map stay raw — this only changes how the 3D tiles paint.
-        // NOTE: the "Back to live" close action lives in the top-bar menu
-        // slot (same spot/size as the hamburger button), not in this row.
-        IconButton(
-          tooltip: state.smoothingEnabled
-              ? 'Display smoothing on (3D trail + rotation) — tap for raw'
-              : 'Display smoothing off — tap to smooth the 3D display',
-          onPressed: isLoading
-              ? null
-              : () => controller.setSmoothing(!state.smoothingEnabled),
-          icon: Icon(
-            Icons.blur_on,
-            size: 20,
-            color: state.smoothingEnabled
-                ? AppColors.pinkDeep
-                : AppColors.mutedForeground,
-          ),
-        ),
+        // Isolated leaf consumer: rebuilds only when smoothing/loading
+        // changes — not on every positionMs tick.
+        const _SmoothingButton(),
       ],
+    );
+  }
+}
+
+/// Play / Pause / Replay-from-start transport button.
+///
+/// Leaf consumer on `{isLoading, playing, positionMs, durationMs}` — the
+/// fields that determine which icon and tooltip to show. Kept out of the
+/// outer [PlaybackBar] build so its [Tooltip] overlay graft is only
+/// re-created when those fields change, not on every 50 ms ticker tick.
+///
+/// Wrapped in [Semantics] `container: true` to isolate its overlay graft on
+/// its own AXTree node (same mitigation as control_panel_tile / fsm_tile).
+class _PlayPauseButton extends ConsumerWidget {
+  const _PlayPauseButton();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final isLoading = ref.watch(replayProvider.select((s) => s.isLoading));
+    final playing = ref.watch(replayProvider.select((s) => s.playing));
+    final positionMs = ref.watch(replayProvider.select((s) => s.positionMs));
+    final durationMs = ref.watch(replayProvider.select((s) => s.durationMs));
+    final duration = durationMs ?? 0;
+    // At the end the transport becomes a restart affordance — toggle()
+    // seeks back to 0 when the recording is finished.
+    final finished = !playing && duration > 0 && positionMs >= duration;
+    final controller = ref.read(replayProvider.notifier);
+
+    // Semantics container: keeps this Tooltip's overlay graft on its own
+    // AXTree node so adjacent grafts don't collide (flutter/flutter#182444).
+    return Semantics(
+      container: true,
+      child: IconButton(
+        tooltip: finished
+            ? 'Replay from the start'
+            : (playing ? 'Pause' : 'Play'),
+        // toggle() keys off the live ticker, not just the last-published
+        // flag, so the button can never desync from actual playback.
+        onPressed: isLoading ? null : controller.toggle,
+        icon: Icon(
+          finished
+              ? Icons.replay
+              : (playing ? Icons.pause : Icons.play_arrow),
+          size: 20,
+          color: AppColors.pinkDeep,
+        ),
+      ),
+    );
+  }
+}
+
+/// Replay-only 3D display smoothing toggle.
+///
+/// Leaf consumer on `{isLoading, smoothingEnabled}` — rebuilds only when
+/// those fields change, not on every 50 ms positionMs tick. See
+/// [_PlayPauseButton] for the full rationale.
+class _SmoothingButton extends ConsumerWidget {
+  const _SmoothingButton();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final isLoading = ref.watch(replayProvider.select((s) => s.isLoading));
+    final smoothingEnabled = ref.watch(
+      replayProvider.select((s) => s.smoothingEnabled),
+    );
+    final controller = ref.read(replayProvider.notifier);
+
+    // Semantics container: same AXTree graft isolation as _PlayPauseButton.
+    // The "Back to live" close action lives in the top-bar menu slot (same
+    // spot/size as the hamburger button), not in this row.
+    return Semantics(
+      container: true,
+      child: IconButton(
+        tooltip: smoothingEnabled
+            ? 'Display smoothing on (3D trail + rotation) — tap for raw'
+            : 'Display smoothing off — tap to smooth the 3D display',
+        onPressed: isLoading
+            ? null
+            : () => controller.setSmoothing(!smoothingEnabled),
+        icon: Icon(
+          Icons.blur_on,
+          size: 20,
+          color: smoothingEnabled
+              ? AppColors.pinkDeep
+              : AppColors.mutedForeground,
+        ),
+      ),
     );
   }
 }

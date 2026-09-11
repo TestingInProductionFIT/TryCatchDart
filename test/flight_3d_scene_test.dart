@@ -390,4 +390,155 @@ void main() {
       expect(projectToScreen(eye - dir * 1.0, vp, size), isNull);
     });
   });
+
+  group('clipSegment2D', () {
+    const rect = Rect.fromLTRB(0, 0, 800, 600);
+
+    test('segment completely inside passes untouched', () {
+      final clipped = clipSegment2D(
+          const Offset(100, 100), const Offset(700, 500), rect);
+      expect(clipped, isNotNull);
+      expect(clipped!.$1, const Offset(100, 100));
+      expect(clipped.$2, const Offset(700, 500));
+    });
+
+    test('segment completely outside is rejected', () {
+      expect(
+          clipSegment2D(const Offset(-200, 100), const Offset(-50, 200), rect),
+          isNull);
+      expect(
+          clipSegment2D(const Offset(100, 700), const Offset(200, 900), rect),
+          isNull);
+    });
+
+    test('segment exiting screen is clipped to edge', () {
+      final clipped = clipSegment2D(
+          const Offset(400, 300), const Offset(400, 100000), rect);
+      expect(clipped, isNotNull);
+      expect(clipped!.$1, const Offset(400, 300));
+      expect(clipped.$2.dx, closeTo(400, 1e-6));
+      expect(clipped.$2.dy, closeTo(600, 1e-6));
+    });
+
+    test('degenerate and infinite coordinates return null without throwing', () {
+      expect(
+          clipSegment2D(
+              const Offset(double.nan, 0), const Offset(10, 10), rect),
+          isNull);
+      expect(
+          clipSegment2D(
+              const Offset(double.infinity, 0), const Offset(10, 10), rect),
+          isNull);
+    });
+  });
+
+  group('vertical camera stability & drop line', () {
+    test('looking straight up produces valid view matrix without NaNs', () {
+      final cam = flightCameraFromEyeTarget(
+        eye: Vector3(0, 0, 0),
+        target: Vector3(0, 1000, 0),
+        dist: 1000,
+        fovY: flightFovY,
+        aspect: 800 / 600,
+        lightDir: Vector3(0, 1, 0),
+      );
+      for (final v in cam.view.storage) {
+        expect(v.isNaN, isFalse);
+        expect(v.isInfinite, isFalse);
+      }
+      for (final v in cam.vp.storage) {
+        expect(v.isNaN, isFalse);
+        expect(v.isInfinite, isFalse);
+      }
+    });
+
+    test('looking straight down produces valid view matrix without NaNs', () {
+      final cam = flightCameraFromEyeTarget(
+        eye: Vector3(0, 1000, 0),
+        target: Vector3(0, 0, 0),
+        dist: 1000,
+        fovY: flightFovY,
+        aspect: 800 / 600,
+        lightDir: Vector3(0, 1, 0),
+      );
+      for (final v in cam.view.storage) {
+        expect(v.isNaN, isFalse);
+        expect(v.isInfinite, isFalse);
+      }
+    });
+
+    test('pad camera looking straight up at ascending rocket clips drop line safely', () {
+      // Pad camera: eye at (22, 3, 38), rocket at (0, 1000, 0)
+      final eye = Vector3(22, 3, 38);
+      final rocket = Vector3(0, 1000, 0);
+      final ground = Vector3(0, 0, 0);
+      final cam = flightCameraFromEyeTarget(
+        eye: eye,
+        target: rocket,
+        dist: 1000,
+        fovY: flightFovY,
+        aspect: 800 / 600,
+        lightDir: Vector3(0, 1, 0),
+      );
+
+      // Rocket projects near center of screen
+      final rScreen = projectToScreen(rocket, cam.vp, const Size(800, 600))!;
+      expect(rScreen.dx, inInclusiveRange(300, 500));
+      expect(rScreen.dy, inInclusiveRange(200, 400));
+
+      // Ground is behind camera (projectToScreen returns null)
+      expect(projectToScreen(ground, cam.vp, const Size(800, 600)), isNull);
+
+      // drawWorldSegment clipping produces line that terminates at screen margin,
+      // never wrapping around from top to bottom
+      final ca = cam.vp.transformed(Vector4(rocket.x, rocket.y, rocket.z, 1));
+      var cb = cam.vp.transformed(Vector4(ground.x, ground.y, ground.z, 1));
+      expect(cb.w, lessThanOrEqualTo(0));
+
+      // Near clip line
+      final denom = ca.w - cb.w;
+      final t = ((clipEps - cb.w) / denom).clamp(0.0, 1.0);
+      cb = cb * (1 - t) + ca * t;
+      final pa = Offset(
+        (ca.x / ca.w * 0.5 + 0.5) * 800,
+        (0.5 - ca.y / ca.w * 0.5) * 600,
+      );
+      final pb = Offset(
+        (cb.x / cb.w * 0.5 + 0.5) * 800,
+        (0.5 - cb.y / cb.w * 0.5) * 600,
+      );
+
+      final clipped = clipSegment2D(
+          pa, pb, Rect.fromLTRB(-64, -64, 800 + 64, 600 + 64));
+      expect(clipped, isNotNull);
+      // Clipped endpoint must be within screen bounds + safe margin
+      expect(clipped!.$1.dx, inInclusiveRange(-64, 864));
+      expect(clipped.$1.dy, inInclusiveRange(-64, 664));
+      expect(clipped.$2.dx, inInclusiveRange(-64, 864));
+      expect(clipped.$2.dy, inInclusiveRange(-64, 664));
+    });
+
+    test('clampEyeAboveTerrain on steep hill maintains safe pitch <= 80 deg', () {
+      final cam = flightCameraFromEyeTarget(
+        eye: Vector3(0, 10, 5),
+        target: Vector3(0, 10, 0),
+        dist: 5,
+        fovY: flightFovY,
+        aspect: 800 / 600,
+        lightDir: Vector3(0, 1, 0),
+      );
+      // Hill pushes eye 50m above target
+      final clamped = clampEyeAboveTerrain(cam, 60.0);
+      expect(clamped.eye.y, 60.0);
+
+      final forward = clamped.target - clamped.eye;
+      final horiz = math.sqrt(forward.x * forward.x + forward.z * forward.z);
+      final pitchDeg = math.atan2(-forward.y, horiz) * 180 / math.pi;
+      // Must be capped at <= 80° (safe from 90° gimbal singularity)
+      expect(pitchDeg, lessThanOrEqualTo(80.5));
+      for (final v in clamped.view.storage) {
+        expect(v.isNaN, isFalse);
+      }
+    });
+  });
 }

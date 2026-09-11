@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
 
+import './core/app_config.dart';
 import './ui/screens/app_shell.dart';
 import './state/telemetry_provider.dart';
 import './theme/app_colors.dart';
@@ -22,8 +23,8 @@ void main() async {
   final worker = await SerialWorker.spawn();
 
   const windowOptions = WindowOptions(
-    size: Size(1280, 800),
-    minimumSize: Size(1024, 600),
+    size: Size(AppConfig.windowInitialWidth, AppConfig.windowInitialHeight),
+    minimumSize: Size(AppConfig.windowMinWidth, AppConfig.windowMinHeight),
     center: true,
     title: 'TryCatch',
   );

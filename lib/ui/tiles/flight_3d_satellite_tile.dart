@@ -485,8 +485,10 @@ class SatFlightPainter extends CustomPainter {
 
       if (w > drapeClipEps) {
         positions[k] = Offset(
-          (cx[k] / w * 0.5 + 0.5) * size.width,
-          (0.5 - cy[k] / w * 0.5) * size.height,
+          ((cx[k] / w * 0.5 + 0.5) * size.width)
+              .clamp(-4000.0, size.width + 4000.0),
+          ((0.5 - cy[k] / w * 0.5) * size.height)
+              .clamp(-4000.0, size.height + 4000.0),
         );
         final a = meshAlpha[k];
         if (s == lastB && a == lastA) {
@@ -507,8 +509,10 @@ class SatFlightPainter extends CustomPainter {
       final idx = positions.length;
       final w = v.c.w;
       positions.add(Offset(
-        (v.c.x / w * 0.5 + 0.5) * size.width,
-        (0.5 - v.c.y / w * 0.5) * size.height,
+        ((v.c.x / w * 0.5 + 0.5) * size.width)
+            .clamp(-4000.0, size.width + 4000.0),
+        ((0.5 - v.c.y / w * 0.5) * size.height)
+            .clamp(-4000.0, size.height + 4000.0),
       ));
       uvs.add(Offset(v.u, v.v));
       colors.add(_shadeColor(v.shade, v.alpha));
@@ -640,6 +644,11 @@ class SatFlightPainter extends CustomPainter {
             pd.dy > size.height) {
           return;
         }
+      } else if (wa <= drapeClipEps &&
+          wb <= drapeClipEps &&
+          wc <= drapeClipEps &&
+          wd <= drapeClipEps) {
+        return;
       }
       emitTri(a, b, d);
       emitTri(a, d, c);

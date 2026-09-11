@@ -6,6 +6,8 @@ import 'package:flutter/foundation.dart' show consolidateHttpClientResponseBytes
 import 'package:flutter_map/flutter_map.dart'
     show BuiltInMapCachingProvider, CachedMapTileMetadata;
 
+import '../../../../core/app_config.dart';
+
 /// Shared Esri tile I/O for the 2D map and the 3D satellite drape: URL
 /// builders, single-shot downloads and the shared flutter_map disk cache.
 ///
@@ -13,10 +15,14 @@ import 'package:flutter_map/flutter_map.dart'
 /// (`satellite_ground.dart`) go through here, so the User-Agent, timeouts,
 /// image validation and cache TTL can't drift apart.
 
-const String tileUserAgent = 'dev.trycatch.groundstation';
+const String tileUserAgent = AppConfig.tileUserAgent;
 
 const String streetAttribution = '© Esri, OpenStreetMap contributors';
 const String satelliteAttribution = 'Imagery © Esri';
+
+/// Esri tile URL template for flutter_map (`{z}/{y}/{x}`).
+String esriTileUrlTemplate(String style) =>
+    'https://server.arcgisonline.com/ArcGIS/rest/services/$style/MapServer/tile/{z}/{y}/{x}';
 
 /// Esri tile URL for a map style (`World_Street_Map` / `World_Imagery`).
 String esriTileUrl(String style, int x, int y, int z) =>
@@ -36,11 +42,11 @@ Future<Uint8List?> fetchTileBytes(Uri url, {HttpClient? client}) async {
   final owned = client == null;
   final http = client ?? HttpClient();
   try {
-    http.connectionTimeout = const Duration(seconds: 8);
+    http.connectionTimeout = AppConfig.tileConnectionTimeout;
     final request = await http.getUrl(url);
     request.headers.set('User-Agent', tileUserAgent);
     final response =
-        await request.close().timeout(const Duration(seconds: 10));
+        await request.close().timeout(AppConfig.tileResponseTimeout);
     if (response.statusCode != 200) return null;
     final bytes = await consolidateHttpClientResponseBytes(response);
     return bytes.isEmpty ? null : bytes;
@@ -103,7 +109,7 @@ Future<void> putTileCached(String url, Uint8List bytes) async {
     await cache.putTile(
       url: url,
       metadata: CachedMapTileMetadata(
-        staleAt: DateTime.timestamp().add(const Duration(days: 30)),
+        staleAt: DateTime.timestamp().add(AppConfig.tileCacheTtl),
         lastModified: null,
         etag: null,
       ),

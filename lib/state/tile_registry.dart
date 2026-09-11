@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import './layout_tree.dart';
+import './default_layouts.dart';
 import '../ui/tiles/acceleration_chart_tile.dart';
 import '../ui/tiles/altitude_chart_tile.dart';
 import '../ui/tiles/battery_chart_tile.dart';
@@ -20,6 +20,21 @@ import '../ui/tiles/events_tile.dart';
 import '../ui/tiles/stats_tile.dart';
 import '../ui/tiles/velocity_chart_tile.dart';
 import './workspace_models.dart';
+
+/// Broad category used by the tile picker's filter chips.
+enum TileCategory {
+  views,
+  charts,
+  sensors,
+  control;
+
+  String get label => switch (this) {
+        TileCategory.views => 'Views',
+        TileCategory.charts => 'Charts',
+        TileCategory.sensors => 'Sensors',
+        TileCategory.control => 'Control',
+      };
+}
 
 /// Data-driven description of a dashboard tile type.
 ///
@@ -47,6 +62,9 @@ class TileDescriptor {
   /// strip stays).
   final bool immersive;
 
+  /// Category for the tile-picker filter chips.
+  final TileCategory category;
+
   final WidgetBuilder builder;
 
   const TileDescriptor({
@@ -56,9 +74,11 @@ class TileDescriptor {
     required this.icon,
     required this.minSize,
     this.immersive = false,
+    required this.category,
     required this.builder,
   });
 }
+
 
 /// All dashboard tile types and the default workspace layouts.
 abstract final class TileRegistry {
@@ -70,6 +90,7 @@ abstract final class TileRegistry {
       icon: Icons.rocket_launch_outlined,
       minSize: const Size(150, 110),
       immersive: true,
+      category: TileCategory.views,
       builder: (context) => Rocket3dTile(),
     ),
     TileDescriptor(
@@ -79,6 +100,7 @@ abstract final class TileRegistry {
       icon: Icons.map_outlined,
       minSize: const Size(150, 110),
       immersive: true,
+      category: TileCategory.views,
       builder: (context) => MapTile(),
     ),
     TileDescriptor(
@@ -88,6 +110,7 @@ abstract final class TileRegistry {
       icon: Icons.view_in_ar_outlined,
       minSize: const Size(170, 120),
       immersive: true,
+      category: TileCategory.views,
       builder: (context) => Flight3dTile(),
     ),
     TileDescriptor(
@@ -97,6 +120,7 @@ abstract final class TileRegistry {
       icon: Icons.satellite_alt_outlined,
       minSize: const Size(170, 120),
       immersive: true,
+      category: TileCategory.views,
       builder: (context) => Flight3dSatelliteTile(),
     ),
     TileDescriptor(
@@ -105,6 +129,7 @@ abstract final class TileRegistry {
       description: 'GPS position with copy',
       icon: Icons.place_outlined,
       minSize: const Size(130, 80),
+      category: TileCategory.sensors,
       builder: (context) => StatsTile(),
     ),
     TileDescriptor(
@@ -113,6 +138,7 @@ abstract final class TileRegistry {
       description: 'Estimated position during packet loss (live only)',
       icon: Icons.explore_outlined,
       minSize: const Size(130, 80),
+      category: TileCategory.sensors,
       builder: (context) => DeadReckoningTile(),
     ),
     TileDescriptor(
@@ -121,6 +147,7 @@ abstract final class TileRegistry {
       description: 'Peak barometric altitude this session',
       icon: Icons.arrow_upward,
       minSize: const Size(110, 64),
+      category: TileCategory.sensors,
       builder: (context) => MaxAltitudeTile(),
     ),
     TileDescriptor(
@@ -129,6 +156,7 @@ abstract final class TileRegistry {
       description: 'Flight extremes: ascent, descent, speed, acceleration (+ replay drift/altitude)',
       icon: Icons.emoji_events_outlined,
       minSize: const Size(140, 80),
+      category: TileCategory.charts,
       builder: (context) => HighlightsTile(),
     ),
     TileDescriptor(
@@ -137,6 +165,7 @@ abstract final class TileRegistry {
       description: 'Barometric altitude over time',
       icon: Icons.show_chart,
       minSize: const Size(130, 70),
+      category: TileCategory.charts,
       builder: (context) => AltitudeChartTile(),
     ),
     TileDescriptor(
@@ -145,6 +174,7 @@ abstract final class TileRegistry {
       description: 'Horizontal, vertical and total speed',
       icon: Icons.speed_outlined,
       minSize: const Size(130, 70),
+      category: TileCategory.charts,
       builder: (context) => VelocityChartTile(),
     ),
     TileDescriptor(
@@ -153,6 +183,7 @@ abstract final class TileRegistry {
       description: 'Vertical and total acceleration',
       icon: Icons.trending_up,
       minSize: const Size(130, 70),
+      category: TileCategory.charts,
       builder: (context) => AccelerationChartTile(),
     ),
     TileDescriptor(
@@ -161,6 +192,7 @@ abstract final class TileRegistry {
       description: 'Battery voltage over time',
       icon: Icons.battery_charging_full_outlined,
       minSize: const Size(130, 70),
+      category: TileCategory.charts,
       builder: (context) => BatteryChartTile(),
     ),
     TileDescriptor(
@@ -169,6 +201,7 @@ abstract final class TileRegistry {
       description: 'Flight software state and timeline',
       icon: Icons.account_tree_outlined,
       minSize: const Size(150, 120),
+      category: TileCategory.views,
       builder: (context) => FsmTile(),
     ),
     TileDescriptor(
@@ -177,6 +210,7 @@ abstract final class TileRegistry {
       description: 'Flight milestones: launch, apogee, parachute, touchdown',
       icon: Icons.flag_outlined,
       minSize: const Size(140, 90),
+      category: TileCategory.views,
       builder: (context) => EventsTile(),
     ),
     TileDescriptor(
@@ -185,6 +219,7 @@ abstract final class TileRegistry {
       description: 'Nose-cone lock state',
       icon: Icons.lock_outlined,
       minSize: const Size(110, 64),
+      category: TileCategory.sensors,
       builder: (context) => NoseconeTile(),
     ),
     TileDescriptor(
@@ -193,6 +228,7 @@ abstract final class TileRegistry {
       description: 'Breakaway wire sensor readout',
       icon: Icons.sensors_outlined,
       minSize: const Size(130, 70),
+      category: TileCategory.sensors,
       builder: (context) => HallSensorTile(),
     ),
     TileDescriptor(
@@ -201,6 +237,7 @@ abstract final class TileRegistry {
       description: 'Undecodable traffic on this frequency',
       icon: Icons.wifi_tethering_outlined,
       minSize: const Size(140, 80),
+      category: TileCategory.sensors,
       builder: (context) => ChannelHealthTile(),
     ),
     TileDescriptor(
@@ -209,9 +246,11 @@ abstract final class TileRegistry {
       description: 'Two-click commands to the rocket',
       icon: Icons.gamepad_outlined,
       minSize: const Size(190, 110),
+      category: TileCategory.control,
       builder: (context) => ControlPanelTile(),
     ),
   ];
+
 
   static TileDescriptor? byId(String id) {
     for (final d in all) {
@@ -235,156 +274,9 @@ abstract final class TileRegistry {
     );
   }
 
-  /// Factory layouts — snapshot of the user's arranged workspaces
-  /// (Flight control, Pre-flight check, Recovery, Replay), promoted to
-  /// defaults. Ratios/orientations are preserved verbatim; ids are fresh
-  /// via [GridIds.next] at construction time.
-  static Workspace defaultFlightLayout() => Workspace(
-    id: GridIds.next(),
-    name: 'Flight control',
-    root: SplitNode(
-      vertical: false,
-      ratio: 0.6505319148936172,
-      a: SplitNode(
-        vertical: false,
-        ratio: 0.6330814441645675,
-        a: SplitNode(
-          vertical: true,
-          ratio: 0.5,
-          a: LeafNode(tileId: GridIds.next(), tileType: 'rocket_3d'),
-          b: LeafNode(tileId: GridIds.next(), tileType: 'map'),
-        ),
-        b: SplitNode(
-          vertical: true,
-          ratio: 0.46879258653584105,
-          a: SplitNode(
-            vertical: true,
-            ratio: 0.8007246376811616,
-            a: LeafNode(tileId: GridIds.next(), tileType: 'highlights'),
-            b: SplitNode(
-              vertical: false,
-              ratio: 0.5,
-              a: LeafNode(tileId: GridIds.next(), tileType: 'max_alt'),
-              b: LeafNode(tileId: GridIds.next(), tileType: 'nosecone'),
-            ),
-          ),
-          b: SplitNode(
-            vertical: true,
-            ratio: 0.2939632545931769,
-            a: SplitNode(
-              vertical: false,
-              ratio: 0.5,
-              a: LeafNode(tileId: GridIds.next(), tileType: 'altitude_chart'),
-              b: LeafNode(tileId: GridIds.next(), tileType: 'velocity_chart'),
-            ),
-            b: LeafNode(tileId: GridIds.next(), tileType: 'altitude_chart'),
-          ),
-        ),
-      ),
-      b: SplitNode(
-        vertical: true,
-        ratio: 0.5,
-        a: LeafNode(tileId: GridIds.next(), tileType: 'fsm'),
-        b: LeafNode(tileId: GridIds.next(), tileType: 'control_panel'),
-      ),
-    ),
-  );
-
-  /// Secondary default workspace for pre-launch checks.
-  static Workspace defaultPrepLayout() => Workspace(
-    id: GridIds.next(),
-    name: 'Pre-flight check',
-    root: SplitNode(
-      vertical: false,
-      ratio: 0.5239361702127658,
-      a: SplitNode(
-        vertical: false,
-        ratio: 0.5,
-        a: SplitNode(
-          vertical: true,
-          ratio: 0.5,
-          a: SplitNode(
-            vertical: true,
-            ratio: 0.15004179437169118,
-            a: LeafNode(tileId: GridIds.next(), tileType: 'hall_sensor'),
-            b: LeafNode(tileId: GridIds.next(), tileType: 'hall_sensor'),
-          ),
-          b: SplitNode(
-            vertical: true,
-            ratio: 0.18793535803845174,
-            a: LeafNode(tileId: GridIds.next(), tileType: 'battery_chart'),
-            b: LeafNode(tileId: GridIds.next(), tileType: 'battery_chart'),
-          ),
-        ),
-        b: SplitNode(
-          vertical: true,
-          ratio: 0.5,
-          a: LeafNode(tileId: GridIds.next(), tileType: 'nosecone'),
-          b: LeafNode(tileId: GridIds.next(), tileType: 'channel_health'),
-        ),
-      ),
-      b: SplitNode(
-        vertical: true,
-        ratio: 0.4989845171840794,
-        a: LeafNode(tileId: GridIds.next(), tileType: 'fsm'),
-        b: LeafNode(tileId: GridIds.next(), tileType: 'control_panel'),
-      ),
-    ),
-  );
-
-  /// Recovery workspace: GPS + dead-reckoning positions on the left, map
-  /// below them, satellite 3D on the right.
-  static Workspace defaultRecoveryLayout() => Workspace(
-    id: GridIds.next(),
-    name: 'Recovery',
-    root: SplitNode(
-      vertical: false,
-      ratio: 0.5,
-      a: SplitNode(
-        vertical: true,
-        ratio: 0.26996456800217977,
-        a: SplitNode(
-          vertical: false,
-          ratio: 0.5,
-          a: LeafNode(tileId: GridIds.next(), tileType: 'stats'),
-          b: LeafNode(tileId: GridIds.next(), tileType: 'dead_reckoning'),
-        ),
-        b: LeafNode(tileId: GridIds.next(), tileType: 'map'),
-      ),
-      b: LeafNode(tileId: GridIds.next(), tileType: 'flight_3d_sat'),
-    ),
-  );
-
-  /// Replay workspace: satellite 3D on the left, charts + highlights on the
-  /// right.
-  static Workspace defaultReplayLayout() => Workspace(
-    id: GridIds.next(),
-    name: 'Replay',
-    root: SplitNode(
-      vertical: false,
-      ratio: 0.530851063829787,
-      a: LeafNode(tileId: GridIds.next(), tileType: 'flight_3d_sat'),
-      b: SplitNode(
-        vertical: false,
-        ratio: 0.5020102109026083,
-        a: SplitNode(
-          vertical: true,
-          ratio: 0.6929681112019618,
-          a: SplitNode(
-            vertical: true,
-            ratio: 0.4969224962877054,
-            a: LeafNode(tileId: GridIds.next(), tileType: 'altitude_chart'),
-            b: LeafNode(tileId: GridIds.next(), tileType: 'velocity_chart'),
-          ),
-          b: LeafNode(tileId: GridIds.next(), tileType: 'acceleration_chart'),
-        ),
-        b: SplitNode(
-          vertical: true,
-          ratio: 0.4969224962877054,
-          a: LeafNode(tileId: GridIds.next(), tileType: 'highlights'),
-          b: LeafNode(tileId: GridIds.next(), tileType: 'map'),
-        ),
-      ),
-    ),
-  );
+  /// Factory layouts — delegates to [DefaultLayouts].
+  static Workspace defaultFlightLayout() => DefaultLayouts.flight();
+  static Workspace defaultPrepLayout() => DefaultLayouts.prep();
+  static Workspace defaultRecoveryLayout() => DefaultLayouts.recovery();
+  static Workspace defaultReplayLayout() => DefaultLayouts.replay();
 }

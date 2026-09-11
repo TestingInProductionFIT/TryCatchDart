@@ -1,6 +1,7 @@
 import 'dart:ui' show Size;
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:trycatch/state/default_layouts.dart';
 import 'package:trycatch/state/layout_tree.dart';
 import 'package:trycatch/state/tile_registry.dart';
 import 'package:trycatch/state/workspace_models.dart';
@@ -169,6 +170,14 @@ void main() {
           _minOf,
         );
         expect(result.leafRects.length, ws.root!.leaves.length);
+      }
+    });
+
+    test('DefaultLayouts.all() returns all configured default workspaces', () {
+      final all = DefaultLayouts.all();
+      expect(all, isNotEmpty);
+      for (final ws in all) {
+        expect(ws.name, isNotEmpty);
       }
     });
   });

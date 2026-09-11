@@ -616,6 +616,114 @@ LayoutNode? swapLeaves(LayoutNode? root, String tileId, String otherId) {
   return replace(root);
 }
 
+// ── Directional splits + merge (pure) ────────────────────────────────────────
+
+/// Which child subtree to keep when collapsing a split.
+enum KeepSide { a, b }
+
+/// The edge relative to an existing leaf where a new tile is inserted.
+enum SplitDirection { left, right, top, bottom }
+
+/// Returns the leaf tile-ids belonging to each child of the split [nodeId].
+/// Returns empty sets when [nodeId] is not found — used by the group-highlight
+/// overlay to tint tiles that share a divider.
+({Set<String> a, Set<String> b}) splitGroupLeaves(
+  LayoutNode? root,
+  String nodeId,
+) {
+  if (root == null) return (a: {}, b: {});
+  if (root is SplitNode) {
+    if (root.id == nodeId) {
+      return (
+        a: root.a.leaves.map((l) => l.tileId).toSet(),
+        b: root.b.leaves.map((l) => l.tileId).toSet(),
+      );
+    }
+    final inA = splitGroupLeaves(root.a, nodeId);
+    if (inA.a.isNotEmpty || inA.b.isNotEmpty) return inA;
+    return splitGroupLeaves(root.b, nodeId);
+  }
+  return (a: {}, b: {});
+}
+
+/// Collapses the split [nodeId], keeping the [keepSide] subtree and
+/// discarding the other. Returns [root] unchanged when [nodeId] is not found.
+LayoutNode mergeAtDivider(LayoutNode root, String nodeId, KeepSide keepSide) {
+  if (root is SplitNode) {
+    if (root.id == nodeId) return keepSide == KeepSide.a ? root.a : root.b;
+    final newA = mergeAtDivider(root.a, nodeId, keepSide);
+    if (!identical(newA, root.a)) return root.withChildren(a: newA);
+    final newB = mergeAtDivider(root.b, nodeId, keepSide);
+    if (!identical(newB, root.b)) return root.withChildren(b: newB);
+  }
+  return root;
+}
+
+/// Inserts a new leaf ([tileType] / [newId]) directly beside [targetId] in
+/// the given [direction].
+///   left / right  → side-by-side split (vertical: false)
+///   top  / bottom → stacked split       (vertical: true)
+/// No-op (returns [root] unchanged) when [targetId] is not in the tree.
+LayoutNode insertBesideLeaf(
+  LayoutNode root,
+  String targetId,
+  SplitDirection direction,
+  String tileType,
+  String newId,
+) {
+  if (root is LeafNode) {
+    if (root.tileId != targetId) return root;
+    final newLeaf = LeafNode(tileId: newId, tileType: tileType);
+    final vertical =
+        direction == SplitDirection.top || direction == SplitDirection.bottom;
+    final newFirst =
+        direction == SplitDirection.left || direction == SplitDirection.top;
+    return SplitNode(
+      vertical: vertical,
+      ratio: 0.5,
+      a: newFirst ? newLeaf : root,
+      b: newFirst ? root : newLeaf,
+    );
+  }
+  if (root is SplitNode) {
+    final newA =
+        insertBesideLeaf(root.a, targetId, direction, tileType, newId);
+    if (!identical(newA, root.a)) return root.withChildren(a: newA);
+    final newB =
+        insertBesideLeaf(root.b, targetId, direction, tileType, newId);
+    if (!identical(newB, root.b)) return root.withChildren(b: newB);
+  }
+  return root;
+}
+
+/// Removes [sourceId] from the tree and re-inserts it beside [targetId] in
+/// [direction]. This is the "restructure drag" operation.
+/// No-ops: source == target, source is the sole leaf, target not found.
+LayoutNode moveLeafBeside(
+  LayoutNode root,
+  String sourceId,
+  String targetId,
+  SplitDirection direction,
+) {
+  if (sourceId == targetId) return root;
+  LeafNode? source;
+  void findSource(LayoutNode n) {
+    if (n is LeafNode && n.tileId == sourceId) {
+      source = n;
+    } else if (n is SplitNode) {
+      findSource(n.a);
+      findSource(n.b);
+    }
+  }
+  findSource(root);
+  if (source == null) return root;
+  final afterRemove = removeLeaf(root, sourceId);
+  if (afterRemove == null) return root; // sole leaf — can't leave the tree empty
+  return insertBesideLeaf(
+    afterRemove, targetId, direction, source!.tileType, source!.tileId,
+  );
+}
+
 // ── Factory ──────────────────────────────────────────────────────────────────
 
 /// Builds a balanced alternating tree from an ordered tile list — used as

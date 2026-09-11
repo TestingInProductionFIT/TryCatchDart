@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:serial/serial.dart';
 
 import './launch_site_store.dart';
+import '../core/app_config.dart';
 import '../core/channel_health.dart';
 import '../core/flight_events.dart';
 import './telemetry_store.dart';
@@ -141,7 +142,7 @@ final replayFlightEventsProvider = Provider<List<FlightEvent>>((ref) {
 
 class ReplayController extends Notifier<ReplayState> {
   /// Speed presets offered in the UI.
-  static const List<double> speeds = [0.5, 1, 4, 20];
+  static const List<double> speeds = AppConfig.replaySpeeds;
 
   List<TelemetryPacket> _packets = const [];
   int _index = 0;
@@ -301,7 +302,10 @@ class ReplayController extends Notifier<ReplayState> {
     // `playing` is healed — resume always converges on ticking playback.
     _ticker?.cancel();
     _lastTickMs = DateTime.now().millisecondsSinceEpoch;
-    _ticker = Timer.periodic(const Duration(milliseconds: 50), (_) => _tick());
+    _ticker = Timer.periodic(
+      const Duration(milliseconds: AppConfig.replayTickMs),
+      (_) => _tick(),
+    );
     if (!state.playing) {
       state = state.copyWith(playing: true);
     }

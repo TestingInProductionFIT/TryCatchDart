@@ -12,20 +12,6 @@ import '../../theme/app_colors.dart';
 import '../components/centered_stat.dart';
 import '../components/waiting_for_data.dart';
 
-/// Wire bytes for requesting an FSM state from the rocket.
-///
-/// Same framing as the control panel ([RocketCommands]): `0x54 0x43` magic
-/// ('TC') + command byte + argument byte. The argument carries the target
-/// [FsmState.id]; `0x07` is the made-up "set FSM state" command and must
-/// match the flight software.
-abstract final class FsmStateCommands {
-  static const magicT = 0x54;
-  static const magicC = 0x43;
-  static const setStateCmd = 0x07;
-
-  static List<int> bytesFor(FsmState state) =>
-      [magicT, magicC, setStateCmd, state.id];
-}
 
 /// Flight-software state machine view.
 ///

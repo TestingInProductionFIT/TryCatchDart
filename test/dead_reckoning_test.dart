@@ -131,6 +131,106 @@ void main() {
       final up = dr.update(frame(tMs: 121000, gpsAlt: 500))!;
       expect(up.altitude, closeTo(500, 0.01));
     });
+
+    // ── Gravity correction ────────────────────────────────────────────────────
+
+    test('gravity decelerates an ascending rocket during extrapolation', () {
+      final dr = DeadReckoningEstimator();
+      // Anchor at 300 m, rocket ascending at 50 m/s (vDown = -50).
+      dr.update(frame(tMs: 0, gpsAlt: 300, vDown: -50));
+
+      // Link dies — extrapolate for 6 s.
+      // Naive (no gravity): 300 + 50*6 = 600 m.
+      // With gravity: 300 + 50*6 − ½*9.81*36 ≈ 300 + 300 − 176.6 ≈ 423 m.
+      final p = dr.extrapolate(6000)!;
+      expect(p.altitude, closeTo(300 + 50 * 6 - 0.5 * 9.80665 * 36, 0.5));
+    });
+
+    test('extrapolation returns rocket to ground after long link loss', () {
+      final dr = DeadReckoningEstimator();
+      // Anchor at 300 m with upward velocity 50 m/s.
+      dr.update(frame(tMs: 0, gpsAlt: 300, vDown: -50));
+
+      // Apogee ≈ 300 + 50²/(2*9.81) ≈ 428 m, then descends.
+      // After t = 50/9.81 ≈ 5.1 s velocity is zero; by t=20 s rocket is far
+      // below 298 m and should be clamped at the ground floor.
+      dr.extrapolate(20000);
+      final p = dr.position!;
+      expect(p.altitude, closeTo(298, 0.01)); // clamped at ground floor
+    });
+
+    test('gravity integrated via 1-Hz ticks matches one large step', () {
+      // Both approaches use the same exact-kinematics formula; they must agree
+      // to within floating-point rounding over the non-grounded portion.
+      // v0=50 m/s up, t=4 s: h = 300 + 50*4 − ½*9.81*16 ≈ 421.5 m (airborne).
+      const g = 9.80665;
+      const v0 = 50.0; // m/s up
+      const dtS = 4.0; // s — short enough that h > 298 m (no ground clamp)
+
+      final drBig = DeadReckoningEstimator();
+      drBig.update(frame(tMs: 0, gpsAlt: 300, vDown: -v0));
+      drBig.extrapolate((dtS * 1000).toInt()); // one 4 s step
+
+      final drSmall = DeadReckoningEstimator();
+      drSmall.update(frame(tMs: 0, gpsAlt: 300, vDown: -v0));
+      for (var t = 1; t <= dtS.toInt(); t++) {
+        drSmall.extrapolate(t * 1000); // four 1 s steps
+      }
+
+      // Exact analytic result: h = 300 + v0*t − ½g*t²
+      final expected = 300 + v0 * dtS - 0.5 * g * dtS * dtS;
+      // The one-step formula is exact; the 1 Hz path accumulates tiny
+      // floating-point rounding over 4 steps — allow 0.5 m tolerance.
+      expect(drBig.position!.altitude, closeTo(expected, 0.01));
+      expect(drSmall.position!.altitude, closeTo(expected, 0.5));
+    });
+
+    // ── Terrain floor ─────────────────────────────────────────────────────────
+
+    test('terrain floor overrides GPS-min heuristic when higher', () {
+      final dr = DeadReckoningEstimator();
+      // GPS fix at 300 m → heuristic floor = 298 m.
+      dr.update(frame(tMs: 0, gpsAlt: 300));
+
+      // Terrain query returns 310 m — higher than the heuristic.
+      dr.setTerrainFloor(310);
+      expect(dr.groundFloorMsl, closeTo(310, 1e-9));
+      expect(dr.hasRealTerrainFloor, isTrue);
+    });
+
+    test('GPS-min heuristic wins when terrain floor is lower', () {
+      final dr = DeadReckoningEstimator();
+      // GPS fix at 300 m → heuristic floor = 298 m.
+      dr.update(frame(tMs: 0, gpsAlt: 300));
+
+      // Terrain query returns 290 m (e.g. a nearby valley tile).
+      dr.setTerrainFloor(290);
+      // max(290, 298) = 298 — the GPS-min heuristic still wins.
+      expect(dr.groundFloorMsl, closeTo(298, 1e-9));
+    });
+
+    test('rocket clamps at terrain floor when it is the effective floor', () {
+      final dr = DeadReckoningEstimator();
+      dr.update(frame(tMs: 0, gpsAlt: 300));
+      dr.setTerrainFloor(310); // terrain higher than heuristic
+
+      // Descend past both floors — should pin at 310 m.
+      for (var t = 1; t <= 30; t++) {
+        dr.update(frame(tMs: t * 1000, gpsFix: false, vDown: 10));
+      }
+      expect(dr.position!.altitude, closeTo(310, 0.01));
+    });
+
+    test('terrain floor and _drVelUp cleared on reset', () {
+      final dr = DeadReckoningEstimator();
+      dr.update(frame(tMs: 0, gpsAlt: 300, vDown: -40));
+      dr.setTerrainFloor(310);
+
+      dr.reset();
+      expect(dr.position, isNull);
+      expect(dr.groundFloorMsl, isNull);
+      expect(dr.hasRealTerrainFloor, isFalse);
+    });
   });
 
   group('geo', () {

@@ -3,7 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:serial/serial.dart';
 import 'package:trycatch/core/flight_events.dart';
 import 'package:trycatch/ui/components/flight_event_style.dart';
-import 'package:trycatch/ui/screens/recordings_screen.dart';
+import 'package:trycatch/ui/screens/trim_chart.dart';
 
 TelemetryFrame _frame(int atMs, FsmState state) =>
     TelemetryFrame(receivedAtMs: atMs, fsmStateId: state.id);

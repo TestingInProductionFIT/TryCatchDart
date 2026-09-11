@@ -3,8 +3,10 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:serial/serial.dart';
 
+import '../core/app_config.dart';
 import '../core/ring_buffer.dart';
 import '../core/dead_reckoning.dart';
+import './elevation_service.dart';
 import './telemetry_provider.dart';
 
 /// Aggregate of everything the dashboard knows about the current flight.
@@ -95,26 +97,34 @@ final telemetryStoreProvider =
     NotifierProvider<TelemetryStore, TelemetryState>(TelemetryStore.new);
 
 class TelemetryStore extends Notifier<TelemetryState> {
-  static const int _historyCapacity = 9000; // ~15 min @ 10 Hz
+  static const int _historyCapacity = AppConfig.telemetryHistoryCapacity;
 
-  /// Dead reckoning kicks in only after GPS has been silent this long, and
-  /// then updates at most once per second. Tiles reuse it to decide when
-  /// the link (as opposed to just the GPS fix) has gone stale.
-  static const int drStaleMs = 1000;
+  /// Dead reckoning kicks in only after GPS has been silent this long.
+  /// Tiles reuse it to decide when the link (as opposed to just the GPS fix)
+  /// has gone stale.
+  static const int drStaleMs = AppConfig.drStaleMs;
+
+  /// Interval between dead-reckoning points/ticks.
+  static const int drUpdateIntervalMs = AppConfig.drUpdateIntervalMs;
 
   late RingBuffer<TelemetryFrame> _history;
   late RingBuffer<DrPosition> _drHistory;
   final DeadReckoningEstimator _deadReckoning = DeadReckoningEstimator();
 
-  /// Frame time of the last point pushed to the DR history (1 Hz spacing).
+  /// Frame time of the last point pushed to the DR history.
   int _lastDrMs = 0;
 
-  /// 1 Hz ground-side extrapolation while the link itself is silent.
+  /// z=12 tile key ("12/x/y") for the last terrain elevation query.  A new
+  /// query is fired only when the rocket moves into a different tile (≈6 km
+  /// at 50° lat) — within one tile the cached Future is reused instantly.
+  String? _lastElevTileKey;
+
+  /// Ground-side extrapolation timer while the link itself is silent.
   Timer? _drTicker;
 
   /// Throttle: rebuild the exposed state at most this often (history-heavy
   /// tiles otherwise rebuild on every one of the 10 Hz packets).
-  static const int _minNotifyIntervalMs = 80;
+  static const int _minNotifyIntervalMs = AppConfig.minNotifyIntervalMs;
   int _lastNotifyMs = 0;
   bool _pendingNotify = false;
 
@@ -174,6 +184,16 @@ class TelemetryStore extends Notifier<TelemetryState> {
         _lastDrMs = frame.receivedAtMs;
       }
       _ensureDrTicker();
+      // Query terrain elevation whenever the fix moves into a new z=12 tile
+      // (≈6 km at 50° lat).  The elevation_service memory-caches per tile, so
+      // a cache hit resolves synchronously; misses fall through to the disk
+      // cache and then the network.  The DR estimator uses the result as its
+      // ground-collision floor via setTerrainFloor(), merging it with the
+      // GPS-min heuristic via max() — so a bad terrain value can only raise
+      // the clamp, never lower it below a confirmed fix.
+      if (frame.gpsHasFix) {
+        _maybeQueryTerrain(frame.latitude, frame.longitude);
+      }
     }
 
     if (state.replaying) {
@@ -234,19 +254,19 @@ class TelemetryStore extends Notifier<TelemetryState> {
 
   /// DR is only computed while GPS is stale: with a fresh fix the fix itself
   /// is the best estimate and the estimator would just duplicate the GPS
-  /// track. Once GPS has been silent for over a second, extrapolate — at
-  /// most one point per second of frame time.
+  /// track. Once GPS has been silent for over drStaleMs, extrapolate.
   bool _shouldPushDr(int nowMs) {
     final lastFix = _deadReckoning.lastFixAtMs;
     if (lastFix == null || nowMs - lastFix < drStaleMs) return false;
-    return nowMs - _lastDrMs >= drStaleMs;
+    return nowMs - _lastDrMs >= drUpdateIntervalMs;
   }
 
-  /// Keeps extrapolating dead reckoning once per second even when no packets
-  /// arrive at all (link loss), using the last known velocity.
+  /// Keeps extrapolating dead reckoning at [drUpdateIntervalMs] even when no
+  /// packets arrive at all (link loss), using the last known velocity.
   void _ensureDrTicker() {
     if (_drTicker != null) return;
-    _drTicker = Timer.periodic(const Duration(seconds: 1), (_) {
+    _drTicker =
+        Timer.periodic(const Duration(milliseconds: drUpdateIntervalMs), (_) {
       _extrapolateDr();
     });
   }
@@ -260,7 +280,7 @@ class TelemetryStore extends Notifier<TelemetryState> {
 
     final dr = _deadReckoning.extrapolate(now);
     if (dr == null) return;
-    if (dr.atMs - _lastDrMs < drStaleMs) return;
+    if (dr.atMs - _lastDrMs < drUpdateIntervalMs) return;
     _drHistory.push(dr);
     _lastDrMs = dr.atMs;
     _rebuildState();
@@ -272,6 +292,7 @@ class TelemetryStore extends Notifier<TelemetryState> {
     _drHistory.clear();
     _deadReckoning.reset();
     _lastDrMs = 0;
+    _lastElevTileKey = null;
     _drTicker?.cancel();
     _drTicker = null;
     _lastNotifyMs = 0;
@@ -281,6 +302,19 @@ class TelemetryStore extends Notifier<TelemetryState> {
       sourceName: sourceName ?? '',
       replaying: state.replaying,
     );
+  }
+
+  /// Fires a terrain elevation query for [lat]/[lon] when the rocket has
+  /// moved into a new z=12 Terrarium tile.  The result is fed back to the DR
+  /// estimator asynchronously via [setTerrainFloor]; any failure is silently
+  /// swallowed — the estimator falls back to the GPS-min heuristic.
+  void _maybeQueryTerrain(double lat, double lon) {
+    final key = elevationTileKey(lat, lon);
+    if (key == _lastElevTileKey) return; // same tile — cached Future is enough
+    _lastElevTileKey = key;
+    elevationMsl(lat, lon).then((msl) {
+      if (msl != null) _deadReckoning.setTerrainFloor(msl);
+    });
   }
 
   /// Marks whether the current data is a replay.

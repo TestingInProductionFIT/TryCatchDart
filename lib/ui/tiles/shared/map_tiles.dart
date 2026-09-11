@@ -3,16 +3,19 @@ import 'dart:ui' show Color;
 
 import 'package:flutter_map/flutter_map.dart';
 
+import '../../../core/app_config.dart';
 import '../../../state/launch_site_store.dart';
 import './offline_fallback_tiles.dart';
 import './satellite_ground.dart';
 import './tile_io.dart'
     show
+        esriTileUrlTemplate,
         fetchTileBytes,
         isUsableTileBytes,
         putTileCached,
         satelliteTileUrl,
-        streetTileUrl;
+        streetTileUrl,
+        tileUserAgent;
 
 /// Map tile sources + offline precaching around launch sites.
 ///
@@ -47,11 +50,10 @@ const Color satelliteMapBackground = Color(0xFF141414);
 const Color streetMapBackground = Color(0xFFE4E1D9);
 
 TileLayer buildStreetLayer() => TileLayer(
-      urlTemplate:
-          'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
-      userAgentPackageName: 'dev.trycatch.groundstation',
-      maxZoom: 19,
-      maxNativeZoom: 19,
+      urlTemplate: esriTileUrlTemplate('World_Street_Map'),
+      userAgentPackageName: tileUserAgent,
+      maxZoom: AppConfig.tileMaxZoom,
+      maxNativeZoom: AppConfig.tileMaxNativeZoom,
       // No per-tile fade-in: during pan/zoom dozens of tiles arriving with
       // staggered opacity animations keeps the raster thread busy and reads
       // as jank. Tiles pop in the moment they decode instead.
@@ -62,14 +64,13 @@ TileLayer buildStreetLayer() => TileLayer(
     );
 
 TileLayer buildSatelliteLayer() => TileLayer(
-      urlTemplate:
-          'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-      userAgentPackageName: 'dev.trycatch.groundstation',
+      urlTemplate: esriTileUrlTemplate('World_Imagery'),
+      userAgentPackageName: tileUserAgent,
       // Esri rarely serves past 18 — missing high-res tiles fall back to
       // the closest cached parent via [OfflineFallbackTileProvider]
       // instead of blanking.
-      maxZoom: 19,
-      maxNativeZoom: 19,
+      maxZoom: AppConfig.tileMaxZoom,
+      maxNativeZoom: AppConfig.tileMaxNativeZoom,
       // Instantaneous for pan/zoom smoothness (see street layer above).
       tileDisplay: const TileDisplay.instantaneous(),
       tileProvider: OfflineFallbackTileProvider(
