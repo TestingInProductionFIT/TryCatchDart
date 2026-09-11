@@ -11,7 +11,7 @@ dependencies:
     flutter:
         sdk: flutter
 
-    flutter_riverpod: ^3.4.2
+    flutter_riverpod: ^3.4.3
 
     fl_chart: ^1.2.0
 
