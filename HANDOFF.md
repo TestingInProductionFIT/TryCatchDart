@@ -104,7 +104,7 @@ If your task genuinely requires touching another agent's area:
 - Flutter SDK ^3.13, installed at `C:\Users\wwwho\flutter`. Desktop shells for Windows, Linux, macOS.
 - Always run with `--release` for evaluation — debug builds are janky and misrepresent performance.
 - `flutter analyze` + `flutter test` are the only CI gates. Both must be green before any handoff.
-- Current passing test count: **262** (last recorded green run — update this when you finish).
+- Current passing test count: **347** (last recorded green run — update this when you finish).
 
 ### 2.2 Dependencies (key constraints)
 
@@ -332,7 +332,7 @@ Verdicts on unknown B/s: clear <50, activity <400, else interference. Screen = v
 
 ### 7.1 Replay
 
-`replayProvider.play(path)`: parses (valid header required), stores header site. Whole flight pre-decoded once for fixed chart axes. 50 ms ticker × speed (MAX = dump). `seek()` is binary search + forward-delta bulk ingest (`TelemetryStore.ingestPackets`, one state rebuild). Auto-pauses at end. No DR during replay.
+`replayProvider.play(path)`: parses (valid header required), stores header site. Whole flight pre-decoded once for fixed chart axes. 50 ms ticker × speed (MAX = dump). `seek()` is binary search + forward-delta bulk ingest (`TelemetryStore.ingestPackets`, one state rebuild). Auto-pauses at end unless `loopEnabled` (repeat toggle in the playback bar) wraps to the start carrying the overshoot. Space toggles pause/play via an `AppShell`-level `CallbackShortcuts` binding (focused buttons/switches win via `ActivateIntent`; text input guarded). No DR during replay.
 
 Display smoothing (replay-only, toggle in playback bar, default on): 3D trail uses centered ±25-packet moving average; attitude from averaged specific-force vector. File, charts, map stay raw. `buildReplayScene` over full pre-decoded frames (smooth-then-decimate with ±25 lookahead). Pinned by `display_smoothing_test.dart` + `replay_seek_test.dart`.
 
@@ -376,6 +376,7 @@ Stat-first scan (108-byte header) + per-card concurrent preview decode (session 
 - `FlightEventType` data-driven; `events` tile: newest-first log, live ages, replay tap-to-seek.
 - Recorded-flight card redesign + trim event markers: video-style cards; `TrimChart` with `FlightEventDot`s.
 - Satellite 3D depth + perspective + performance fixes: far-to-near traversal, clip-space sub-tessellation, indexed drawing, culling, static scratch buffers. **262 green.**
+- Replay loop + Space transport: `ReplayState.loopEnabled` + `setLooping()` (survives reload, resets on stop), end-of-flight wraps via `_restartLoop` with overshoot carry; repeat toggle in playback bar; Space pause/play in `AppShell` (`CallbackShortcuts`, text-input guarded, inner `ActivateIntent` wins); transport tooltips advertise Space. Tests: loop persistence/reset (`replay_seek_test`), loop button + Space tooltip (`flight_events_test`). **347 green.**
 
 ---
 

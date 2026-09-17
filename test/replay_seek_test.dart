@@ -152,5 +152,21 @@ void main() {
       expect(container.read(replayProvider).playing, isTrue);
       controller.pause();
     });
+
+    test('loop flag defaults off, toggles, survives reload, resets on stop',
+        () async {
+      final controller = await loadAndPark();
+      expect(container.read(replayProvider).loopEnabled, isFalse);
+      controller.setLooping(true);
+      expect(container.read(replayProvider).loopEnabled, isTrue);
+      await controller.play(path);
+      controller.pause();
+      expect(container.read(replayProvider).loopEnabled, isTrue);
+      controller.setLooping(false);
+      expect(container.read(replayProvider).loopEnabled, isFalse);
+      controller.stop();
+      expect(container.read(replayProvider).loopEnabled, isFalse);
+      expect(container.read(replayProvider).isActive, isFalse);
+    });
   });
 }

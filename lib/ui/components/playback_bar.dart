@@ -74,6 +74,8 @@ class PlaybackBar extends ConsumerWidget {
         // Isolated leaf consumer: rebuilds only when smoothing/loading
         // changes — not on every positionMs tick.
         const _SmoothingButton(),
+        // Isolated leaf consumer: rebuilds only when loop/loading changes.
+        const _LoopButton(),
       ],
     );
   }
@@ -109,8 +111,8 @@ class _PlayPauseButton extends ConsumerWidget {
       container: true,
       child: IconButton(
         tooltip: finished
-            ? 'Replay from the start'
-            : (playing ? 'Pause' : 'Play'),
+            ? 'Replay from the start (Space)'
+            : (playing ? 'Pause (Space)' : 'Play (Space)'),
         // toggle() keys off the live ticker, not just the last-published
         // flag, so the button can never desync from actual playback.
         onPressed: isLoading ? null : controller.toggle,
@@ -160,6 +162,43 @@ class _SmoothingButton extends ConsumerWidget {
           color: smoothingEnabled
               ? AppColors.pinkDeep
               : AppColors.mutedForeground,
+        ),
+      ),
+    );
+  }
+}
+
+/// Loop toggle: when on, the end of the recording wraps to the start
+/// instead of pausing.
+///
+/// Leaf consumer on `{isLoading, loopEnabled}` — rebuilds only when those
+/// fields change, not on every 50 ms positionMs tick. See
+/// [_PlayPauseButton] for the full rationale.
+class _LoopButton extends ConsumerWidget {
+  const _LoopButton();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final isLoading = ref.watch(replayProvider.select((s) => s.isLoading));
+    final loopEnabled = ref.watch(
+      replayProvider.select((s) => s.loopEnabled),
+    );
+    final controller = ref.read(replayProvider.notifier);
+
+    // Semantics container: same AXTree graft isolation as _PlayPauseButton.
+    return Semantics(
+      container: true,
+      child: IconButton(
+        tooltip: loopEnabled
+            ? 'Loop on — replay restarts at the end (tap for play-once)'
+            : 'Loop off — tap to replay in a loop',
+        onPressed:
+            isLoading ? null : () => controller.setLooping(!loopEnabled),
+        icon: Icon(
+          Icons.repeat,
+          size: 20,
+          color:
+              loopEnabled ? AppColors.pinkDeep : AppColors.mutedForeground,
         ),
       ),
     );

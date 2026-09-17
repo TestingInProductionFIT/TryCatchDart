@@ -402,6 +402,45 @@ void main() {
       await tester.pump();
       expect(stub.sought, 2020);
     });
+
+    testWidgets('loop button toggles looping without seeking', (tester) async {
+      final stub = _StubReplay(
+        ReplayState(filePath: 'loop.bin', durationMs: 2000, frames: const []),
+      );
+      await pumpBar(tester, stub);
+
+      expect(
+        find.byTooltip('Loop off — tap to replay in a loop'),
+        findsOneWidget,
+      );
+      await tester.tap(
+        find.byTooltip('Loop off — tap to replay in a loop'),
+      );
+      await tester.pump();
+      expect(stub.state.loopEnabled, isTrue);
+      expect(stub.sought, isNull);
+      expect(
+        find.byTooltip(
+          'Loop on — replay restarts at the end (tap for play-once)',
+        ),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('transport tooltip advertises the Space shortcut', (
+      tester,
+    ) async {
+      final stub = _StubReplay(
+        ReplayState(
+          filePath: 'space.bin',
+          playing: false,
+          durationMs: 2000,
+          frames: const [],
+        ),
+      );
+      await pumpBar(tester, stub);
+      expect(find.byTooltip('Play (Space)'), findsOneWidget);
+    });
   });
 }
 

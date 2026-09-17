@@ -76,6 +76,10 @@ class ReplayState {
   /// visualizer (which averaged the track).
   final bool smoothingEnabled;
 
+  /// When true, reaching the end of the recording seeks back to the start
+  /// and keeps playing instead of pausing. Defaults off.
+  final bool loopEnabled;
+
   const ReplayState({
     this.filePath,
     this.playing = false,
@@ -88,6 +92,7 @@ class ReplayState {
     this.launchSite,
     this.channelProfile = const [],
     this.smoothingEnabled = false,
+    this.loopEnabled = false,
   });
 
   bool get isActive => filePath != null;
@@ -104,6 +109,7 @@ class ReplayState {
     LaunchSite? launchSite,
     List<ChannelBin>? channelProfile,
     bool? smoothingEnabled,
+    bool? loopEnabled,
   }) => ReplayState(
     filePath: filePath ?? this.filePath,
     playing: playing ?? this.playing,
@@ -116,6 +122,7 @@ class ReplayState {
     launchSite: launchSite ?? this.launchSite,
     channelProfile: channelProfile ?? this.channelProfile,
     smoothingEnabled: smoothingEnabled ?? this.smoothingEnabled,
+    loopEnabled: loopEnabled ?? this.loopEnabled,
   );
 }
 
@@ -164,6 +171,7 @@ class ReplayController extends Notifier<ReplayState> {
   /// Loads [path], decodes every packet up front and starts playback at 1×.
   Future<void> play(String path) async {
     final initialSmoothing = state.smoothingEnabled;
+    final initialLoop = state.loopEnabled;
     final generation = ++_loadGeneration;
     _ticker?.cancel();
     _ticker = null;
@@ -176,6 +184,7 @@ class ReplayController extends Notifier<ReplayState> {
       filePath: path,
       isLoading: true,
       smoothingEnabled: initialSmoothing,
+      loopEnabled: initialLoop,
     );
 
     final packets = await _decode(path);
@@ -185,8 +194,9 @@ class ReplayController extends Notifier<ReplayState> {
         filePath: path,
         durationMs: 0,
         errorMsg: 'Unsupported recording — expected a recording with a header.',
-        // Keep any smoothing toggle made mid-load instead of the entry value.
+        // Keep any toggles made mid-load instead of the entry values.
         smoothingEnabled: state.smoothingEnabled,
+        loopEnabled: state.loopEnabled,
       );
       return;
     }
@@ -218,6 +228,7 @@ class ReplayController extends Notifier<ReplayState> {
         errorMsg:
             'Unsupported recording — expected a launch site in the header.',
         smoothingEnabled: state.smoothingEnabled,
+        loopEnabled: state.loopEnabled,
       );
       return;
     }
@@ -236,6 +247,7 @@ class ReplayController extends Notifier<ReplayState> {
       launchSite: site,
       channelProfile: channelProfile,
       smoothingEnabled: state.smoothingEnabled,
+      loopEnabled: state.loopEnabled,
     );
 
     _lastTickMs = DateTime.now().millisecondsSinceEpoch;
@@ -253,9 +265,21 @@ class ReplayController extends Notifier<ReplayState> {
   }
 
   /// Advances the virtual clock and ingests everything that is due.
+  ///
+  /// When [ReplayState.loopEnabled] is on, reaching the end seeks back to
+  /// the start (carrying the overshoot into the next loop so high speeds
+  /// don't lose time) and keeps ticking instead of pausing.
   void _tick() {
-    if (_packets.isEmpty || _index >= _packets.length) {
+    if (_packets.isEmpty) {
       pause();
+      return;
+    }
+    if (_index >= _packets.length) {
+      if (state.loopEnabled) {
+        _restartLoop();
+      } else {
+        pause();
+      }
       return;
     }
 
@@ -279,6 +303,20 @@ class ReplayController extends Notifier<ReplayState> {
     }
 
     if (due.isNotEmpty) _store.ingestPackets(due, sourceName: _fileName());
+
+    if (_index >= _packets.length && state.loopEnabled) {
+      final duration = state.durationMs ?? (_packets.last.receivedAtMs - t0);
+      if (duration <= 0) {
+        _restartLoop();
+        return;
+      }
+      // Carry the overshoot into the next loop. `clock == duration` wraps
+      // to 0; anything beyond keeps its remainder.
+      final wrapped = clock % duration;
+      _restartLoop(atPositionMs: wrapped);
+      return;
+    }
+
     state = state.copyWith(positionMs: clock);
 
     if (_index >= _packets.length) pause();
@@ -336,6 +374,48 @@ class ReplayController extends Notifier<ReplayState> {
   /// Toggles the replay-only 3D display smoothing (trail + rotation).
   void setSmoothing(bool enabled) =>
       state = state.copyWith(smoothingEnabled: enabled);
+
+  /// Toggles looping: when on, the end of the recording wraps to the start
+  /// instead of pausing. Safe to flip mid-playback — takes effect on the
+  /// next tick that reaches the end.
+  void setLooping(bool enabled) =>
+      state = state.copyWith(loopEnabled: enabled);
+
+  /// Restarts playback from [atPositionMs] (default 0) without pausing.
+  /// Exactly one store rebuild: reset + ingest up to the target, mirroring
+  /// the backward-jump path in [seek] but keeping the ticker alive and
+  /// `playing` true.
+  void _restartLoop({int atPositionMs = 0}) {
+    if (_packets.isEmpty) {
+      pause();
+      return;
+    }
+    final t0 = _packets.first.receivedAtMs;
+    var lo = 0;
+    var hi = _packets.length;
+    while (lo < hi) {
+      final mid = (lo + hi) >> 1;
+      if (_packets[mid].receivedAtMs - t0 > atPositionMs) {
+        hi = mid;
+      } else {
+        lo = mid + 1;
+      }
+    }
+    _store.reset(sourceName: _fileName());
+    if (lo > 0) {
+      _store.ingestPackets(
+        _packets.sublist(0, lo),
+        sourceName: _fileName(),
+      );
+    }
+    _index = lo;
+    _lastTickMs = DateTime.now().millisecondsSinceEpoch;
+    if (!state.playing) {
+      state = state.copyWith(positionMs: atPositionMs, playing: true);
+    } else {
+      state = state.copyWith(positionMs: atPositionMs);
+    }
+  }
 
   /// Jumps to [positionMs].
   ///
