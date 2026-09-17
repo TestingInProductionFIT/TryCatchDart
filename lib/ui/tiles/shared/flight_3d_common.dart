@@ -291,10 +291,22 @@ Offset? projectToScreen(Vector3 world, Matrix4 vp, Size size) {
 
 void drawWorldSegment(Canvas canvas, Vector3 a, Vector3 b, Matrix4 vp,
     Size size, Paint paint) {
+  final clipped = clipWorldSegment(a, b, vp, size);
+  if (clipped == null) return;
+  canvas.drawLine(clipped.$1, clipped.$2, paint);
+}
+
+/// Projects a world-space segment to drawable screen endpoints: near-plane
+/// pull-in for ends behind the camera plus 2D bounds clipping. Returns
+/// `null` when fully behind the camera or off screen. Shared core of
+/// [drawWorldSegment] and the batched polyline painters below, so single
+/// lines and batched paths clip identically.
+(Offset, Offset)? clipWorldSegment(
+    Vector3 a, Vector3 b, Matrix4 vp, Size size) {
   var ca = _clipOf(a, vp);
   var cb = _clipOf(b, vp);
   // Fully behind the camera: nothing to draw.
-  if (ca.w <= clipEps && cb.w <= clipEps) return;
+  if (ca.w <= clipEps && cb.w <= clipEps) return null;
   // Partially behind: pull the outside end to the near-plane intersection
   // instead of dropping the whole line (receding lines used to vanish at
   // low camera angles).
@@ -307,9 +319,7 @@ void drawWorldSegment(Canvas canvas, Vector3 a, Vector3 b, Matrix4 vp,
   final pb = _divideClip(cb, size);
   final safeRect =
       Rect.fromLTRB(-64, -64, size.width + 64, size.height + 64);
-  final clipped = clipSegment2D(pa, pb, safeRect);
-  if (clipped == null) return;
-  canvas.drawLine(clipped.$1, clipped.$2, paint);
+  return clipSegment2D(pa, pb, safeRect);
 }
 
 /// Near-plane guard matching [projectToScreen]'s cutoff: any positive w is
@@ -496,15 +506,36 @@ void paintFlightTrail(
     ..strokeWidth = 2.2
     ..strokeCap = StrokeCap.round
     ..strokeJoin = StrokeJoin.round;
+  // One batched path instead of a drawLine per leg (up to 400 draw calls):
+  // identical pixels (same paint, same per-leg clipping), one draw. The pen
+  // breaks at culled legs so near-plane seams can't stitch across the lens.
+  final path = Path();
+  Offset? pen;
+  void leg(Vector3 from, Vector3 to) {
+    final clipped = clipWorldSegment(from, to, vp, size);
+    if (clipped == null) {
+      pen = null;
+      return;
+    }
+    final (p0, p1) = clipped;
+    final cur = pen;
+    if (cur == null || (cur - p0).distance > 1e-3) {
+      path.moveTo(p0.dx, p0.dy);
+    }
+    path.lineTo(p1.dx, p1.dy);
+    pen = p1;
+  }
+
   for (var i = 1; i < scene.trail.length; i++) {
-    drawWorldSegment(canvas, scene.trail[i - 1], scene.trail[i], vp, size, gpsPaint);
+    leg(scene.trail[i - 1], scene.trail[i]);
   }
   if (tipOverride != null && scene.trail.isNotEmpty && !scene.rocketIsDr) {
     final last = scene.trail.last;
     if ((tipOverride - last).length > 1e-6) {
-      drawWorldSegment(canvas, last, tipOverride, vp, size, gpsPaint);
+      leg(last, tipOverride);
     }
   }
+  canvas.drawPath(path, gpsPaint);
 }
 
 /// CG-anchored, ground-clamped rocket position for the flight views.
@@ -798,26 +829,26 @@ void paintRocketMesh(
     return d != 0 ? d : x.order.compareTo(y.order);
   });
 
+  final fill = Paint();
+  final triPath = Path();
   for (final tri in visible) {
-    final color = Color.fromARGB(
+    fill.color = Color.fromARGB(
       255,
       (tri.base.r * 255 * tri.brightness).round().clamp(0, 255),
       (tri.base.g * 255 * tri.brightness).round().clamp(0, 255),
       (tri.base.b * 255 * tri.brightness).round().clamp(0, 255),
     );
-    final path = Path()
+    // Single fill pass per tri (reused Paint/Path, no per-tri allocation).
+    // The old second pass — a same-color 0.6 px stroke over every tri —
+    // doubled the draw calls for no visible gain and its overdraw shimmered
+    // along edges at glancing angles.
+    triPath
+      ..reset()
       ..moveTo(tri.a.dx, tri.a.dy)
       ..lineTo(tri.b.dx, tri.b.dy)
       ..lineTo(tri.c.dx, tri.c.dy)
       ..close();
-    canvas.drawPath(path, Paint()..color = color);
-    canvas.drawPath(
-      path,
-      Paint()
-        ..color = color
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 0.6,
-    );
+    canvas.drawPath(triPath, fill);
   }
 }
 

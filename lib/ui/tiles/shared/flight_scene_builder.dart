@@ -12,6 +12,7 @@ import 'package:serial/serial.dart';
 
 import '../../../state/launch_site_store.dart';
 import '../../../core/geo.dart';
+import '../../../state/replay_controller.dart';
 import '../../../state/telemetry_store.dart';
 /// Shared scene, camera and painter helpers for the 3D flight views (plain
 /// and satellite). Both tiles render the same [FlightScene] with the same
@@ -133,23 +134,30 @@ const int flightTrailBucketMs = 100;
 const int flightTrailMaxPoints = 400;
 
 /// Caps a chronological point list to about [maxPoints], striding from the
-/// END so the tip is always exact and the start is always kept. Pure —
-/// unit-tested.
+/// Caps a chronological point list to about [maxPoints] with a start-anchored
+/// power-of-two stride, so the tip is always exact and the start always kept.
+/// Pure — unit-tested.
+///
+/// Growth stability is the point: appending points only appends to the output
+/// — earlier samples never move. (Tip-anchored striding re-phased the whole
+/// trail on every tick past the cap and the line visibly crawled as the
+/// flight grew.) Doubling the stride — never +1 — means a stride change only
+/// thins the kept set to a strict subset (plus the new tip), so even the
+/// widely-spaced stride milestones don't shift surviving points.
 List<Vector3> capTrailPoints(List<Vector3> points,
     {int maxPoints = flightTrailMaxPoints}) {
   if (points.length <= maxPoints) return points;
-  final stride = (points.length / maxPoints).ceil();
-  final rev = <Vector3>[];
-  var first = points.length - 1;
-  for (var i = points.length - 1; i >= 0; i -= stride) {
-    rev.add(points[i]);
-    first = i;
+  final budget = math.max(2, maxPoints);
+  var stride = 1;
+  // Kept count is 2 (start + tip) plus every [stride]-th interior point.
+  while (2 + (points.length - 2) ~/ stride > budget) {
+    stride *= 2;
   }
-  final out = rev.reversed.toList();
-  if (first != 0) out.insert(0, points[0]);
-  // Prepending the start can push the count one over budget; drop the
-  // second point (start, order and tip stay exact).
-  if (out.length > maxPoints) out.removeAt(1);
+  final out = <Vector3>[points[0]];
+  for (var i = stride; i < points.length - 1; i += stride) {
+    out.add(points[i]);
+  }
+  out.add(points.last);
   return out;
 }
 
@@ -409,6 +417,48 @@ FlightScene? buildReplayScene({
     showParachute: tipFrame.fsmState.showsParachute,
     siteName: site?.name,
   );
+}
+
+/// Live-vs-replay scene resolution shared by every 3D tile.
+///
+/// Replays render from the recording's full pre-decoded frames (whole flight
+/// addressable, shared trail/rocket smoothing); live renders raw from the
+/// bounded ring buffer. `null` when no position anchor exists yet.
+FlightScene? resolveFlightScene({
+  required TelemetryState state,
+  required LaunchSite? site,
+  required ReplayState replay,
+}) {
+  if (replay.isActive && replay.frames.isNotEmpty) {
+    return buildReplayScene(
+      frames: replay.frames,
+      positionMs: replay.positionMs,
+      site: site,
+      smoothingEnabled: replay.smoothingEnabled,
+    );
+  }
+  return buildFlightScene(state, site);
+}
+
+/// Display attitude shared by the orientation viewer: raw live angles, or
+/// the trailing-average smoothed attitude while a smoothed replay runs, so
+/// the airframe stops jittering when the toggle is on.
+({double pitchDeg, double yawDeg, double rollDeg}) resolveDisplayAttitude({
+  required double pitchDeg,
+  required double yawDeg,
+  required double rollDeg,
+  required ReplayState replay,
+}) {
+  if (replay.isActive &&
+      replay.frames.isNotEmpty &&
+      replay.smoothingEnabled) {
+    return replayAttitude(
+      frames: replay.frames,
+      positionMs: replay.positionMs,
+      smoothingEnabled: true,
+    );
+  }
+  return (pitchDeg: pitchDeg, yawDeg: yawDeg, rollDeg: rollDeg);
 }
 
 /// Half-width of the centered trail average ([buildReplayScene]) and the

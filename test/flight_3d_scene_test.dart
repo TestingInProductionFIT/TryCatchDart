@@ -314,6 +314,32 @@ void main() {
         expect(a[i].x, b[i].x);
       }
     });
+
+    test('growing flights never move displayed points (no crawl)', () {
+      // Regression: tip-anchored striding re-phased the whole trail on every
+      // tick past the cap and the line visibly wobbled as the rocket flew.
+      // Appends may only append (near the tip) or thin to a subset — no
+      // surviving sample may ever shift coordinates.
+      final full = pts(1200);
+      var prev = capTrailPoints(full.sublist(0, 401));
+      for (var len = 402; len <= 1200; len += 5) {
+        final cur = capTrailPoints(full.sublist(0, len));
+        expect(cur.length, lessThanOrEqualTo(400));
+        expect(cur.first.x, 0);
+        expect(cur.last.x, len - 1);
+        // Away from the fresh tail (which legitimately gains newly-arrived
+        // data), every displayed point already existed at the same spot.
+        for (var i = 0; i < cur.length - 4; i++) {
+          final p = cur[i];
+          expect(
+            prev.any((q) => q.x == p.x),
+            isTrue,
+            reason: 'len=$len point ${p.x} teleported',
+          );
+        }
+        prev = cur;
+      }
+    });
   });
 
   group('trail bucket stability', () {

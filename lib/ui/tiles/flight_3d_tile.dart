@@ -41,19 +41,7 @@ class _Flight3dWidgetState extends ConsumerState<Flight3dTile>
       return Center(child: WaitingForData());
     }
 
-    // Replays render from the recording's full frames (whole flight
-    // addressable, shared trail/rocket smoothing); live renders raw.
-    final FlightScene? scene;
-    if (replay.isActive && replay.frames.isNotEmpty) {
-      scene = buildReplayScene(
-        frames: replay.frames,
-        positionMs: replay.positionMs,
-        site: site,
-        smoothingEnabled: replay.smoothingEnabled,
-      );
-    } else {
-      scene = buildFlightScene(state, site);
-    }
+    final scene = resolveFlightScene(state: state, site: site, replay: replay);
     if (scene == null) {
       // Frames are arriving but no position anchor (no fix, no site) yet.
       return Center(child: WaitingForData());

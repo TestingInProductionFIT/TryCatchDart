@@ -80,21 +80,15 @@ class _Rocket3dWidgetState extends ConsumerState<Rocket3dTile> {
     // Replay smoothing also steadies the rotation: same trailing-average
     // attitude the flight views use, so the orientation viewer stops
     // jittering when the toggle is on. Raw replay and live stay untouched.
-    var pitchDeg = latest.pitch;
-    var yawDeg = latest.yaw;
-    var rollDeg = latest.roll;
-    if (replay.isActive &&
-        replay.frames.isNotEmpty &&
-        replay.smoothingEnabled) {
-      final attitude = replayAttitude(
-        frames: replay.frames,
-        positionMs: replay.positionMs,
-        smoothingEnabled: true,
-      );
-      pitchDeg = attitude.pitchDeg;
-      yawDeg = attitude.yawDeg;
-      rollDeg = attitude.rollDeg;
-    }
+    final attitude = resolveDisplayAttitude(
+      pitchDeg: latest.pitch,
+      yawDeg: latest.yaw,
+      rollDeg: latest.roll,
+      replay: replay,
+    );
+    final pitchDeg = attitude.pitchDeg;
+    final yawDeg = attitude.yawDeg;
+    final rollDeg = attitude.rollDeg;
 
     return Listener(
       onPointerSignal: (event) {
