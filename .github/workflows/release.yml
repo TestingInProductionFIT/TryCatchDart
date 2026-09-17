@@ -69,7 +69,7 @@ jobs:
     name: Analyze + test (release gate)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -95,7 +95,7 @@ jobs:
       BUILD_NAME: ${{ needs.version.outputs.build_name }}
       BUILD_NUMBER: ${{ needs.version.outputs.build_number }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -149,7 +149,7 @@ jobs:
           else { Write-Output '::warning::No Windows build output found - skipping portable zip.'; exit 0 }
           Compress-Archive -Path $src -DestinationPath "build\dist\trycatch-$env:BUILD_NAME-windows-x64-portable.zip" -Force
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         if: ${{ !cancelled() }}
         with:
           name: windows-x64
@@ -167,10 +167,10 @@ jobs:
       BUILD_NAME: ${{ needs.version.outputs.build_name }}
       BUILD_NUMBER: ${{ needs.version.outputs.build_number }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Cache Flutter SDK (ARM64)
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ runner.temp }}/flutter
           key: flutter-arm64-${{ env.FLUTTER_VERSION }}-v1
@@ -228,7 +228,7 @@ jobs:
           else { Write-Output '::warning::No Windows build output found - skipping portable zip.'; exit 0 }
           Compress-Archive -Path $src -DestinationPath "build\dist\trycatch-$env:BUILD_NAME-windows-arm64-portable.zip" -Force
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         if: ${{ !cancelled() }}
         with:
           name: windows-arm64
@@ -242,7 +242,7 @@ jobs:
       BUILD_NAME: ${{ needs.version.outputs.build_name }}
       BUILD_NUMBER: ${{ needs.version.outputs.build_number }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -274,7 +274,8 @@ jobs:
           test -x "$BUNDLE/trycatch"
           rm -rf AppDir dist && mkdir -p dist AppDir/usr/bin \
             AppDir/usr/share/applications \
-            AppDir/usr/share/metainfo
+            AppDir/usr/share/metainfo \
+            AppDir/usr/share/icons
           cp -a "$BUNDLE/." AppDir/usr/bin/
           cp packaging/linux/com.krychlic.trycatch.desktop AppDir/usr/share/applications/
           cp -a packaging/linux/icons/hicolor AppDir/usr/share/icons/
@@ -290,7 +291,7 @@ jobs:
           cp packaging/linux/69-trycatch-serial.rules dist/
           (cd dist && sha256sum * > SHA256SUMS-linux.txt)
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         if: ${{ !cancelled() }}
         with:
           name: linux
@@ -304,7 +305,7 @@ jobs:
       BUILD_NAME: ${{ needs.version.outputs.build_name }}
       BUILD_NUMBER: ${{ needs.version.outputs.build_number }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -346,7 +347,7 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent "$APP" "dist/TryCatch-${BUILD_NAME}-macos-arm64.zip"
           (cd dist && shasum -a 256 * > SHA256SUMS-macos.txt)
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         if: ${{ !cancelled() }}
         with:
           name: macos
@@ -362,7 +363,7 @@ jobs:
     env:
       BUILD_NAME: ${{ needs.version.outputs.build_name }}
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           path: dist
           merge-multiple: true
@@ -380,7 +381,7 @@ jobs:
           ls -la
 
       - name: Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: dist/*
           generate_release_notes: true
