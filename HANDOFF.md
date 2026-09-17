@@ -377,6 +377,7 @@ Stat-first scan (108-byte header) + per-card concurrent preview decode (session 
 - Recorded-flight card redesign + trim event markers: video-style cards; `TrimChart` with `FlightEventDot`s.
 - Satellite 3D depth + perspective + performance fixes: far-to-near traversal, clip-space sub-tessellation, indexed drawing, culling, static scratch buffers. **262 green.**
 - Replay loop + Space transport: `ReplayState.loopEnabled` + `setLooping()` (survives reload, resets on stop), end-of-flight wraps via `_restartLoop` with overshoot carry; repeat toggle in playback bar; Space pause/play in `AppShell` (`CallbackShortcuts`, text-input guarded, inner `ActivateIntent` wins); transport tooltips advertise Space. Tests: loop persistence/reset (`replay_seek_test`), loop button + Space tooltip (`flight_events_test`). **347 green.**
+- Toolchain upgrade: Flutter 3.47.2 → 3.47.4 (Dart 3.13.2 → 3.13.3). `flutter pub upgrade`: archive 4.2.0→4.3.0, code_assets 2.0.0→2.1.0, image 4.9.2→4.10.1 (all transitive; every direct dep already at latest resolvable). CI `FLUTTER_VERSION` pins (`ci.yml`, `release.yml`) bumped to 3.47.4. `flutter analyze` clean, **347 green.**
 
 ---
 
