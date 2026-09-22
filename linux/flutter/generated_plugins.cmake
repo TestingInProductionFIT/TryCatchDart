@@ -5,11 +5,11 @@
 list(APPEND FLUTTER_PLUGIN_LIST
   flutter_libserialport
   screen_retriever_linux
-  tray_manager
   window_manager
 )
 
 list(APPEND FLUTTER_FFI_PLUGIN_LIST
+  cnativeapi
   jni
 )
 

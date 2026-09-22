@@ -348,17 +348,17 @@ class _OutagePreviewPainter extends CustomPainter {
         20.0, math.max((maxE - minE) * 0.75, (maxN - minN) * 0.75)));
     final step = niceCeil(half / 8);
     final gridN = (half / step).ceil();
+    // Project each ground corner once: mixing one corner's x with
+    // another's y (as the old moveTo/lineTo chain did) warps the fill
+    // whenever yaw/pitch separates the two corners on screen.
+    final groundCorners = [
+      project((e: cE - half, n: cN - half, u: minU)),
+      project((e: cE + half, n: cN - half, u: minU)),
+      project((e: cE + half, n: cN + half, u: minU)),
+      project((e: cE - half, n: cN + half, u: minU)),
+    ];
     canvas.drawPath(
-      Path()
-        ..moveTo(project((e: cE - half, n: cN - half, u: minU)).dx,
-            project((e: cE - half, n: cN - half, u: minU)).dy)
-        ..lineTo(project((e: cE + half, n: cN - half, u: minU)).dx,
-            project((e: cE + half, n: cN + half, u: minU)).dy)
-        ..lineTo(project((e: cE + half, n: cN + half, u: minU)).dx,
-            project((e: cE + half, n: cN + half, u: minU)).dy)
-        ..lineTo(project((e: cE - half, n: cN + half, u: minU)).dx,
-            project((e: cE - half, n: cN + half, u: minU)).dy)
-        ..close(),
+      Path()..addPolygon(groundCorners, true),
       Paint()..color = AppColors.muted.withValues(alpha: 0.65),
     );
     final gridLine = Paint()

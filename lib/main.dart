@@ -2,7 +2,10 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:tray_manager/tray_manager.dart';
+// tray_manager 0.6+ native API (one TrayIcon object per icon, sync
+// setters, per-item click listeners). Imported with a prefix: its Image,
+// Menu and MenuItem clash with Flutter's widgets.
+import 'package:tray_manager/tray_manager.dart' as tray;
 import 'package:window_manager/window_manager.dart';
 
 import './core/app_config.dart';
@@ -70,19 +73,27 @@ class AppLifecycleWrapper extends StatefulWidget {
 }
 
 class _AppLifecycleWrapperState extends State<AppLifecycleWrapper>
-    with WindowListener, TrayListener {
+    with WindowListener {
+  /// Held for the app lifetime: garbage collection would release the
+  /// native handle and remove the icon. Same for the attached menu.
+  tray.TrayIcon? _trayIcon;
+  // Write-only by design: the reference itself keeps the native menu alive.
+  // ignore: unused_field
+  tray.Menu? _trayMenu;
+
   @override
   void initState() {
     super.initState();
     windowManager.addListener(this);
-    trayManager.addListener(this);
     _initDesktopLifecycle();
   }
 
   @override
   void dispose() {
     windowManager.removeListener(this);
-    trayManager.removeListener(this);
+    _trayIcon?.dispose();
+    _trayIcon = null;
+    _trayMenu = null;
     super.dispose();
   }
 
@@ -95,37 +106,88 @@ class _AppLifecycleWrapperState extends State<AppLifecycleWrapper>
   }
 
   Future<void> _setupSystemTray() async {
-    // NOTE: tray_manager's Linux backend only implements destroy / setIcon /
-    // setTitle / setContextMenu (no setToolTip, no popUpContextMenu — the
-    // AppIndicator shows its registered menu by itself). Every call is
-    // guarded individually so one unsupported method can never abort the
-    // rest of the setup (a single shared try/catch around setToolTip used
-    // to skip setIcon + setContextMenu on Linux, leaving no tray at all).
+    // NOTE: the icon is a StatusNotifierItem on Linux (needs a hosting
+    // panel; clicks are never reported there — the panel opens the
+    // registered menu itself). Every call is guarded individually so one
+    // failing step can never abort the rest of the setup (a single shared
+    // try/catch around setTooltip used to skip the icon + menu on Linux,
+    // leaving no tray at all).
+    final trayIcon = tray.TrayIcon.create();
+    if (trayIcon == null) {
+      debugPrint('System tray: TrayIcon.create() failed, skipping tray');
+      return;
+    }
+    _trayIcon = trayIcon;
+    trayIcon.addListener((event) {
+      switch (event) {
+        case tray.TrayIconClickedEvent():
+        case tray.TrayIconDoubleClickedEvent():
+          _showWindow();
+        case tray.TrayIconRightClickedEvent():
+          if (Platform.isLinux) return;
+          _trayGuard('openContextMenu', () async {
+            trayIcon.openContextMenu();
+          });
+      }
+    });
     await _trayGuard('setIcon', () async {
       final iconPath = _resolveTrayIconPath();
-      if (iconPath != null) {
-        await trayManager.setIcon(iconPath);
-      } else {
-        debugPrint('System tray: no icon file found, skipping setIcon');
+      if (iconPath == null) {
+        debugPrint('System tray: no icon file found, skipping icon');
+        return;
       }
+      final image = tray.Image.fromFile(iconPath);
+      if (image == null) {
+        debugPrint('System tray: could not load $iconPath');
+        return;
+      }
+      trayIcon.icon = image;
     });
     if (Platform.isLinux) {
       // Closest Linux equivalent of a tooltip: the indicator label.
-      await _trayGuard('setTitle', () => trayManager.setTitle('TryCatch'));
+      await _trayGuard(
+          'setTitle', () async => trayIcon.setTitle('TryCatch'));
     } else {
-      await _trayGuard('setToolTip', () => trayManager.setToolTip('TryCatch'));
+      await _trayGuard(
+          'setTooltip', () async => trayIcon.setTooltip('TryCatch'));
     }
     await _trayGuard('setContextMenu', () async {
-      await trayManager.setContextMenu(
-        Menu(
-          items: [
-            MenuItem(key: 'show_app', label: 'Show TryCatch'),
-            MenuItem.separator(),
-            MenuItem(key: 'quit_app', label: 'Quit TryCatch'),
-          ],
-        ),
+      final menu = tray.Menu.create();
+      if (menu == null) return;
+      final showItem = tray.MenuItem.createWithLabelAndType(
+        'Show TryCatch',
+        tray.MenuItemType.normal,
       );
+      if (showItem != null) {
+        showItem.addListener((event) {
+          if (event is tray.MenuItemClickedEvent) _showWindow();
+        });
+        menu.addItem(showItem);
+      }
+      menu.addSeparator();
+      final quitItem = tray.MenuItem.createWithLabelAndType(
+        'Quit TryCatch',
+        tray.MenuItemType.normal,
+      );
+      if (quitItem != null) {
+        quitItem.addListener((event) async {
+          if (event is tray.MenuItemClickedEvent) {
+            // Destroy bypasses preventClose and exits completely.
+            await windowManager.destroy();
+          }
+        });
+        menu.addItem(quitItem);
+      }
+      trayIcon.setContextMenu(menu);
+      _trayMenu = menu;
     });
+    await _trayGuard(
+        'setVisible', () async => trayIcon.setVisible(true));
+  }
+
+  Future<void> _showWindow() async {
+    await windowManager.show();
+    await windowManager.focus();
   }
 
   Future<void> _trayGuard(String what, Future<void> Function() call) async {
@@ -165,34 +227,6 @@ class _AppLifecycleWrapperState extends State<AppLifecycleWrapper>
     // Hide to tray instead of exiting
     if (await windowManager.isPreventClose()) {
       await windowManager.hide();
-    }
-  }
-
-  @override
-  void onTrayIconMouseDown() async {
-    await windowManager.show();
-    await windowManager.focus();
-  }
-
-  @override
-  void onTrayIconRightMouseDown() {
-    // Linux/AppIndicator shows the menu registered via setContextMenu by
-    // itself — popUpContextMenu is not implemented there and would only
-    // throw MissingPluginException.
-    if (Platform.isLinux) return;
-    _trayGuard('popUpContextMenu', () async {
-      await trayManager.popUpContextMenu();
-    });
-  }
-
-  @override
-  void onTrayMenuItemClick(MenuItem menuItem) async {
-    if (menuItem.key == 'show_app') {
-      await windowManager.show();
-      await windowManager.focus();
-    } else if (menuItem.key == 'quit_app') {
-      // Destroy the window bypasses preventClose and exits the app completely
-      await windowManager.destroy();
     }
   }
 
