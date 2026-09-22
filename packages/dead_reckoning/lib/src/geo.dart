@@ -4,7 +4,7 @@ library;
 import 'dart:math' as math;
 
 /// Metres per degree of latitude (WGS84 mean). Mirrored by the mock flight
-/// simulator in the serial package (which cannot import app code) — keep
+/// simulator in the serial package (which cannot import this package) — keep
 /// in sync.
 const double metresPerDegreeLat = 111320;
 

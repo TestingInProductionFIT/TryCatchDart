@@ -7,6 +7,44 @@ String formatMinSec(int ms) {
   return '$m:${s.toString().padLeft(2, '0')}';
 }
 
+/// Chart x-axis seconds → `m:ss` (e.g. 95.0 → `1:35`).
+///
+/// Replay axes count up from launch, so negatives clamp to zero and the
+/// value rounds to the nearest second. Live rolling windows keep their own
+/// `-Ns` labels — use this only for whole-flight replay axes + tooltips.
+String formatAxisMinSec(double seconds) {
+  if (!seconds.isFinite) return '0:00';
+  final ms = (seconds * 1000).round().clamp(0, 1 << 31);
+  return formatMinSec(ms);
+}
+
+/// Clock-friendly x-axis step for whole-flight replay axes (~4-5 labels).
+///
+/// Snaps `totalSeconds / 5` up to the next step that lands on whole
+/// minutes (5s, 10s, 15s, 30s, 1m, 2m, 3m, 5m, …) so `M:SS` ticks stay
+/// round instead of landing on e.g. `3:30` or `8:20`.
+double replayXInterval(double totalSeconds) {
+  if (!totalSeconds.isFinite || totalSeconds <= 0) return 5;
+  final target = totalSeconds / 5;
+  const steps = [
+    5.0,
+    10.0,
+    15.0,
+    30.0,
+    60.0,
+    120.0,
+    180.0,
+    300.0,
+    600.0,
+    900.0,
+    1800.0,
+  ];
+  for (final s in steps) {
+    if (s >= target) return s;
+  }
+  return 3600;
+}
+
 /// Metres → `12 m` / `12.3 m` (no decimals past 100 m, `—` when null).
 String formatAltitudeM(double? m) => m == null
     ? '—'

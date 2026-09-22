@@ -11,12 +11,12 @@ abstract final class AppConfig {
   static const int telemetryHistoryCapacity = 9000;
 
   /// Dead reckoning kicks in only after GPS has been silent this long (ms).
-  static const int drStaleMs = 1000;
+  static const int deadReckoningStaleMs = 1000;
 
-  /// Update interval for dead-reckoning extrapolation and history recording
+  /// Update interval for dead reckoning extrapolation and history recording
   /// (ms). Lower values yield a smoother, more responsive estimate during link
   /// loss or GPS gaps. 100 ms corresponds to 10 Hz (matching telemetry rate).
-  static const int drUpdateIntervalMs = 100;
+  static const int deadReckoningUpdateIntervalMs = 100;
 
   /// Minimum time between UI-visible state rebuilds from the telemetry store
   /// (ms). High-frequency replay paths push packets faster than 10 Hz; this

@@ -3,8 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:dead_reckoning/dead_reckoning.dart' show DeadReckoningPosition;
 import 'package:serial/serial.dart' show TelemetryFrame;
-import 'package:trycatch/core/dead_reckoning.dart';
 import 'package:trycatch/core/ring_buffer.dart';
 import 'package:trycatch/state/replay_controller.dart';
 import 'package:trycatch/state/telemetry_store.dart';
@@ -20,7 +20,7 @@ class _EmptyStore extends TelemetryStore {
   @override
   TelemetryState build() => TelemetryState(
         history: RingBuffer<TelemetryFrame>(10),
-        deadReckoningHistory: RingBuffer<DrPosition>(10),
+        deadReckoningHistory: RingBuffer<DeadReckoningPosition>(10),
       );
 }
 
@@ -32,7 +32,7 @@ class _FramedStore extends TelemetryStore {
     history.push(frame);
     return TelemetryState(
       history: history,
-      deadReckoningHistory: RingBuffer<DrPosition>(10),
+      deadReckoningHistory: RingBuffer<DeadReckoningPosition>(10),
       latest: frame,
     );
   }

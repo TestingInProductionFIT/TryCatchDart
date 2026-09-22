@@ -110,7 +110,7 @@ class _FlightPainter extends CustomPainter {
     paintGroundPlain(canvas, scene, cam.vp, size);
     paintFlightTrail(canvas, scene, cam.vp, size, tipOverride: anchor);
     paintLaunchSite(canvas, scene, cam.vp, size);
-    paintDropLineAndDr(canvas, scene, cam.vp, size, anchorOverride: anchor);
+    paintDropLineAndDeadReckoning(canvas, scene, cam.vp, size, anchorOverride: anchor);
     paintRocketMesh(
       canvas,
       size,

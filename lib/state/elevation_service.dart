@@ -185,3 +185,19 @@ String elevationTileKey(double lat, double lon) {
   const zoom = 12;
   return '$zoom/${_tileX(lon, zoom)}/${_tileY(lat, zoom)}';
 }
+
+/// Centre of a tile key from [elevationTileKey], for placing terrain
+/// samples on the dead reckoning ground clamp.
+({double latitude, double longitude}) elevationTileCenter(String key) {
+  final parts = key.split('/');
+  final zoom = int.parse(parts[0]);
+  final x = int.parse(parts[1]);
+  final y = int.parse(parts[2]);
+  final n = 1 << zoom;
+  final longitude = (x + 0.5) / n * 360 - 180;
+  final latRad =
+      math.atan(_sinh(math.pi * (1 - 2 * (y + 0.5) / n)));
+  return (latitude: latRad * 180 / math.pi, longitude: longitude);
+}
+
+double _sinh(double x) => (math.exp(x) - math.exp(-x)) / 2;

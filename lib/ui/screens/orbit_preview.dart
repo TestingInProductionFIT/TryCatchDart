@@ -1,8 +1,8 @@
 import 'dart:math' as math;
 
+import 'package:dead_reckoning/dead_reckoning.dart' show metresPerDegreeLat;
 import 'package:flutter/material.dart';
 
-import '../../core/geo.dart';
 import '../../theme/app_colors.dart';
 import '../../services/flight_trim.dart';
 

@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../state/replay_controller.dart';
 import '../../core/channel_health.dart';
+import '../../core/format.dart';
 import '../../state/channel_health_provider.dart';
 import '../../state/telemetry_provider.dart';
 import '../../state/telemetry_store.dart';
@@ -19,10 +20,9 @@ import './shared/time_series_chart.dart'
 
 /// Tile-friendly channel-health readout: verdict + rolling signal chart.
 ///
-/// Unlike [ChannelHealthMonitor] (the full Channel-health screen body), this
-/// renders no background, no max-width constraint and no nested [AppCard] —
-/// the workspace grid already wraps every tile in one. Very short tiles shed
-/// the chart and show just the headline interference number.
+/// The workspace grid wraps every tile in an [AppCard], so this renders
+/// no background, no max-width constraint and no nested card. Very short
+/// tiles shed the chart and show just the headline interference number.
 class ChannelHealthTile extends ConsumerStatefulWidget {
   const ChannelHealthTile({super.key});
 
@@ -172,6 +172,7 @@ class _TileReplayBody extends StatelessWidget {
                   future: future,
                   profile: profile,
                   durationMs: null,
+                  positionMs: positionMs,
                 ),
               ),
             ),
@@ -250,274 +251,18 @@ String _verdictLabel(ChannelVerdict verdict) => switch (verdict) {
       ChannelVerdict.interference => 'INTERFERENCE',
     };
 
-/// Channel-health monitor: shows how much radio traffic on our frequency
-/// is unknown — does NOT decode as our packets (unknown transmitters, noise).
-///
-/// Full-screen body behind the Channel health screen (and the replay view).
-/// For the dashboard tile see [ChannelHealthTile].
-///
-/// Live, rates come from cumulative [LinkStats] snapshots emitted by the
-/// serial worker (~2 Hz) and plot as a rolling 60 s window. During a replay
-/// the tile switches to whole-flight mode like the other charts: the
-/// recording's raw chunks (garbage included) were bucketed into
-/// [ChannelBin]s at load, so the full flight shows with the played segment
-/// at full opacity and the remainder dimmed. Use before launch to check the
-/// frequency is free.
-class ChannelHealthMonitor extends ConsumerStatefulWidget {
-  const ChannelHealthMonitor({super.key});
-
-  @override
-  ConsumerState<ChannelHealthMonitor> createState() =>
-      _ChannelHealthMonitorState();
-}
-
-class _ChannelHealthMonitorState extends ConsumerState<ChannelHealthMonitor> {
-  Timer? _ticker;
-
-  static const _windowMs = 60000;
-
-  @override
-  void initState() {
-    super.initState();
-    // Repaint on a steady cadence so the live window scrolls even in silence.
-    _ticker = Timer.periodic(const Duration(milliseconds: 500), (_) {
-      if (mounted) setState(() {});
-    });
-  }
-
-  @override
-  void dispose() {
-    _ticker?.cancel();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    // Shared history — see the tile above.
-    ref.watch(channelHealthProvider);
-    final tracker = ref.read(channelHealthProvider.notifier).tracker;
-    final status = ref.watch(serialStatusProvider).value;
-    final connected = status?.isConnected ?? false;
-    final replay = ref.watch(replayProvider);
-    final store = ref.watch(telemetryStoreProvider);
-
-    // Whole-flight replay view, mirroring TimeSeriesChart.
-    final profile = store.replaying && replay.isActive
-        ? replay.channelProfile
-        : const <ChannelBin>[];
-    if (profile.length >= 2) {
-      return _ReplayBody(
-        profile: profile,
-        positionMs: replay.positionMs,
-        durationMs: replay.durationMs,
-      );
-    }
-
-    if (!connected) {
-      return Container(
-        color: AppColors.background,
-        padding: const EdgeInsets.all(16),
-        child: const Center(
-          child: WaitingForData(
-            hint: 'Connect a port to scan, or replay a flight',
-          ),
-        ),
-      );
-    }
-
-    final latest = tracker.latest;
-    final matchedBps = latest?.matchedBps ?? 0.0;
-    final unmatchedBps = latest?.unmatchedBps ?? 0.0;
-    final verdict = verdictFor(unmatchedBps);
-
-    return Container(
-      color: AppColors.background,
-      padding: const EdgeInsets.all(16),
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1100),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _VerdictBanner(
-                verdict: verdict,
-                matchedBps: matchedBps,
-                unmatchedBps: unmatchedBps,
-              ),
-              const SizedBox(height: 12),
-              Expanded(
-                child: AppCard(
-                  title: 'Signal on this frequency',
-                  trailing: _Legend(),
-                  fillChild: true,
-                  // Display-only plot (axis labels repaint on every tick).
-                  child: ExcludeSemantics(child: _RateChart(tracker: tracker)),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Whole-flight replay body: played segment at full opacity, remainder
-/// dimmed; verdict and totals follow the playhead.
-class _ReplayBody extends StatelessWidget {
-  final List<ChannelBin> profile;
-  final int positionMs;
-  final int? durationMs;
-
-  const _ReplayBody({
-    required this.profile,
-    required this.positionMs,
-    required this.durationMs,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final played = <ChannelBin>[];
-    final future = <ChannelBin>[];
-    for (final bin in profile) {
-      if (bin.startMs <= positionMs) {
-        played.add(bin);
-      } else {
-        if (future.isEmpty && played.isNotEmpty) future.add(played.last);
-        future.add(bin);
-      }
-    }
-    final cursor = played.isEmpty ? null : played.last;
-    final verdict = verdictFor(cursor?.unmatchedBps ?? 0.0);
-
-    return Container(
-      color: AppColors.background,
-      padding: const EdgeInsets.all(16),
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1100),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _VerdictBanner(
-                verdict: verdict,
-                matchedBps: cursor?.matchedBps ?? 0.0,
-                unmatchedBps: cursor?.unmatchedBps ?? 0.0,
-              ),
-              const SizedBox(height: 12),
-              Expanded(
-                child: AppCard(
-                  title: 'Signal on this frequency',
-                  trailing: _Legend(),
-                  fillChild: true,
-                  // Display-only plot (axis labels repaint on every tick).
-                  child: ExcludeSemantics(
-                    child: _ReplayChart(
-                      played: played,
-                      future: future,
-                      profile: profile,
-                      durationMs: durationMs,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _VerdictBanner extends StatelessWidget {
-  final ChannelVerdict verdict;
-  final double matchedBps;
-  final double unmatchedBps;
-
-  const _VerdictBanner({
-    required this.verdict,
-    required this.matchedBps,
-    required this.unmatchedBps,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final color = _verdictColor(verdict);
-    // The whole box carries the verdict color; just the two numbers inside.
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(AppDimens.radius),
-        border: Border.all(color: color.withValues(alpha: 0.5)),
-      ),
-      child: Center(
-        child: ExcludeSemantics(
-          child: Text(
-            '${matchedBps.round()} B/s ours vs '
-            '${unmatchedBps.round()} B/s unknown',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            textAlign: TextAlign.center,
-            style: AppText.monoValue.copyWith(
-              fontSize: 16,
-              color: Color.lerp(color, AppColors.foreground, 0.2),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _Legend extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        _swatch(AppColors.success, 'OURS'),
-        const SizedBox(width: 10),
-        _swatch(AppColors.destructive, 'UNKNOWN'),
-      ],
-    );
-  }
-
-  Widget _swatch(Color color, String label) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: 12,
-          height: 2.5,
-          decoration: BoxDecoration(
-            color: color,
-            borderRadius: BorderRadius.circular(2),
-          ),
-        ),
-        const SizedBox(width: 5),
-        Text(
-          label,
-          style: AppText.microLabel.copyWith(
-            fontSize: 9,
-            letterSpacing: 0.8,
-            color: AppColors.mutedForeground,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
 class _RateChart extends StatelessWidget {
   final ChannelHealthTracker tracker;
 
   const _RateChart({required this.tracker});
 
+  /// Rolling live window (ms) for the tile chart.
+  static const _windowMs = 60000;
+
   @override
   Widget build(BuildContext context) {
     final nowMs = DateTime.now().millisecondsSinceEpoch;
-    final cutoff = nowMs - _ChannelHealthMonitorState._windowMs;
+    final cutoff = nowMs - _windowMs;
     final points = <ChannelSample>[
       for (final s in tracker.samples.newestFirst())
         if (s.timestampMs >= cutoff) s,
@@ -541,7 +286,7 @@ class _RateChart extends StatelessWidget {
     return LineChart(
       _chartData(
         minX: 0,
-        maxX: _ChannelHealthMonitorState._windowMs / 1000,
+        maxX: _windowMs / 1000,
         maxY: maxY,
         played: [
           _bar(spots((s) => s.matchedBps), AppColors.success),
@@ -565,19 +310,21 @@ class _RateChart extends StatelessWidget {
   }
 }
 
-/// Whole-flight replay chart: x counts up 0…duration, played segment full
-/// opacity + remainder dimmed (same language as [TimeSeriesChart]).
+/// Whole-flight replay chart: x counts up 0…duration in M:SS, played segment
+/// full opacity + remainder dimmed (same language as [TimeSeriesChart]).
 class _ReplayChart extends StatelessWidget {
   final List<ChannelBin> played;
   final List<ChannelBin> future;
   final List<ChannelBin> profile;
   final int? durationMs;
+  final int positionMs;
 
   const _ReplayChart({
     required this.played,
     required this.future,
     required this.profile,
     required this.durationMs,
+    required this.positionMs,
   });
 
   @override
@@ -611,20 +358,37 @@ class _ReplayChart extends StatelessWidget {
           c.withValues(alpha: previewBarAlpha),
         );
 
-    // X axis: one label every ~1-2-5 step so long flights don't pile
-    // dozens of overlapping texts (the old fixed 15 s interval broke past
-    // ~1 min). Y axis already snaps the same way.
-    final xStep = _niceStep(math.max(1.0, maxX) / 4);
+    // X axis: clock-friendly M:SS steps so long flights don't pile dozens
+    // of overlapping texts (the old 1-2-5 step landed on e.g. 8:20).
+    final xStep = replayXInterval(math.max(1.0, maxX));
+    final chartMaxX = math.max(1.0, maxX);
+    final playheadX =
+        (positionMs / 1000).clamp(0.0, chartMaxX).toDouble();
 
-    // Tooltip legend kept 1:1 with the bars (played + dimmed future) so
-    // the touched bar index always resolves its row. The dimmed future is
-    // preview-only (see [previewBarAlpha]) and stays out of touch.
+    // Tooltip legend kept 1:1 with the bars (played + dimmed future +
+    // invisible per-series touch bars, in that order) so the touched bar
+    // index always resolves its row. Touch runs only on the transparent
+    // touch bars over the unified bins (no junction duplicate): one match
+    // per series on either side of the playhead — never twins, never
+    // sticking. See [chartTouchData].
+    final touchBins = [
+      ...played,
+      ...future.skip(played.isEmpty ? 0 : 1),
+    ];
+    List<FlSpot> touchSpots(double Function(ChannelBin) pick) => [
+          for (final b in touchBins) FlSpot(b.startMs / 1000, pick(b)),
+        ];
+    LineChartBarData touchBar(List<FlSpot> s, Color c) => _bar(
+          s,
+          c.withValues(alpha: 0),
+        );
     return LineChart(
       _chartData(
         minX: 0,
-        maxX: math.max(1.0, maxX),
+        maxX: chartMaxX,
         maxY: maxY,
         bottomInterval: xStep,
+        playheadX: playheadX,
         played: [
           _bar(spots(played, (b) => b.matchedBps), AppColors.success),
           _bar(spots(played, (b) => b.unmatchedBps), AppColors.destructive,
@@ -635,18 +399,27 @@ class _ReplayChart extends StatelessWidget {
           dimmed(
               spots(future, (b) => b.unmatchedBps), AppColors.destructive),
         ],
+        touch: [
+          touchBar(
+              touchSpots((b) => b.matchedBps), AppColors.success),
+          touchBar(
+              touchSpots((b) => b.unmatchedBps), AppColors.destructive),
+        ],
         touchData: chartTouchData(
           entries: [
             ('OURS', AppColors.success),
             ('UNKNOWN', AppColors.destructive),
             ('OURS', AppColors.success),
             ('UNKNOWN', AppColors.destructive),
+            ('OURS', AppColors.success),
+            ('UNKNOWN', AppColors.destructive),
           ],
           unit: 'B/s',
-          formatX: (value) => '${value.toStringAsFixed(0)}s',
+          formatX: (value) => formatAxisMinSec(value),
           formatY: (value) => value.round().toString(),
+          touchBarsOnly: true,
         ),
-        bottomLabel: (value) => '${value.toStringAsFixed(0)}s',
+        bottomLabel: (value) => formatAxisMinSec(value),
       ),
       duration: Duration.zero,
     );
@@ -671,9 +444,11 @@ LineChartData _chartData({
   required double maxY,
   required List<LineChartBarData> played,
   List<LineChartBarData>? future,
+  List<LineChartBarData> touch = const [],
   required LineTouchData touchData,
   required String Function(double) bottomLabel,
   double? bottomInterval,
+  double? playheadX,
 }) {
   final step = _niceStep(maxY / 3);
   final interval = maxY / (maxY / step).round().clamp(2, 6);
@@ -683,6 +458,18 @@ LineChartData _chartData({
     maxX: maxX,
     minY: 0,
     maxY: maxY,
+    extraLinesData: playheadX == null
+        ? const ExtraLinesData()
+        : ExtraLinesData(
+            verticalLines: [
+              VerticalLine(
+                x: playheadX,
+                color: AppColors.mutedForeground,
+                strokeWidth: 1.2,
+                dashArray: [5, 4],
+              ),
+            ],
+          ),
     gridData: FlGridData(
       show: true,
       drawVerticalLine: true,
@@ -739,7 +526,7 @@ LineChartData _chartData({
       ),
     ),
     lineTouchData: touchData,
-    lineBarsData: [...played, ...?future],
+    lineBarsData: [...played, ...?future, ...touch],
   );
 }
 

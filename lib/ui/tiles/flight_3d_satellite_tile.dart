@@ -289,7 +289,7 @@ class SatFlightPainter extends CustomPainter {
     final display = FlightScene(
       trail: clampedTrail,
       rocketPos: clampedPos,
-      rocketIsDr: scene.rocketIsDr,
+      rocketIsDeadReckoning: scene.rocketIsDeadReckoning,
       maxAlt: scene.maxAlt,
       maxHoriz: scene.maxHoriz,
       pitchDeg: scene.pitchDeg,
@@ -341,7 +341,7 @@ class SatFlightPainter extends CustomPainter {
       Vector3(clampedPos.x, surfaceY + 0.05, clampedPos.z),
       1.2,
     );
-    paintDropLineAndDr(canvas, display, cam.vp, size,
+    paintDropLineAndDeadReckoning(canvas, display, cam.vp, size,
         anchorOverride: meshAnchor, groundY: surfaceY);
     if (under > 0.05) {
       paintUnderGroundLabel(

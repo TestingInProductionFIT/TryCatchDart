@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:serial/serial.dart';
 
+import '../../../core/format.dart';
 import '../../../state/replay_controller.dart';
 import '../../../state/telemetry_store.dart';
 import '../../../theme/app_colors.dart';
@@ -67,18 +68,24 @@ class TimeSeriesConfig {
 /// mono type) instead of fl_chart's default dark box, which is unreadable
 /// against the themes. Content is a muted time header plus one short
 /// single-line row per touched series in its own color, so values never
-/// wrap; [fitInsideHorizontally]/[fitInsideVertically] keep the box
-/// on-screen near the edges.
+/// wrap; multi-series rows pad into columns (labels left, values right)
+/// in the mono font; [fitInsideHorizontally]/[fitInsideVertically] keep
+/// the box on-screen near the edges.
 ///
-/// [entries] must align 1:1 with the chart's `lineBarsData` (including
-/// dimmed replay duplicates) — the touched bar's index picks its row.
+/// [entries] must align 1:1 with the chart's `lineBarsData` — the touched
+/// bar's index picks its row. Replay appends one invisible touch bar per
+/// series after the visual bars (transparent series color); their entries
+/// sit at the tail of [entries] in the same order.
 /// Alpha for the dimmed replay-future duplicates (played + future share one
 /// style per series, the future at this opacity).
 ///
-/// This doubles as the touch-exclusion marker (see [chartTouchData]):
-/// preview bars stay out of touch so a touch near the playhead reports each
-/// series once instead of twin heads + doubled rows. Keep played series
-/// fully opaque — anything faded is untouchable by convention.
+/// Bar roles for touch (see [chartTouchData]): in a replay only the
+/// invisible touch bars participate — one match per series, so hovers can
+/// never twin or stick across the playhead. Live builds no touch bars and
+/// touches its single opaque bar per series directly. Alpha is how touch
+/// tells the roles apart: object identity does not survive fl_chart's
+/// per-frame tween copies, but alpha (and RGB) lerp exactly, so
+/// transparent stays transparent and dimmed stays dimmed.
 const double previewBarAlpha = 0.25;
 
 LineTouchData chartTouchData({
@@ -86,21 +93,34 @@ LineTouchData chartTouchData({
   required String unit,
   required String Function(double x) formatX,
   required String Function(double y) formatY,
+  // Replay only (`false` live): the visual bars (played + dimmed future)
+  // sit out of touch and per-series invisible touch bars (transparent
+  // series color, appended after the visual bars) carry it instead — one
+  // touchable bar per series means a hover can never match twins, on
+  // either side of the playhead. Live keeps `false`: a single opaque bar
+  // per series, where twins are impossible and today's behavior is kept.
+  bool touchBarsOnly = false,
 }) {
   final suffix = unit.isEmpty ? '' : ' $unit';
-  // Preview (dimmed future) bars are untouchable. Alpha is used instead of
-  // bar identity on purpose: LineChart runs every frame through an animation
-  // tween, so the painter sees lerped *copies* and identical() never matches
-  // in production. Alpha survives the lerp (0.25 → 0.25); opaque played
-  // series never cross the threshold.
+  // Bar-role detection is alpha-based on purpose: LineChart runs every
+  // frame through an animation tween, so the painter sees lerped *copies*
+  // and identical() never matches in production. Alpha survives the lerp
+  // (transparent stays 0, dimmed stays 0.25, opaque stays 1); RGB does too,
+  // so a touch bar keeps its series hue while invisible.
   bool isPreviewBar(Color? color) => (color?.a ?? 1) < 0.5;
+  bool isTouchBar(Color? color) => (color?.a ?? 1) < 0.05;
+  // Live never builds dimmed or transparent bars, so "every opaque bar"
+  // is exactly "every bar" there — the live rule below is today's behavior
+  // verbatim.
+  bool participates(Color? color) =>
+      touchBarsOnly ? isTouchBar(color) : !isPreviewBar(color);
   return LineTouchData(
     handleBuiltInTouches: true,
     touchSpotThreshold: 12,
     getTouchedSpotIndicator: (bar, indexes) => [
       // fl_chart skips null entries, but the length must still match.
       for (final _ in indexes)
-        if (isPreviewBar(bar.color))
+        if (!participates(bar.color))
           null
         else
           TouchedSpotIndicatorData(
@@ -110,7 +130,10 @@ LineTouchData chartTouchData({
               getDotPainter: (spot, percent, touchedBar, index) =>
                   FlDotCirclePainter(
                 radius: 3.5,
-                color: touchedBar.color ?? AppColors.foreground,
+                // Touch bars are transparent series color — re-opacify so
+                // the head keeps its series hue. No-op on opaque bars.
+                color: (touchedBar.color ?? AppColors.foreground)
+                    .withValues(alpha: 1),
                 strokeWidth: 0,
               ),
             ),
@@ -133,21 +156,46 @@ LineTouchData chartTouchData({
         // row, no spacing — unlike empty strings, which still take a line).
         // The time header folds into the first *visible* row (spots arrive
         // closest-first, so row 0 is not necessarily shown).
-        final items = <LineTooltipItem?>[];
-        var headerShown = false;
+        //
+        // Two-pass column layout: visible rows are collected first so labels
+        // can be padded right (left-aligned) and values padded left
+        // (right-aligned). The box is monospace with tabular figures, so
+        // the padding yields real columns. Single-series tooltips are
+        // unaffected (padding is a no-op when every row has the same width).
+        final visible = <int>[];
         for (var i = 0; i < spots.length; i++) {
           final barIndex = spots[i].barIndex;
           if (barIndex < 0 ||
               barIndex >= entries.length ||
-              isPreviewBar(spots[i].bar.color)) {
+              !participates(spots[i].bar.color)) {
+            continue;
+          }
+          visible.add(i);
+        }
+        var labelW = 0;
+        var valueW = 0;
+        for (final i in visible) {
+          final label = entries[spots[i].barIndex].$1.toUpperCase();
+          if (label.length > labelW) labelW = label.length;
+          final v = formatY(spots[i].y);
+          if (v.length > valueW) valueW = v.length;
+        }
+        final visibleSet = visible.toSet();
+        final items = <LineTooltipItem?>[];
+        var headerShown = false;
+        for (var i = 0; i < spots.length; i++) {
+          if (!visibleSet.contains(i)) {
             items.add(null);
             continue;
           }
+          final barIndex = spots[i].barIndex;
+          final label =
+              entries[barIndex].$1.toUpperCase().padRight(labelW);
+          final value = formatY(spots[i].y).padLeft(valueW);
           items.add(
             LineTooltipItem(
               '${!headerShown ? '${formatX(spots[i].x)}\n' : ''}'
-              '${entries[barIndex].$1.toUpperCase()}  '
-              '${formatY(spots[i].y)}$suffix',
+              '$label  $value$suffix',
               AppText.mono.copyWith(
                 fontSize: 11.5,
                 fontWeight: FontWeight.w700,
@@ -397,12 +445,41 @@ class _TimeSeriesChartState extends ConsumerState<TimeSeriesChart> {
         legend.add((spec.label, spec.color));
       }
     }
+    if (fullFlight) {
+      // One invisible touch bar per series over the unified whole-flight
+      // samples (no junction duplicate): the only bars touch participates
+      // in during a replay, so a hover matches exactly one spot per series
+      // on either side of the playhead — never twins, never sticking.
+      // Transparent series color: invisible, yet carrying the series hue
+      // (re-opacified for the touch dot) through fl_chart's tween copies.
+      for (var i = 0; i < widget.config.series.length; i++) {
+        final spec = widget.config.series[i];
+        lineBars.add(
+          LineChartBarData(
+            spots: spotsFor(samples, spec),
+            color: spec.color.withValues(alpha: 0),
+            barWidth: 1.6,
+            isCurved: false,
+            dotData: const FlDotData(show: false),
+            belowBarData: BarAreaData(show: false),
+          ),
+        );
+        legend.add((spec.label, spec.color));
+      }
+    }
 
     final xInterval = _timeInterval(windowMs / 1000);
     // Left/right edge of the axis in packet-time: the rolling window live,
     // the whole 0..duration flight during a replay.
     final axisStartMs = fullFlight ? originMs : windowStart;
     final axisEndMs = fullFlight ? originMs + windowMs : nowMs;
+    final minX = (axisStartMs - originMs) / 1000;
+    final maxX = (axisEndMs - originMs) / 1000;
+    // Replay playhead in axis units (seconds from launch), clamped into
+    // the axis so the line stays visible at 0 / the very end.
+    final playheadX = fullFlight
+        ? ((nowMs - originMs) / 1000).clamp(minX, maxX).toDouble()
+        : null;
 
     // Display-only plot repainting on a 200 ms ticker (plus live data):
     // excluded from semantics so axis labels don't churn the Windows
@@ -461,10 +538,22 @@ class _TimeSeriesChartState extends ConsumerState<TimeSeriesChart> {
                   children: [
                     LineChart(
                       LineChartData(
-                        minX: (axisStartMs - originMs) / 1000,
-                        maxX: (axisEndMs - originMs) / 1000,
+                        minX: minX,
+                        maxX: maxX,
                         minY: minY,
                         maxY: maxY,
+                        extraLinesData: playheadX == null
+                            ? const ExtraLinesData()
+                            : ExtraLinesData(
+                                verticalLines: [
+                                  VerticalLine(
+                                    x: playheadX,
+                                    color: AppColors.mutedForeground,
+                                    strokeWidth: 1.2,
+                                    dashArray: [5, 4],
+                                  ),
+                                ],
+                              ),
                         gridData: FlGridData(
                           show: true,
                           drawVerticalLine: true,
@@ -522,7 +611,9 @@ class _TimeSeriesChartState extends ConsumerState<TimeSeriesChart> {
                               getTitlesWidget: (value, meta) => SideTitleWidget(
                                 meta: meta,
                                 child: Text(
-                                  '${value.toStringAsFixed(0)}s',
+                                  fullFlight
+                                      ? formatAxisMinSec(value)
+                                      : '${value.toStringAsFixed(0)}s',
                                   style: AppText.mono.copyWith(
                                     fontSize: 9.5,
                                     color: AppColors.faint,
@@ -535,8 +626,11 @@ class _TimeSeriesChartState extends ConsumerState<TimeSeriesChart> {
                         lineTouchData: chartTouchData(
                           entries: legend,
                           unit: widget.config.unit,
-                          formatX: (x) => '${x.toStringAsFixed(0)}s',
+                          formatX: (x) => fullFlight
+                              ? formatAxisMinSec(x)
+                              : '${x.toStringAsFixed(0)}s',
                           formatY: _formatValue,
+                          touchBarsOnly: fullFlight,
                         ),
                         lineBarsData: lineBars,
                       ),
@@ -583,7 +677,9 @@ class _TimeSeriesChartState extends ConsumerState<TimeSeriesChart> {
     if (seconds <= 30) return 10;
     if (seconds <= 60) return 15;
     if (seconds <= 150) return 30;
-    return (seconds / 5).roundToDouble();
+    // Whole-flight replay: clock-friendly M:SS steps (whole minutes) so
+    // ticks stay round on long flights.
+    return replayXInterval(seconds);
   }
 
   String _formatValue(double v) {

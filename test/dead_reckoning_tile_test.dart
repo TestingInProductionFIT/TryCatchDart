@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:qr_flutter/qr_flutter.dart';
+import 'package:dead_reckoning/dead_reckoning.dart' show DeadReckoningPosition;
 import 'package:serial/serial.dart' show FrameFlags, TelemetryFrame;
-import 'package:trycatch/core/dead_reckoning.dart';
 import 'package:trycatch/core/ring_buffer.dart';
 import 'package:trycatch/state/launch_site_store.dart' show LaunchSite;
 import 'package:trycatch/state/replay_controller.dart';
@@ -32,9 +32,9 @@ class _FreshStore extends TelemetryStore {
     history.push(frame);
     return TelemetryState(
       history: history,
-      deadReckoningHistory: RingBuffer<DrPosition>(10),
+      deadReckoningHistory: RingBuffer<DeadReckoningPosition>(10),
       latest: frame,
-      deadReckoning: const DrPosition(
+      deadReckoning: const DeadReckoningPosition(
           latitude: 50.0755, longitude: 14.4378, altitude: 403, atMs: 0),
     );
   }
@@ -55,9 +55,9 @@ class _StaleStore extends TelemetryStore {
     history.push(frame);
     return TelemetryState(
       history: history,
-      deadReckoningHistory: RingBuffer<DrPosition>(10),
+      deadReckoningHistory: RingBuffer<DeadReckoningPosition>(10),
       latest: frame,
-      deadReckoning: const DrPosition(
+      deadReckoning: const DeadReckoningPosition(
           latitude: 50.0800, longitude: 14.4400, altitude: 405, atMs: 0),
     );
   }

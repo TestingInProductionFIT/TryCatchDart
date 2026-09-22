@@ -3,9 +3,11 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:serial/serial.dart';
 
+import 'package:dead_reckoning/dead_reckoning.dart';
+
 import '../core/app_config.dart';
+import '../core/dead_reckoning_adapter.dart';
 import '../core/ring_buffer.dart';
-import '../core/dead_reckoning.dart';
 import './elevation_service.dart';
 import './telemetry_provider.dart';
 
@@ -18,11 +20,11 @@ class TelemetryState {
   /// Most recently decoded frame, or `null` before the first packet.
   final TelemetryFrame? latest;
 
-  /// Latest dead-reckoned position, or `null` before the first GPS fix.
-  final DrPosition? deadReckoning;
+  /// Latest dead reckoning position, or `null` before the first GPS fix.
+  final DeadReckoningPosition? deadReckoning;
 
-  /// Dead-reckoning history (chronological, bounded).
-  final RingBuffer<DrPosition> deadReckoningHistory;
+  /// Dead reckoning history (chronological, bounded).
+  final RingBuffer<DeadReckoningPosition> deadReckoningHistory;
 
   /// Capped flight history (chronological, bounded).
   final RingBuffer<TelemetryFrame> history;
@@ -102,25 +104,32 @@ class TelemetryStore extends Notifier<TelemetryState> {
   /// Dead reckoning kicks in only after GPS has been silent this long.
   /// Tiles reuse it to decide when the link (as opposed to just the GPS fix)
   /// has gone stale.
-  static const int drStaleMs = AppConfig.drStaleMs;
+  static const int deadReckoningStaleMs = AppConfig.deadReckoningStaleMs;
 
-  /// Interval between dead-reckoning points/ticks.
-  static const int drUpdateIntervalMs = AppConfig.drUpdateIntervalMs;
+  /// Interval between dead reckoning points/ticks.
+  static const int deadReckoningUpdateIntervalMs =
+      AppConfig.deadReckoningUpdateIntervalMs;
 
   late RingBuffer<TelemetryFrame> _history;
-  late RingBuffer<DrPosition> _drHistory;
-  final DeadReckoningEstimator _deadReckoning = DeadReckoningEstimator();
+  late RingBuffer<DeadReckoningPosition> _deadReckoningHistory;
+  final DeadReckoningEstimator _deadReckoningEstimator =
+      DeadReckoningEstimator();
 
-  /// Frame time of the last point pushed to the DR history.
-  int _lastDrMs = 0;
+  /// Frame time of the last point pushed to the dead reckoning history.
+  int _lastDeadReckoningMs = 0;
 
   /// z=12 tile key ("12/x/y") for the last terrain elevation query.  A new
   /// query is fired only when the rocket moves into a different tile (≈6 km
   /// at 50° lat) — within one tile the cached Future is reused instantly.
   String? _lastElevTileKey;
 
+  /// Terrain shape along the flight: tile key → MSL elevation. Fed to the
+  /// estimator as spatial samples so the ground clamp follows ridges and
+  /// valleys instead of one global floor.
+  final Map<String, double> _terrainElevations = {};
+
   /// Ground-side extrapolation timer while the link itself is silent.
-  Timer? _drTicker;
+  Timer? _deadReckoningTicker;
 
   /// Throttle: rebuild the exposed state at most this often (history-heavy
   /// tiles otherwise rebuild on every one of the 10 Hz packets).
@@ -131,7 +140,7 @@ class TelemetryStore extends Notifier<TelemetryState> {
   @override
   TelemetryState build() {
     _history = RingBuffer(_historyCapacity);
-    _drHistory = RingBuffer(_historyCapacity);
+    _deadReckoningHistory = RingBuffer(_historyCapacity);
 
     // Auto-ingest the live serial stream for the lifetime of the provider.
     ref.listen(telemetryStreamProvider, (previous, next) {
@@ -155,7 +164,7 @@ class TelemetryStore extends Notifier<TelemetryState> {
 
     return TelemetryState(
       history: _history,
-      deadReckoningHistory: _drHistory,
+      deadReckoningHistory: _deadReckoningHistory,
     );
   }
 
@@ -176,18 +185,21 @@ class TelemetryStore extends Notifier<TelemetryState> {
     _history.push(frame);
     // Dead reckoning is a live-only gap filler — replays show the recorded
     // GPS track as-is (no synthetic estimates).
-    DrPosition? dr;
+    DeadReckoningPosition? deadReckoning;
     if (!state.replaying) {
-      dr = _deadReckoning.update(frame);
-      if (dr != null && _shouldPushDr(frame.receivedAtMs)) {
-        _drHistory.push(dr);
-        _lastDrMs = frame.receivedAtMs;
+      deadReckoning = _deadReckoningEstimator.update(
+        deadReckoningSampleFromFrame(frame),
+      );
+      if (deadReckoning != null &&
+          _shouldPushDeadReckoning(frame.receivedAtMs)) {
+        _deadReckoningHistory.push(deadReckoning);
+        _lastDeadReckoningMs = frame.receivedAtMs;
       }
-      _ensureDrTicker();
+      _ensureDeadReckoningTicker();
       // Query terrain elevation whenever the fix moves into a new z=12 tile
-      // (≈6 km at 50° lat).  The elevation_service memory-caches per tile, so
+      // (≈6 km at 50° lat). The elevation_service memory-caches per tile, so
       // a cache hit resolves synchronously; misses fall through to the disk
-      // cache and then the network.  The DR estimator uses the result as its
+      // cache and then the network. The estimator uses the result as its
       // ground-collision floor via setTerrainFloor(), merging it with the
       // GPS-min heuristic via max() — so a bad terrain value can only raise
       // the clamp, never lower it below a confirmed fix.
@@ -206,7 +218,7 @@ class TelemetryStore extends Notifier<TelemetryState> {
     } else {
       state = _copyWithCurrent(
         latest: frame,
-        deadReckoning: dr,
+        deadReckoning: deadReckoning,
         packetCount: state.packetCount + 1,
         sourceName: sourceName ?? state.sourceName,
       );
@@ -220,7 +232,7 @@ class TelemetryStore extends Notifier<TelemetryState> {
   /// (26k rebuilds per scrub on a full flight log). Dead reckoning is a
   /// live-only gap filler, so in replay mode it is skipped exactly like in
   /// [ingest]; callers outside replay mode fall back to [ingest] to preserve
-  /// the DR + ticker behaviour.
+  /// the dead reckoning + ticker behaviour.
   void ingestPackets(List<TelemetryPacket> packets, {String? sourceName}) {
     if (packets.isEmpty) return;
     if (!state.replaying) {
@@ -252,60 +264,68 @@ class TelemetryStore extends Notifier<TelemetryState> {
     );
   }
 
-  /// DR is only computed while GPS is stale: with a fresh fix the fix itself
-  /// is the best estimate and the estimator would just duplicate the GPS
-  /// track. Once GPS has been silent for over drStaleMs, extrapolate.
-  bool _shouldPushDr(int nowMs) {
-    final lastFix = _deadReckoning.lastFixAtMs;
-    if (lastFix == null || nowMs - lastFix < drStaleMs) return false;
-    return nowMs - _lastDrMs >= drUpdateIntervalMs;
+  /// Dead reckoning is only computed while GPS is stale: with a fresh fix
+  /// the fix itself is the best estimate and the estimator would just
+  /// duplicate the GPS track. Once GPS has been silent for over
+  /// deadReckoningStaleMs, extrapolate.
+  bool _shouldPushDeadReckoning(int nowMs) {
+    final lastFix = _deadReckoningEstimator.lastFixAtMs;
+    if (lastFix == null || nowMs - lastFix < deadReckoningStaleMs) {
+      return false;
+    }
+    return nowMs - _lastDeadReckoningMs >= deadReckoningUpdateIntervalMs;
   }
 
-  /// Keeps extrapolating dead reckoning at [drUpdateIntervalMs] even when no
-  /// packets arrive at all (link loss), using the last known velocity.
-  void _ensureDrTicker() {
-    if (_drTicker != null) return;
-    _drTicker =
-        Timer.periodic(const Duration(milliseconds: drUpdateIntervalMs), (_) {
-      _extrapolateDr();
+  /// Keeps extrapolating dead reckoning at [deadReckoningUpdateIntervalMs]
+  /// even when no packets arrive at all (link loss), using the last known
+  /// velocity.
+  void _ensureDeadReckoningTicker() {
+    if (_deadReckoningTicker != null) return;
+    _deadReckoningTicker = Timer.periodic(
+        Duration(milliseconds: deadReckoningUpdateIntervalMs), (_) {
+      _extrapolateDeadReckoning();
     });
   }
 
-  void _extrapolateDr() {
+  void _extrapolateDeadReckoning() {
     if (state.replaying || _history.isEmpty) return;
     final latest = _history[0];
     final now = DateTime.now().millisecondsSinceEpoch;
-    // Data still flowing — the frame path owns DR updates.
-    if (now - latest.receivedAtMs < drStaleMs) return;
+    // Data still flowing — the frame path owns dead reckoning updates.
+    if (now - latest.receivedAtMs < deadReckoningStaleMs) return;
 
-    final dr = _deadReckoning.extrapolate(now);
-    if (dr == null) return;
-    if (dr.atMs - _lastDrMs < drUpdateIntervalMs) return;
-    _drHistory.push(dr);
-    _lastDrMs = dr.atMs;
+    final deadReckoning = _deadReckoningEstimator.extrapolate(now);
+    if (deadReckoning == null) return;
+    if (deadReckoning.atMs - _lastDeadReckoningMs <
+        deadReckoningUpdateIntervalMs) {
+      return;
+    }
+    _deadReckoningHistory.push(deadReckoning);
+    _lastDeadReckoningMs = deadReckoning.atMs;
     _rebuildState();
   }
 
   /// Clears the flight (new connection, new replay...).
   void reset({String? sourceName}) {
     _history.clear();
-    _drHistory.clear();
-    _deadReckoning.reset();
-    _lastDrMs = 0;
+    _deadReckoningHistory.clear();
+    _deadReckoningEstimator.reset();
+    _terrainElevations.clear();
+    _lastDeadReckoningMs = 0;
     _lastElevTileKey = null;
-    _drTicker?.cancel();
-    _drTicker = null;
+    _deadReckoningTicker?.cancel();
+    _deadReckoningTicker = null;
     _lastNotifyMs = 0;
     state = TelemetryState(
       history: _history,
-      deadReckoningHistory: _drHistory,
+      deadReckoningHistory: _deadReckoningHistory,
       sourceName: sourceName ?? '',
       replaying: state.replaying,
     );
   }
 
   /// Fires a terrain elevation query for [lat]/[lon] when the rocket has
-  /// moved into a new z=12 Terrarium tile.  The result is fed back to the DR
+  /// moved into a new z=12 Terrarium tile. The result is fed back to the dead
   /// estimator asynchronously via [setTerrainFloor]; any failure is silently
   /// swallowed — the estimator falls back to the GPS-min heuristic.
   void _maybeQueryTerrain(double lat, double lon) {
@@ -313,8 +333,27 @@ class TelemetryStore extends Notifier<TelemetryState> {
     if (key == _lastElevTileKey) return; // same tile — cached Future is enough
     _lastElevTileKey = key;
     elevationMsl(lat, lon).then((msl) {
-      if (msl != null) _deadReckoning.setTerrainFloor(msl);
+      if (msl == null) return;
+      _deadReckoningEstimator.setTerrainFloor(msl);
+      _terrainElevations[key] = msl;
+      if (_terrainElevations.length > 128) {
+        _terrainElevations.remove(_terrainElevations.keys.first);
+      }
+      _deadReckoningEstimator.setTerrainSamples([
+        for (final entry in _terrainElevations.entries)
+          DeadReckoningTerrainSample(
+            latitude: elevationTileCenter(entry.key).latitude,
+            longitude: elevationTileCenter(entry.key).longitude,
+            elevationMsl: entry.value,
+          ),
+      ]);
     });
+  }
+
+  /// Replaces the estimator tuning (e.g. from the tuning lab). Takes effect
+  /// on subsequent samples; already-integrated offsets are kept as-is.
+  void setDeadReckoningTune(DeadReckoningTune tune) {
+    _deadReckoningEstimator.tune = tune;
   }
 
   /// Marks whether the current data is a replay.
@@ -349,20 +388,20 @@ class TelemetryStore extends Notifier<TelemetryState> {
 
   /// Rebuilds the state object so tiles watching the provider repaint from
   /// the (already mutated) ring buffers. Always republishes the estimator's
-  /// current position: during a link loss the 1 Hz extrapolator advances it
-  /// with no new frames, and without this the exposed DR would freeze at the
-  /// last fix (indistinguishable from GPS).
+  /// current position: during a link loss the extrapolator advances it
+  /// with no new frames, and without this the exposed position would freeze
+  /// at the last fix (indistinguishable from GPS).
   void _rebuildState() {
     state = _copyWithCurrent(
       latest: _history.isEmpty ? null : _history[0],
-      deadReckoning: _deadReckoning.position,
+      deadReckoning: _deadReckoningEstimator.position,
     );
   }
 
   /// A new state sharing the live buffers, with the given overrides.
   TelemetryState _copyWithCurrent({
     TelemetryFrame? latest,
-    DrPosition? deadReckoning,
+    DeadReckoningPosition? deadReckoning,
     bool clearDeadReckoning = false,
     int? packetCount,
     int? errorCount,
@@ -371,7 +410,7 @@ class TelemetryStore extends Notifier<TelemetryState> {
   }) {
     return TelemetryState(
       history: _history,
-      deadReckoningHistory: _drHistory,
+      deadReckoningHistory: _deadReckoningHistory,
       latest: latest ?? state.latest,
       deadReckoning:
           clearDeadReckoning ? null : (deadReckoning ?? state.deadReckoning),

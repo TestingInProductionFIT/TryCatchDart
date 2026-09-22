@@ -273,7 +273,8 @@ class _FsmWidgetState extends ConsumerState<FsmTile> {
     var endMs = latest.receivedAtMs;
     if (!state.replaying) {
       final nowMs = DateTime.now().millisecondsSinceEpoch;
-      if (nowMs - latest.receivedAtMs > TelemetryStore.drStaleMs) {
+      if (nowMs - latest.receivedAtMs >
+          TelemetryStore.deadReckoningStaleMs) {
         endMs = nowMs;
       }
     }

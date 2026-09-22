@@ -490,10 +490,11 @@ void paintSkyAndFarTerrain(Canvas canvas, Size size, FlightCamera cam,
   );
 }
 
-/// GPS trail (solid blue). DR is never part of the trail — when
-/// [FlightScene.rocketIsDr] the trail stops at the last GPS fix and the
+/// GPS trail (solid blue). The dead reckoning estimate is never part of the
+/// trail — when [FlightScene.rocketIsDeadReckoning] is true the trail stops
+/// at the last GPS fix and the
 /// dead-reckoning leg is drawn separately as a violet dashed connector (see
-/// [paintDropLineAndDr]). With [tipOverride] (and a GPS-locked rocket) the
+/// [paintDropLineAndDeadReckoning]). With [tipOverride] (and a GPS-locked rocket) the
 /// last leg runs to the override (the CG-anchored, ground-clamped rocket
 /// position) instead of the raw reported fix, so the trail meets the
 /// rocket's middle.
@@ -529,7 +530,7 @@ void paintFlightTrail(
   for (var i = 1; i < scene.trail.length; i++) {
     leg(scene.trail[i - 1], scene.trail[i]);
   }
-  if (tipOverride != null && scene.trail.isNotEmpty && !scene.rocketIsDr) {
+  if (tipOverride != null && scene.trail.isNotEmpty && !scene.rocketIsDeadReckoning) {
     final last = scene.trail.last;
     if ((tipOverride - last).length > 1e-6) {
       leg(last, tipOverride);
@@ -608,14 +609,16 @@ void drawWorldDashedSegment(Canvas canvas, Vector3 a, Vector3 b, Matrix4 vp,
   }
 }
 
-/// Drop line rocket→ground plus the violet DR marker when dead-reckoned:
+/// Drop line rocket→ground plus the violet dead reckoning marker when
+/// dead-reckoned:
 /// a ring at the estimate and a dashed connector from the last known GPS
-/// position ([FlightScene.trail].last) to the estimate, so the DR position
+/// position ([FlightScene.trail].last) to the estimate, so the dead
+/// reckoning position
 /// never leaves a solid trail.
 /// With [anchorOverride] the line hangs from the CG anchor instead of the
 /// raw reported fix. [groundY] is the terrain surface under the rocket
 /// (0 on the flat plain view).
-void paintDropLineAndDr(
+void paintDropLineAndDeadReckoning(
     Canvas canvas, FlightScene scene, Matrix4 vp, Size size,
     {Vector3? anchorOverride, double groundY = 0.0}) {
   final top = anchorOverride ?? scene.rocketPos;
@@ -629,7 +632,7 @@ void paintDropLineAndDr(
       ..color = AppColors.mutedForeground.withValues(alpha: 0.45)
       ..strokeWidth = 1,
   );
-  if (scene.rocketIsDr) {
+  if (scene.rocketIsDeadReckoning) {
     if (scene.trail.isNotEmpty) {
       final last = scene.trail.last;
       if ((top - last).length > 1e-6) {

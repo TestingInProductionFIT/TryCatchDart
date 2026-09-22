@@ -1,8 +1,8 @@
+import 'package:dead_reckoning/dead_reckoning.dart' show haversineDistanceM;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/format.dart';
-import '../../core/geo.dart';
 import '../../state/replay_controller.dart';
 import '../../state/telemetry_store.dart';
 import '../components/position_readout.dart';
@@ -44,7 +44,7 @@ class StatsTile extends ConsumerWidget {
     // extrapolated readout.
     final linkStale = !replaying &&
         DateTime.now().millisecondsSinceEpoch - latest.receivedAtMs >
-            TelemetryStore.drStaleMs;
+            TelemetryStore.deadReckoningStaleMs;
 
     final fix = latest.gpsHas3dFix
         ? '3D fix'

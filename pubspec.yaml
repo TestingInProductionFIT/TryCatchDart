@@ -32,6 +32,8 @@ dependencies:
 
     serial:
         path: packages/serial
+    dead_reckoning:
+        path: packages/dead_reckoning
     qr_flutter: ^4.1.0
 
 dev_dependencies:

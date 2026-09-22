@@ -1,9 +1,9 @@
+import 'package:dead_reckoning/dead_reckoning.dart' show haversineDistanceM;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:serial/serial.dart';
 
 import '../../core/format.dart';
-import '../../core/geo.dart';
 import '../../state/replay_controller.dart';
 import '../../state/telemetry_store.dart';
 import '../../theme/app_colors.dart';

@@ -1,28 +1,28 @@
+import 'package:dead_reckoning/dead_reckoning.dart' show DeadReckoningPosition;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:serial/serial.dart' show FrameFlags, TelemetryFrame;
-import 'package:trycatch/core/dead_reckoning.dart';
 import 'package:trycatch/core/ring_buffer.dart';
 import 'package:trycatch/state/telemetry_store.dart';
 import 'package:trycatch/ui/tiles/map_tile.dart'
-    show drSegments, gpsTrackPoints;
+    show deadReckoningSegments, gpsTrackPoints;
 
 TelemetryState _state({
   List<TelemetryFrame> frames = const [],
-  List<DrPosition> dr = const [],
+  List<DeadReckoningPosition> deadReckoning = const [],
   bool replaying = false,
 }) {
   final history = RingBuffer<TelemetryFrame>(9000);
   for (final f in frames) {
     history.push(f);
   }
-  final drHistory = RingBuffer<DrPosition>(9000);
-  for (final p in dr) {
-    drHistory.push(p);
+  final deadReckoningHistory = RingBuffer<DeadReckoningPosition>(9000);
+  for (final p in deadReckoning) {
+    deadReckoningHistory.push(p);
   }
   return TelemetryState(
     history: history,
-    deadReckoningHistory: drHistory,
+    deadReckoningHistory: deadReckoningHistory,
     replaying: replaying,
   );
 }
@@ -36,7 +36,8 @@ TelemetryFrame _fix(int ms, double lat, double lon) => TelemetryFrame(
 
 const _noFix = TelemetryFrame(flags: 0);
 
-DrPosition _dr(int ms, double lat, double lon) => DrPosition(
+DeadReckoningPosition _position(int ms, double lat, double lon) =>
+    DeadReckoningPosition(
       latitude: lat,
       longitude: lon,
       altitude: 0,
@@ -86,17 +87,22 @@ void main() {
     });
   });
 
-  group('drSegments', () {
-    test('empty DR history yields no segments', () {
-      expect(drSegments(_state(frames: [_fix(1, 50.0, 14.0)])), isEmpty);
+  group('deadReckoningSegments', () {
+    test('empty dead reckoning history yields no segments', () {
+      expect(
+          deadReckoningSegments(_state(frames: [_fix(1, 50.0, 14.0)])),
+          isEmpty);
     });
 
     test('single gap is rooted at the last known fix', () {
       final s = _state(
         frames: [_fix(1000, 50.0, 14.0)],
-        dr: [_dr(2000, 50.001, 14.0), _dr(3000, 50.002, 14.0)],
+        deadReckoning: [
+          _position(2000, 50.001, 14.0),
+          _position(3000, 50.002, 14.0)
+        ],
       );
-      final segs = drSegments(s);
+      final segs = deadReckoningSegments(s);
       expect(segs, hasLength(1));
       expect(
         segs.single,
@@ -111,15 +117,15 @@ void main() {
     test('a >3 s jump splits the gap and re-roots at the newer fix', () {
       final s = _state(
         frames: [_fix(1000, 50.0, 14.0), _fix(9000, 51.0, 15.0)],
-        dr: [
-          _dr(2000, 50.001, 14.0),
-          _dr(3000, 50.002, 14.0),
+        deadReckoning: [
+          _position(2000, 50.001, 14.0),
+          _position(3000, 50.002, 14.0),
           // 7 s silence → new gap; fix at t=9000 anchors it.
-          _dr(10000, 51.001, 15.0),
-          _dr(11000, 51.002, 15.0),
+          _position(10000, 51.001, 15.0),
+          _position(11000, 51.002, 15.0),
         ],
       );
-      final segs = drSegments(s);
+      final segs = deadReckoningSegments(s);
       expect(segs, hasLength(2));
       expect(segs[0].first, const LatLng(50.0, 14.0));
       expect(
@@ -132,21 +138,21 @@ void main() {
       );
     });
 
-    test('fixes after a DR point do not anchor its segment', () {
+    test('fixes after a dead reckoning point do not anchor its segment', () {
       final s = _state(
         frames: [_fix(1000, 50.0, 14.0), _fix(5000, 52.0, 16.0)],
-        dr: [_dr(2000, 50.001, 14.0)],
+        deadReckoning: [_position(2000, 50.001, 14.0)],
       );
-      final segs = drSegments(s);
+      final segs = deadReckoningSegments(s);
       expect(segs, hasLength(1));
       // Anchor is the t=1000 fix, not the later one.
       expect(segs.single.first, const LatLng(50.0, 14.0));
     });
 
     test('single-point runs are dropped', () {
-      // One DR point with no prior fix → anchor-less single point.
-      final s = _state(dr: [_dr(2000, 50.001, 14.0)]);
-      expect(drSegments(s), isEmpty);
+      // One dead reckoning point with no prior fix → anchor-less point.
+      final s = _state(deadReckoning: [_position(2000, 50.001, 14.0)]);
+      expect(deadReckoningSegments(s), isEmpty);
     });
   });
 }

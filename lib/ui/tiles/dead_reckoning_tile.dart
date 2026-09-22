@@ -1,9 +1,9 @@
+import 'package:dead_reckoning/dead_reckoning.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:serial/serial.dart' show TelemetryFrame;
 
 import '../../core/format.dart';
-import '../../core/geo.dart';
 import '../../state/replay_controller.dart';
 import '../../state/telemetry_store.dart';
 import '../../theme/app_colors.dart';
@@ -18,8 +18,8 @@ import '../components/waiting_for_data.dart';
 ///   — the tile says so instead of showing a frozen estimate);
 /// * while the link is healthy the tile reports link-nominal instead of
 ///   duplicating the GPS fix — the estimate only appears on packet loss
-///   (no packets for over [TelemetryStore.drStaleMs], the same threshold
-///   the store extrapolator, the GPS tile and the 3D views use).
+///   (no packets for over [TelemetryStore.deadReckoningStaleMs], the same
+///   threshold the store extrapolator, the GPS tile and the 3D views use).
 ///
 /// On loss the tile shows the extrapolated coordinates plus altitude,
 /// drift (horizontal distance from the launch site) and the 3D distance
@@ -67,7 +67,7 @@ class DeadReckoningTile extends ConsumerWidget {
     // Packet loss = the link itself is silent, not just the GPS fix.
     final linkStale = DateTime.now().millisecondsSinceEpoch -
             latest.receivedAtMs >
-        TelemetryStore.drStaleMs;
+        TelemetryStore.deadReckoningStaleMs;
 
     if (!linkStale) {
       return Center(
@@ -98,23 +98,23 @@ class DeadReckoningTile extends ConsumerWidget {
       );
     }
 
-    final dr = state.deadReckoning;
-    if (dr == null) {
+    final deadReckoning = state.deadReckoning;
+    if (deadReckoning == null) {
       return Center(
         child: WaitingForData(hint: 'Signal lost — no fix to project yet'),
       );
     }
 
-    final drAlt = site == null
-        ? dr.altitude
-        : dr.altitude < site.altitudeMsl
+    final deadReckoningAlt = site == null
+        ? deadReckoning.altitude
+        : deadReckoning.altitude < site.altitudeMsl
             ? site.altitudeMsl
-            : dr.altitude;
+            : deadReckoning.altitude;
 
     final drift = site == null
         ? null
-        : haversineDistanceM(
-            site.latitude, site.longitude, dr.latitude, dr.longitude);
+        : haversineDistanceM(site.latitude, site.longitude,
+            deadReckoning.latitude, deadReckoning.longitude);
 
     // Last known GPS position: the newest frame in history carrying a fix
     // (the latest frame itself usually has none — that is why the estimate
@@ -132,19 +132,23 @@ class DeadReckoningTile extends ConsumerWidget {
             lastFix.latitude,
             lastFix.longitude,
             lastFix.gpsAltitude,
-            dr.latitude,
-            dr.longitude,
-            drAlt,
+            deadReckoning.latitude,
+            deadReckoning.longitude,
+            deadReckoningAlt,
           );
 
     return PositionReadout(
-      coords: formatLatLon(dr.latitude, dr.longitude),
-      copyText: formatLatLonPlain(dr.latitude, dr.longitude),
-      qrLatitude: dr.latitude,
-      qrLongitude: dr.longitude,
+      coords: formatLatLon(deadReckoning.latitude, deadReckoning.longitude),
+      copyText:
+          formatLatLonPlain(deadReckoning.latitude, deadReckoning.longitude),
+      qrLatitude: deadReckoning.latitude,
+      qrLongitude: deadReckoning.longitude,
       qrTitle: 'Dead reckoning',
       details: [
-        (text: 'Altitude ${formatAltitudeM(drAlt)}', tooltip: null),
+        (
+          text: 'Altitude ${formatAltitudeM(deadReckoningAlt)}',
+          tooltip: null
+        ),
         if (drift != null)
           (
             text: 'Drift ${formatDistanceM(drift)}',

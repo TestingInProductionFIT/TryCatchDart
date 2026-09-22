@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:dead_reckoning/dead_reckoning.dart' show DeadReckoningPosition;
 import 'package:serial/serial.dart' show FrameFlags, TelemetryFrame;
-import 'package:trycatch/core/dead_reckoning.dart';
 import 'package:trycatch/core/ring_buffer.dart';
 import 'package:trycatch/state/replay_controller.dart';
 import 'package:trycatch/state/telemetry_store.dart';
@@ -29,7 +29,7 @@ class _GpsFixStore extends TelemetryStore {
     history.push(frame);
     return TelemetryState(
       history: history,
-      deadReckoningHistory: RingBuffer<DrPosition>(10),
+      deadReckoningHistory: RingBuffer<DeadReckoningPosition>(10),
       latest: frame,
       // Replay screen: dead reckoning hidden, follow path still active.
       replaying: true,

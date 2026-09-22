@@ -3,11 +3,11 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'package:dead_reckoning/dead_reckoning.dart' show metresPerDegreeLat;
 import 'package:flutter_map/flutter_map.dart'
     show BuiltInMapCachingProvider;
 import 'package:vector_math/vector_math_64.dart';
 
-import '../../../core/geo.dart';
 import '../../../theme/app_colors.dart';
 import './tile_io.dart';
 import './slippy_math.dart';

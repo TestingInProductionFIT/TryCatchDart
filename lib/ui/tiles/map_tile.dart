@@ -275,10 +275,10 @@ class _TrackPolylines extends ConsumerWidget {
     final gps = gpsTrackPoints(state);
     return PolylineLayer(
       polylines: [
-        // Dead-reckoning: one dashed segment per GPS gap, each rooted
+        // Dead reckoning: one dashed segment per GPS gap, each rooted
         // at the last known fix — never a single line from the pad.
         if (!replaying)
-          for (final segment in drSegments(state))
+          for (final segment in deadReckoningSegments(state))
             if (segment.length > 1)
               Polyline(
                 points: segment,
@@ -298,7 +298,7 @@ class _TrackPolylines extends ConsumerWidget {
   }
 }
 
-/// Live position markers (GPS fix + DR estimate). Same rebuild isolation as
+/// Live position markers (GPS fix + dead reckoning estimate). Same rebuild
 /// [_TrackPolylines]; marker widgets are cheap and carry no tooltips.
 class _LiveMarkers extends ConsumerWidget {
   const _LiveMarkers();
@@ -316,16 +316,18 @@ class _LiveMarkers extends ConsumerWidget {
         ? LatLng(latest.latitude, latest.longitude)
         : null;
     // Dead reckoning is a live-only gap filler — never shown during replay.
-    final dr = state.replaying ? null : state.deadReckoning;
-    final drPoint = dr == null ? null : LatLng(dr.latitude, dr.longitude);
-    if (gpsPoint == null && drPoint == null) {
+    final deadReckoning = state.replaying ? null : state.deadReckoning;
+    final deadReckoningPoint = deadReckoning == null
+        ? null
+        : LatLng(deadReckoning.latitude, deadReckoning.longitude);
+    if (gpsPoint == null && deadReckoningPoint == null) {
       return const MarkerLayer(markers: []);
     }
     return MarkerLayer(
       markers: [
-        if (drPoint != null)
+        if (deadReckoningPoint != null)
           Marker(
-            point: drPoint,
+            point: deadReckoningPoint,
             width: 16,
             height: 16,
             child: Container(
@@ -395,21 +397,22 @@ List<LatLng> gpsTrackPoints(TelemetryState state, {int maxPoints = 1500}) {
   return points;
 }
 
-/// Dead-reckoning track split into one segment per GPS gap. Points within a
+/// Dead reckoning track split into one segment per GPS gap. Points within a
 /// gap arrive at 1 Hz, so a >3 s jump starts a new gap; each segment is
 /// rooted at the last known GPS fix so the dashed line grows out of where
 /// the fix was lost instead of trailing back to the pad (or bridging two
 /// unrelated gaps with a straight line).
 ///
-/// Single O(history + dr) pass: both buffers are chronological, so one
-/// forward walk tracks the newest fix at or before each DR point. (The
-/// previous implementation re-scanned the whole history newest-first per
-/// segment — quadratic on gap-heavy flights, on every telemetry tick.)
-List<List<LatLng>> drSegments(TelemetryState state) {
+/// Single O(history + dead reckoning) pass: both buffers are chronological,
+/// so one forward walk tracks the newest fix at or before each dead
+/// reckoning point. (The previous implementation re-scanned the whole
+/// history newest-first per segment — quadratic on gap-heavy flights, on
+/// every telemetry tick.)
+List<List<LatLng>> deadReckoningSegments(TelemetryState state) {
   final history = state.history;
-  final dr = state.deadReckoningHistory;
+  final deadReckoning = state.deadReckoningHistory;
   final segments = <List<LatLng>>[];
-  if (dr.isEmpty) return segments;
+  if (deadReckoning.isEmpty) return segments;
 
   var h = 0;
   final hLen = history.length;
@@ -417,8 +420,8 @@ List<List<LatLng>> drSegments(TelemetryState state) {
   List<LatLng>? current;
   var prevMs = -1;
 
-  for (var i = 0; i < dr.length; i++) {
-    final p = dr.getChronological(i);
+  for (var i = 0; i < deadReckoning.length; i++) {
+    final p = deadReckoning.getChronological(i);
     while (h < hLen) {
       final f = history.getChronological(h);
       if (f.receivedAtMs > p.atMs) break;

@@ -113,6 +113,13 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.0.0"
+  dead_reckoning:
+    dependency: "direct main"
+    description:
+      path: "packages/dead_reckoning"
+      relative: true
+    source: path
+    version: "0.1.0"
   dylib:
     dependency: transitive
     description:

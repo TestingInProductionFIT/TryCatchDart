@@ -26,7 +26,7 @@ void main() {
       FlightScene(
         trail: [Vector3.zero(), Vector3(50, 30, -40), rocket],
         rocketPos: rocket,
-        rocketIsDr: false,
+        rocketIsDeadReckoning: false,
         maxAlt: 500,
         maxHoriz: 300,
         pitchDeg: 0,

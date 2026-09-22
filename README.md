@@ -13,6 +13,7 @@ No hardware? The built-in **MOCK** port runs a full-flight simulator (pad → as
 - **Telemetry tiles** — altitude / velocity / acceleration / battery / hall-sensor charts, GPS + dead-reckoning map, 3D rocket attitude, 3D flight path (plain + satellite), flight-state machine, GPS position, dead-reckoning estimate (packet loss only, live only), max altitude, nose-cone lock state, and a command panel.
 - **Recording & replay** — one-click recording to `Documents/TryCatch/recordings/*.bin`, with seek + speed + loop control on replay (Space toggles pause/play). Recordings carry launch site, time span, packet count and peaks in the file header. The playback bar has a display-smoothing toggle (3D trail + rotation, on by default); recordings, charts and map stay raw.
 - **GPS gap filling** — ground-side dead reckoning bridges GPS outages so tracks stay connected.
+- **Dead reckoning tuning** — its own screen: guided re-tune against a flight recording (one 0–100 score per tune, per-phase breakdown, rotatable 3D outage preview), apply live or share as a short string.
 - **Channel health** — checks whether your frequency is free before launch (clear / activity / interference), mirrored live in the top bar.
 - **Command uplink** — send commands to the rocket with two-click confirmation for arming/pyro.
 

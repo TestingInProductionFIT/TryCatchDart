@@ -1,6 +1,6 @@
 import 'dart:math' as math;
+import 'package:dead_reckoning/dead_reckoning.dart' show metresPerDegreeLat;
 import 'package:vector_math/vector_math_64.dart';
-import '../../../core/geo.dart';
 
 /// Pure slippy-map math and 3D terrain projection geometry.
 ///

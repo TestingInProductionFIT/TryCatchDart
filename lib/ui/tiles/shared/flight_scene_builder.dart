@@ -6,12 +6,12 @@ library;
 
 import 'dart:math' as math;
 
+import 'package:dead_reckoning/dead_reckoning.dart' show metresPerDegreeLat;
 import 'package:flutter/material.dart' show IconData, Icons;
 import 'package:vector_math/vector_math_64.dart' hide Colors;
 import 'package:serial/serial.dart';
 
 import '../../../state/launch_site_store.dart';
-import '../../../core/geo.dart';
 import '../../../state/replay_controller.dart';
 import '../../../state/telemetry_store.dart';
 /// Shared scene, camera and painter helpers for the 3D flight views (plain
@@ -44,7 +44,7 @@ class FlightScene {
   final Vector3 rocketPos;
 
   /// `true` when [rocketPos] is a dead-reckoning estimate (GPS stale).
-  final bool rocketIsDr;
+  final bool rocketIsDeadReckoning;
   final double maxAlt;
   final double maxHoriz;
   final double pitchDeg;
@@ -59,7 +59,7 @@ class FlightScene {
   const FlightScene({
     required this.trail,
     required this.rocketPos,
-    required this.rocketIsDr,
+    required this.rocketIsDeadReckoning,
     required this.maxAlt,
     required this.maxHoriz,
     required this.pitchDeg,
@@ -186,7 +186,7 @@ FlightScene? buildFlightScene(TelemetryState state, LaunchSite? site) {
   // points never move as history grows, then capped from the end so the
   // tip stays exact. Dead reckoning is intentionally NOT part of the
   // trail — when GPS is stale the estimate is shown as a single violet
-  // point (see showDr).
+  // point (see showDeadReckoning).
   final all = <Vector3>[];
   var lastGpsBucket = -1;
 
@@ -204,18 +204,20 @@ FlightScene? buildFlightScene(TelemetryState state, LaunchSite? site) {
   // Before the first fix (pad wait) the rocket sits on the pad — show it
   // there immediately instead of a blank "waiting" tile.
   // A silent link (no packets at all, e.g. disconnected radio) also falls
-  // back to DR: the last frame still carries a fix, so staleness is judged
-  // against the wall clock, exactly like the store's 1 Hz extrapolator.
-  final drNow = state.replaying ? null : state.deadReckoning;
-  final linkStale = drNow != null &&
+  // back to the dead reckoning estimate: the last frame still carries a
+  // fix, so staleness is judged against the wall clock, exactly like the
+  // store's extrapolator.
+  final deadReckoningNow = state.replaying ? null : state.deadReckoning;
+  final linkStale = deadReckoningNow != null &&
       !state.replaying &&
       DateTime.now().millisecondsSinceEpoch - latest.receivedAtMs >
-          TelemetryStore.drStaleMs;
-  final showDr = drNow != null && (!latest.gpsHasFix || linkStale);
+          TelemetryStore.deadReckoningStaleMs;
+  final showDeadReckoning =
+      deadReckoningNow != null && (!latest.gpsHasFix || linkStale);
   Vector3 rocketPos;
-  if (showDr) {
-    rocketPos =
-        enu(drNow.latitude, drNow.longitude, drNow.altitude - groundMsl);
+  if (showDeadReckoning) {
+    rocketPos = enu(deadReckoningNow.latitude, deadReckoningNow.longitude,
+        deadReckoningNow.altitude - groundMsl);
   } else if (latest.gpsHasFix) {
     rocketPos = enu(latest.latitude, latest.longitude, latest.baroAltitude);
   } else if (trail.isNotEmpty) {
@@ -236,7 +238,7 @@ FlightScene? buildFlightScene(TelemetryState state, LaunchSite? site) {
   return FlightScene(
     trail: trail,
     rocketPos: rocketPos,
-    rocketIsDr: showDr,
+    rocketIsDeadReckoning: showDeadReckoning,
     maxAlt: maxAlt,
     maxHoriz: maxHoriz,
     pitchDeg: latest.pitch,
@@ -341,7 +343,7 @@ FlightScene? buildReplayScene({
     return FlightScene(
       trail: const [],
       rocketPos: pad,
-      rocketIsDr: false,
+      rocketIsDeadReckoning: false,
       maxAlt: pad.y,
       maxHoriz: 0,
       pitchDeg: padAttitude.pitchDeg,
@@ -407,7 +409,7 @@ FlightScene? buildReplayScene({
     // Same smoothing as the trail tip: the rocket can never disagree
     // with the line it sits on.
     rocketPos: tipPoint,
-    rocketIsDr: false,
+    rocketIsDeadReckoning: false,
     maxAlt: maxAlt,
     maxHoriz: maxHoriz,
     pitchDeg: pitchDeg,

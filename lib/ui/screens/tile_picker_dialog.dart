@@ -1,10 +1,10 @@
 import 'dart:math' as math;
 
+import 'package:dead_reckoning/dead_reckoning.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:serial/serial.dart';
 
-import '../../core/dead_reckoning.dart';
 import '../../core/ring_buffer.dart';
 import '../../state/layout_tree.dart';
 import '../../state/launch_site_store.dart';
@@ -329,7 +329,7 @@ class _DummyTelemetryStore extends TelemetryStore {
   TelemetryState build() {
     final now = DateTime.now().millisecondsSinceEpoch;
     final history = RingBuffer<TelemetryFrame>(30);
-    final drHistory = RingBuffer<DrPosition>(30);
+    final deadReckoningHistory = RingBuffer<DeadReckoningPosition>(30);
 
     const int count = 25;
     for (var i = 0; i < count; i++) {
@@ -372,7 +372,7 @@ class _DummyTelemetryStore extends TelemetryStore {
       );
       history.push(frame);
 
-      drHistory.push(DrPosition(
+      deadReckoningHistory.push(DeadReckoningPosition(
         atMs: frameTime,
         latitude: lat,
         longitude: lon,
@@ -382,9 +382,9 @@ class _DummyTelemetryStore extends TelemetryStore {
 
     return TelemetryState(
       history: history,
-      deadReckoningHistory: drHistory,
+      deadReckoningHistory: deadReckoningHistory,
       latest: history.last,
-      deadReckoning: drHistory.last,
+      deadReckoning: deadReckoningHistory.last,
       packetCount: 250,
       errorCount: 0,
       sourceName: 'DEMO',

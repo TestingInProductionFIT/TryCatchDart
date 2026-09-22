@@ -36,7 +36,7 @@ class AltitudeChartTile extends ConsumerWidget {
           showLegend: false,
           series: [
             SeriesSpec(
-              label: 'Barometric altitude',
+              label: 'Altitude',
               color: AppColors.seriesAltitude,
               value: (f) => f.baroAltitude,
             ),

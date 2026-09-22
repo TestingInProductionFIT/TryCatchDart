@@ -7,8 +7,8 @@ import 'dart:math' as math;
 import 'frame_codec.dart';
 import 'telemetry_frame.dart';
 
-/// Metres per degree of latitude (mirrors the app's `core/geo.dart`
-/// `metresPerDegreeLat` — the serial package cannot import app code).
+/// Metres per degree of latitude (mirrors `package:dead_reckoning`
+/// `metresPerDegreeLat` — the serial package cannot import it).
 const double _metresPerDegreeLat = 111320;
 
 /// Simulated flight phases. Distinct from [FsmState] (the reported rocket

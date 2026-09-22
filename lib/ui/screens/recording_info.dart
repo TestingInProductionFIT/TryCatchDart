@@ -1,7 +1,8 @@
 import 'dart:io';
 
+import 'package:dead_reckoning/dead_reckoning.dart' show haversineDistanceM;
+
 import '../../core/flight_events.dart';
-import '../../core/geo.dart';
 import '../../services/flight_trim.dart';
 import '../../state/launch_site_store.dart';
 

@@ -2,10 +2,10 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:dead_reckoning/dead_reckoning.dart'
+    show DeadReckoningPosition, metresPerDegreeLat;
 import 'package:serial/serial.dart';
 import 'package:trycatch/core/ring_buffer.dart';
-import 'package:trycatch/core/dead_reckoning.dart';
-import 'package:trycatch/core/geo.dart';
 import 'package:trycatch/state/telemetry_store.dart';
 import 'package:trycatch/ui/tiles/shared/flight_3d_common.dart';
 import 'package:trycatch/ui/tiles/shared/rocket_mesh.dart';
@@ -128,7 +128,7 @@ void main() {
         final history = RingBuffer<TelemetryFrame>(16)..push(frame);
         return TelemetryState(
           history: history,
-          deadReckoningHistory: RingBuffer<DrPosition>(16),
+          deadReckoningHistory: RingBuffer<DeadReckoningPosition>(16),
           latest: frame,
         );
       }
@@ -155,7 +155,7 @@ void main() {
         FlightScene(
           trail: const [],
           rocketPos: Vector3.zero(),
-          rocketIsDr: false,
+          rocketIsDeadReckoning: false,
           maxAlt: maxAlt,
           maxHoriz: maxHoriz,
           pitchDeg: 0,
@@ -359,7 +359,7 @@ void main() {
       }
       return TelemetryState(
         history: history,
-        deadReckoningHistory: RingBuffer<DrPosition>(16),
+        deadReckoningHistory: RingBuffer<DeadReckoningPosition>(16),
         latest: frames.last,
       );
     }
