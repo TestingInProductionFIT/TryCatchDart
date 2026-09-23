@@ -6,7 +6,7 @@ import 'package:serial/serial.dart';
 import 'package:trycatch/core/ring_buffer.dart';
 import 'package:trycatch/state/replay_controller.dart';
 import 'package:trycatch/state/telemetry_store.dart';
-import 'package:trycatch/state/tile_registry.dart';
+import 'package:trycatch/ui/tile_registry.dart';
 import 'package:trycatch/ui/components/waiting_for_data.dart';
 import 'package:trycatch/ui/tiles/events_tile.dart';
 

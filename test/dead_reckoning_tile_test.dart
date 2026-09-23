@@ -8,7 +8,7 @@ import 'package:trycatch/core/ring_buffer.dart';
 import 'package:trycatch/state/launch_site_store.dart' show LaunchSite;
 import 'package:trycatch/state/replay_controller.dart';
 import 'package:trycatch/state/telemetry_store.dart';
-import 'package:trycatch/state/tile_registry.dart';
+import 'package:trycatch/ui/tile_registry.dart';
 import 'package:trycatch/ui/tiles/dead_reckoning_tile.dart';
 import 'package:trycatch/ui/tiles/stats_tile.dart';
 

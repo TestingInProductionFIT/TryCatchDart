@@ -263,6 +263,12 @@ abstract final class AppDimens {
 
   /// Height of the workspace tab strip under the top bar.
   static const double workspaceTabsHeight = 44;
+
+  /// Timeline marker dot diameter (flight events).
+  static const double eventDotDiameter = 16;
+
+  /// Lane pitch for stacked event markers.
+  static const double eventLanePitch = 18;
 }
 
 /// Typography tokens for the "technical voice": monospace micro-labels for

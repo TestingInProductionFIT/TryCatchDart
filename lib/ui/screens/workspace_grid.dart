@@ -8,7 +8,7 @@ import '../../theme/app_colors.dart';
 import '../components/app_card.dart';
 import './tile_picker_dialog.dart';
 import '../../state/layout_tree.dart';
-import '../../state/tile_registry.dart';
+import '../tile_registry.dart';
 import '../../state/workspace_controller.dart';
 import '../../state/workspace_models.dart';
 

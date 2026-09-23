@@ -1,9 +1,9 @@
-import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/path_utils.dart';
 import '../../state/replay_controller.dart';
 import '../../theme/app_colors.dart';
 import '../../core/flight_events.dart';
@@ -389,7 +389,7 @@ class _ReplayBadge extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final fileName = ref.watch(
       replayProvider.select(
-        (s) => s.filePath?.split(Platform.pathSeparator).last ?? 'recording',
+        (s) => s.filePath == null ? 'recording' : basename(s.filePath!),
       ),
     );
     return Tooltip(

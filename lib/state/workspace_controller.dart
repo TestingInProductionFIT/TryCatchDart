@@ -7,7 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import './default_layouts.dart';
 import './layout_tree.dart';
-import './tile_registry.dart';
+import '../ui/tile_registry.dart';
 import './workspace_models.dart';
 import '../services/prefs_keys.dart';
 
@@ -70,41 +70,13 @@ class WorkspaceStore extends AsyncNotifier<WorkspaceState> {
         final loaded =
             WorkspaceState.fromJson(jsonDecode(raw) as Map<String, dynamic>);
         if (loaded.workspaces.isNotEmpty) {
-          return _healed(loaded);
+          return loaded;
         }
       }
     } catch (_) {
       // Corrupt persistence falls through to defaults.
     }
     return _defaultState();
-  }
-
-  /// Reassigns duplicate split ids left over from installs that used a
-  /// restart-resetting counter (they made one divider drag move several
-  /// tiles at once). Pure + cheap; runs once per load.
-  WorkspaceState _healed(WorkspaceState s) {
-    var changed = false;
-    final workspaces = [
-      for (final w in s.workspaces)
-        () {
-          final fixed = ensureUniqueSplitIds(w.root);
-          if (!identical(fixed, w.root)) {
-            changed = true;
-            return w.copyWith(root: fixed);
-          }
-          return w;
-        }(),
-    ];
-    if (!changed) return s;
-    final next = s.copyWith(workspaces: workspaces);
-    // Heal persistence in the background; the in-memory state is already fixed.
-    Future(() async {
-      try {
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setString(_prefsKey, jsonEncode(next.toJson()));
-      } catch (_) {}
-    });
-    return next;
   }
 
   WorkspaceState _defaultState() {
@@ -283,8 +255,6 @@ class WorkspaceStore extends AsyncNotifier<WorkspaceState> {
   }
 
   /// Updates a split ratio (divider drag), located by stable node id.
-  /// Only the first matching split moves, so duplicate ids from old
-  /// installs can never drag two dividers at once.
   Future<void> setRatio({
     required String nodeId,
     required double ratio,
@@ -438,12 +408,12 @@ class WorkspaceStore extends AsyncNotifier<WorkspaceState> {
       var dir = startDir;
       for (var i = 0; i < 10; i++) {
         final candidate = File('${dir.path}/lib/state/default_layouts.dart');
-        if (candidate.existsSync()) {
+        if (await candidate.exists()) {
           await candidate.writeAsString(buf.toString());
           return null; // success — null means no error
         }
         final pubspec = File('${dir.path}/pubspec.yaml');
-        if (pubspec.existsSync()) {
+        if (await pubspec.exists()) {
           final candidate2 = File('${dir.path}/lib/state/default_layouts.dart');
           await candidate2.writeAsString(buf.toString());
           return null;

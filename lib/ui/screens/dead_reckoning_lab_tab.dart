@@ -8,9 +8,10 @@ import 'package:serial/serial.dart' show TelemetryFrame;
 
 import '../../core/dead_reckoning_adapter.dart';
 import '../../core/format.dart';
+import '../../core/path_utils.dart';
 import '../../services/flight_trim.dart';
 import '../../state/dead_reckoning_tune_store.dart';
-import '../../state/elevation_service.dart';
+import '../../services/elevation_service.dart';
 import '../../state/recording_provider.dart';
 import '../../theme/app_colors.dart';
 import '../components/app_card.dart';
@@ -133,13 +134,18 @@ class _DeadReckoningLabTabState extends ConsumerState<DeadReckoningLabTab> {
     await for (final entity in dir.list()) {
       if (entity is File && entity.path.endsWith('.bin')) files.add(entity);
     }
-    files.sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
+    final mtimes = <File, DateTime>{};
+    for (final file in files) {
+      try {
+        mtimes[file] = await file.lastModified();
+      } catch (_) {
+        mtimes[file] = DateTime.fromMillisecondsSinceEpoch(0);
+      }
+    }
+    files.sort((a, b) => mtimes[b]!.compareTo(mtimes[a]!));
     return [
       for (final file in files)
-        _LabRecording(
-          file.path,
-          file.path.split(Platform.pathSeparator).last,
-        ),
+        _LabRecording(file.path, basename(file.path)),
     ];
   }
 

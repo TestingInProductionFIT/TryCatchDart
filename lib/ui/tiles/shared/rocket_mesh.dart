@@ -3,8 +3,6 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:vector_math/vector_math_64.dart';
 
-import '../../../theme/app_colors.dart';
-
 /// One flat-shaded triangle of the parametric rocket mesh.
 class RocketMeshTri {
   final Vector3 a, b, c;
@@ -123,7 +121,8 @@ abstract final class RocketMesh {
   static double get finSpan => _finSpan;
   static double get finSweep => _finSweep;
 
-  static final Color _bodyColor = AppColors.pink;
+  // Team pink airframe (identical in light + dark palettes, so const).
+  static const Color _bodyColor = Color(0xFFFF00A1);
   static const Color _blackColor = Color(0xFF232328);
 
   static final List<RocketMeshTri> triangles = _build();

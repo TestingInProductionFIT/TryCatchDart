@@ -3,7 +3,7 @@ import 'dart:ui' show Size;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trycatch/state/default_layouts.dart';
 import 'package:trycatch/state/layout_tree.dart';
-import 'package:trycatch/state/tile_registry.dart';
+import 'package:trycatch/ui/tile_registry.dart';
 import 'package:trycatch/state/workspace_models.dart';
 
 Size _minOf(String tileType) => TileRegistry.minSizeOf(tileType);

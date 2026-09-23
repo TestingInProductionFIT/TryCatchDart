@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:serial/serial.dart';
@@ -8,6 +7,8 @@ import './launch_site_store.dart';
 import '../core/app_config.dart';
 import '../core/channel_health.dart';
 import '../core/flight_events.dart';
+import '../core/path_utils.dart';
+import '../services/recording_repository.dart';
 import './telemetry_store.dart';
 
 /// Maps a recording header's launch reference to a display site, or `null`
@@ -164,7 +165,13 @@ class ReplayController extends Notifier<ReplayState> {
   int _loadGeneration = 0;
 
   @override
-  ReplayState build() => const ReplayState();
+  ReplayState build() {
+    ref.onDispose(() {
+      _ticker?.cancel();
+      _ticker = null;
+    });
+    return const ReplayState();
+  }
 
   TelemetryStore get _store => ref.read(telemetryStoreProvider.notifier);
 
@@ -187,9 +194,9 @@ class ReplayController extends Notifier<ReplayState> {
       loopEnabled: initialLoop,
     );
 
-    final packets = await _decode(path);
+    final loaded = await RecordingRepository.loadReplay(path);
     if (generation != _loadGeneration) return;
-    if (packets.isEmpty) {
+    if (loaded == null) {
       state = ReplayState(
         filePath: path,
         durationMs: 0,
@@ -201,21 +208,12 @@ class ReplayController extends Notifier<ReplayState> {
       return;
     }
 
-    _packets = packets;
+    _packets = loaded.packets;
     _index = 0;
-
-    // Pre-decode the whole flight so tiles can fix their axes up front.
-    final frames = <TelemetryFrame>[];
-    for (final packet in packets) {
-      final frame = FrameCodec.decode(
-        packet.rawData,
-        receivedAtMs: packet.receivedAtMs,
-      );
-      if (frame != null) frames.add(frame);
-    }
+    final frames = loaded.frames;
 
     _store.setReplaying(true);
-    final site = launchSiteFromHeader(await tryReadRecordingHeader(path));
+    final site = launchSiteFromHeader(loaded.header);
     if (generation != _loadGeneration) {
       _store.setReplaying(false);
       return;
@@ -232,7 +230,7 @@ class ReplayController extends Notifier<ReplayState> {
       );
       return;
     }
-    final channelProfile = buildChannelProfile(await readRecordingChunks(path));
+    final channelProfile = loaded.channelProfile;
     if (generation != _loadGeneration) {
       _store.setReplaying(false);
       return;
@@ -242,7 +240,7 @@ class ReplayController extends Notifier<ReplayState> {
       playing: true,
       speed: 1,
       positionMs: 0,
-      durationMs: packets.last.receivedAtMs - packets.first.receivedAtMs,
+      durationMs: _packets.last.receivedAtMs - _packets.first.receivedAtMs,
       frames: frames,
       launchSite: site,
       channelProfile: channelProfile,
@@ -252,16 +250,6 @@ class ReplayController extends Notifier<ReplayState> {
 
     _lastTickMs = DateTime.now().millisecondsSinceEpoch;
     _ticker = Timer.periodic(const Duration(milliseconds: 50), (_) => _tick());
-  }
-
-  /// Parses the recording at [path]. Files without a valid header yield
-  /// nothing.
-  Future<List<TelemetryPacket>> _decode(String path) async {
-    final packets = await FileParser().parseFile(path).toList();
-    final decodable = packets.any(
-      (p) => FrameCodec.decode(p.rawData, receivedAtMs: 0) != null,
-    );
-    return decodable ? packets : const [];
   }
 
   /// Advances the virtual clock and ingests everything that is due.
@@ -317,7 +305,9 @@ class ReplayController extends Notifier<ReplayState> {
       return;
     }
 
-    state = state.copyWith(positionMs: clock);
+    final duration = state.durationMs ?? (_packets.last.receivedAtMs - t0);
+    final clampedClock = duration > 0 ? clock.clamp(0, duration) : 0;
+    state = state.copyWith(positionMs: clampedClock);
 
     if (_index >= _packets.length) pause();
   }
@@ -469,5 +459,5 @@ class ReplayController extends Notifier<ReplayState> {
   }
 
   String _fileName() =>
-      state.filePath?.split(Platform.pathSeparator).last ?? 'replay';
+      state.filePath == null ? 'replay' : basename(state.filePath!);
 }

@@ -131,7 +131,7 @@ class _AppLifecycleWrapperState extends State<AppLifecycleWrapper>
       }
     });
     await _trayGuard('setIcon', () async {
-      final iconPath = _resolveTrayIconPath();
+      final iconPath = await _resolveTrayIconPath();
       if (iconPath == null) {
         debugPrint('System tray: no icon file found, skipping icon');
         return;
@@ -203,18 +203,18 @@ class _AppLifecycleWrapperState extends State<AppLifecycleWrapper>
   /// next to the executable under `data/flutter_assets/`. Returns `null`
   /// when neither exists so the caller can skip `setIcon` (AppIndicator
   /// needs a real file, not a bundled asset key).
-  String? _resolveTrayIconPath() {
+  Future<String?> _resolveTrayIconPath() async {
     final fileName = Platform.isWindows ? 'icon.ico' : 'icon.png';
     // Dev: repo root is the working directory.
     final dev = File('assets/$fileName');
-    if (dev.existsSync()) return dev.absolute.path;
+    if (await dev.exists()) return dev.absolute.path;
     // Installed bundle: <exeDir>/data/flutter_assets/assets/<file>.
     try {
       final exeDir = File(Platform.resolvedExecutable).parent.path;
       final sep = Platform.pathSeparator;
       final bundled =
           File('$exeDir${sep}data${sep}flutter_assets${sep}assets$sep$fileName');
-      if (bundled.existsSync()) return bundled.path;
+      if (await bundled.exists()) return bundled.path;
     } catch (_) {
       // Fall through to null.
     }

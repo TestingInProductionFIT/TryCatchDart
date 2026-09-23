@@ -101,6 +101,8 @@ List<FlightEvent> detectFlightEvents(List<TelemetryFrame> frames) {
 }
 
 /// Diameter of a timeline marker dot, in logical pixels.
+/// Canonical values live in `AppDimens`; kept here so pure layout code
+/// doesn't import Flutter theme.
 const double flightEventDotDiameterPx = 16;
 
 /// Vertical distance between adjacent marker lanes, in logical pixels.

@@ -115,7 +115,7 @@ If your task genuinely requires touching another agent's area:
 | Riverpod | 3, no codegen | `Notifier`/`AsyncNotifier`. Use `AsyncValue.value`, **not** `valueOrNull`. `ProviderScope.overrides` injects the worker isolate in `main`. |
 | fl_chart | 1.2 | `SideTitleWidget(meta: meta, child:)`, `LineChart(duration: Duration.zero)`, `StrokePattern.dashed`, `BarAreaData`. `BorderSide.strokeAlignInside` is a `double`, not an enum. |
 | flutter_map | 8.3 | + `latlong2`, `vector_math` (`transformed(Vector4)`, `transformed3(Vector3)`, `scaleByDouble(x,y,z,w)`). |
-| tray_manager | 0.5.3 | Linux: still calls deprecated `app_indicator_new()`. `linux/CMakeLists.txt` suppresses `-Wno-deprecated-declarations` on the plugin target only (guarded by `if(TARGET …)`). Our own code keeps `-Werror`. |
+| tray_manager | 0.7.0 | Linux: still calls deprecated `app_indicator_new()`. `linux/CMakeLists.txt` suppresses `-Wno-deprecated-declarations` on the plugin target only (guarded by `if(TARGET …)`). Our own code keeps `-Werror`. |
 | Others | — | `shared_preferences`, `path_provider`, `window_manager`, `flutter_libserialport`, local `packages/serial`. |
 
 No router package (4 flat screens via enum provider). No `build_runner`/freezed.
@@ -225,13 +225,17 @@ lib/
                      rocket mesh, orbit camera, map/satellite tile I/O
   state/             telemetry_store (ingestion point),
                      telemetry_provider (streams + serial config),
-                     replay_controller, tile_registry, layout_tree,
+                     replay_controller, layout_tree,
                      workspace_models, workspace_controller,
-                     launch_site_store, router, orbit camera
-  services/          flight_trim, prefs_keys
+                     launch_site_store, router, orbit camera,
+                     theme_mode_provider
+  ui/tile_registry.dart  tile descriptors (UI composition, was state/)
+  services/          flight_trim, prefs_keys, recording_repository,
+                     elevation_service (was state/), tile_fetch_service
    core/              pure logic (no Flutter/Riverpod):
                       dead_reckoning_adapter, ring_buffer, channel_health,
-                      packet_rate_tracker, format, flight_events
+                      packet_rate_tracker, format, flight_events,
+                      flight_stats, elevation_math, path_utils
    theme/             app_colors (palette + AppThemeMode + tokens), app_theme
 packages/serial/     framing, codec, worker isolate, mock simulator
 packages/dead_reckoning/  estimator + position + tune + eval + geo
@@ -289,7 +293,7 @@ Thin wrappers over `TimeSeriesChart`: altitude, velocity (horiz/vert-dashed/tota
 
 - **FSM**: big state + time-in-state (1 s ticker; replay uses playhead). Progress bar + pipeline/debug chip grids. Two-click send mirrors the control panel.
 - **Max alt**: peak + NOW.
-- **Nose cone** (`nosecone`, legacy id `parachute` still resolves): padlock icon + LOCKED (green) / UNLOCKED (red) from `hasNosecone`.
+- **Nose cone** (`nosecone`): padlock icon + LOCKED (green) / UNLOCKED (red) from `hasNosecone`.
 - **GPS position** (`stats`): large coordinates, one `·`-joined line (altitude + drift), fix-status footer, copy + QR-code actions.
 - **Dead reckoning** (`dead_reckoning`, live only): link-healthy placeholder while packets flow; shows extrapolated coordinates on packet loss. Disabled during replay. Both share `PositionReadout`.
 - **Highlights** (`highlights`): session extremes — max ascent/descent velocity, top speed (Mach), max acceleration (G). Replay-only third row: total drift + max altitude. Pinned by `highlights_test.dart`.

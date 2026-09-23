@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -8,6 +7,17 @@ import 'package:flutter_map/flutter_map.dart'
     show BuiltInMapCachingProvider, CachedMapTileMetadata;
 
 import '../core/app_config.dart';
+import '../core/elevation_math.dart'
+    show
+        demTileUrl,
+        elevationPixelX,
+        elevationPixelY,
+        elevationTileX,
+        elevationTileY,
+        terrariumHeight;
+
+export '../core/elevation_math.dart'
+    show elevationTileKey, elevationTileCenter;
 
 /// Lightweight MSL elevation look-up using the same AWS Terrarium tiles as
 /// the 3D satellite view (zoom 12, ≈24 m/px at 50° lat — well within the
@@ -26,60 +36,31 @@ import '../core/app_config.dart';
 /// Returns `null` on any failure; the caller falls back to the GPS-minimum
 /// heuristic.
 
-// ── Tile URL (mirrors satellite_ground.dart demTileUrl) ────────────────────
+// ── Tile URL + slippy math live in core/elevation_math.dart (single source) ─
 
-/// AWS Terrain Tiles in Terrarium encoding — no API key required.
-String _demTileUrl(int x, int y, int z) =>
-    'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/$z/$x/$y.png';
+int _tileX(double lon, int zoom) => elevationTileX(lon, zoom);
 
-// ── Slippy-map math (duplicated from slippy_math.dart to avoid ui→state dep) ─
-
-int _tileX(double lon, int zoom) {
-  final n = 1 << zoom;
-  return ((lon + 180) / 360 * n).floor().clamp(0, n - 1);
-}
-
-int _tileY(double lat, int zoom) {
-  final n = 1 << zoom;
-  final rad = lat * math.pi / 180;
-  final y = ((1 - math.log(math.tan(rad) + 1 / math.cos(rad)) / math.pi) /
-          2 *
-          n)
-      .floor();
-  return y.clamp(0, n - 1);
-}
+int _tileY(double lat, int zoom) => elevationTileY(lat, zoom);
 
 /// Returns the sub-tile pixel column [0, 255] for [lon] within tile [tx].
-int _pixelX(double lon, int zoom, int tx) {
-  final n = 1 << zoom;
-  final exact = (lon + 180) / 360 * n - tx;
-  return (exact * 256).floor().clamp(0, 255);
-}
+int _pixelX(double lon, int zoom, int tx) => elevationPixelX(lon, zoom, tx);
 
 /// Returns the sub-tile pixel row [0, 255] for [lat] within tile [ty].
-int _pixelY(double lat, int zoom, int ty) {
-  final n = 1 << zoom;
-  final rad = lat * math.pi / 180;
-  final mercY =
-      (1 - math.log(math.tan(rad) + 1 / math.cos(rad)) / math.pi) / 2 * n;
-  return ((mercY - ty) * 256).floor().clamp(0, 255);
-}
-
-// ── Terrarium height decode (one line from satellite_ground.dart) ────────────
+int _pixelY(double lat, int zoom, int ty) => elevationPixelY(lat, zoom, ty);
 
 /// Decodes one Terrarium pixel to metres above sea level.
-double _terrariumHeight(int r, int g, int b) =>
-    r * 256.0 + g + b / 256.0 - 32768.0;
+double _terrariumHeight(int r, int g, int b) => terrariumHeight(r, g, b);
 
 // ── In-memory tile cache ─────────────────────────────────────────────────────
 
 // Keyed by "$zoom/$x/$y" → decoded RGBA bytes of the 256×256 tile.
 // Futures are stored so concurrent queries for the same tile coalesce.
+// Bounded: failures are not cached, oldest entries evicted past 128.
 final Map<String, Future<Uint8List?>> _pixelCache = {};
 
 Future<Uint8List?> _loadTilePixels(int tx, int ty) async {
   const zoom = 12; // matches the 3D DEM zoom
-  final url = _demTileUrl(tx, ty, zoom);
+  final url = demTileUrl(tx, ty, zoom);
 
   Uint8List? rawBytes;
 
@@ -167,7 +148,19 @@ Future<double?> elevationMsl(double lat, double lon) async {
   final ty = _tileY(lat, zoom);
   final key = '$zoom/$tx/$ty';
 
-  final pixels = await _pixelCache.putIfAbsent(key, () => _loadTilePixels(tx, ty));
+  var future = _pixelCache[key];
+  future ??= _loadTilePixels(tx, ty).then((pixels) {
+    if (pixels == null) {
+      _pixelCache.remove(key);
+      return null;
+    }
+    if (_pixelCache.length > 128) {
+      _pixelCache.remove(_pixelCache.keys.first);
+    }
+    return pixels;
+  });
+  _pixelCache[key] = future;
+  final pixels = await future;
   if (pixels == null) return null;
 
   final px = _pixelX(lon, zoom, tx);
@@ -178,26 +171,3 @@ Future<double?> elevationMsl(double lat, double lon) async {
 
   return _terrariumHeight(pixels[i], pixels[i + 1], pixels[i + 2]);
 }
-
-/// The z=12 tile key ("12/x/y") for the given coordinates.
-/// [TelemetryStore] uses this to avoid re-querying the same tile.
-String elevationTileKey(double lat, double lon) {
-  const zoom = 12;
-  return '$zoom/${_tileX(lon, zoom)}/${_tileY(lat, zoom)}';
-}
-
-/// Centre of a tile key from [elevationTileKey], for placing terrain
-/// samples on the dead reckoning ground clamp.
-({double latitude, double longitude}) elevationTileCenter(String key) {
-  final parts = key.split('/');
-  final zoom = int.parse(parts[0]);
-  final x = int.parse(parts[1]);
-  final y = int.parse(parts[2]);
-  final n = 1 << zoom;
-  final longitude = (x + 0.5) / n * 360 - 180;
-  final latRad =
-      math.atan(_sinh(math.pi * (1 - 2 * (y + 0.5) / n)));
-  return (latitude: latRad * 180 / math.pi, longitude: longitude);
-}
-
-double _sinh(double x) => (math.exp(x) - math.exp(-x)) / 2;

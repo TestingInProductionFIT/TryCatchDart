@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:serial/serial.dart';
 
 /// Raw recording chunk I/O + trimming ("save part of a flight").
@@ -29,6 +31,11 @@ Future<int> trimRecording({
   required int startMs,
   required int endMs,
 }) async {
+  final srcHeader = await tryReadRecordingHeader(srcPath);
+  final srcLaunch = srcHeader?.launchRef;
+  if (srcLaunch == null) {
+    throw StateError('Source recording has no launch site.');
+  }
   final chunks = await readRecordingChunks(srcPath);
   if (chunks.isEmpty) return 0;
   final t0 = chunks.first.tsMs;
@@ -37,17 +44,19 @@ Future<int> trimRecording({
       if (c.tsMs - t0 >= startMs && c.tsMs - t0 <= endMs) c,
   ];
   if (kept.isEmpty) return 0;
-  await writeRecordingFile(
-    dstPath,
-    const RecordingHeader(payloadLength: TelemetryFraming.payloadLength),
-    kept,
-  );
-  final srcHeader = await tryReadRecordingHeader(srcPath);
-  final srcLaunch = srcHeader?.launchRef;
-  if (srcLaunch == null) {
-    throw StateError('Source recording has no launch site.');
+  try {
+    await writeRecordingFile(
+      dstPath,
+      const RecordingHeader(payloadLength: TelemetryFraming.payloadLength),
+      kept,
+    );
+    await finalizeRecordingFile(dstPath, launch: srcLaunch);
+  } catch (_) {
+    try {
+      await File(dstPath).delete();
+    } catch (_) {}
+    rethrow;
   }
-  await finalizeRecordingFile(dstPath, launch: srcLaunch);
   return kept.length;
 }
 

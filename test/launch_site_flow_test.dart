@@ -29,32 +29,32 @@ Future<LaunchSiteState> _loadWithPrefs(Map<String, dynamic> stored) async {
 
 void main() {
   group('LaunchSiteStore saved-only invariant', () {
-    test('adopts a stray selection into the presets', () async {
+    test('loads stored state as-is (no load-time repair)', () async {
       final state = await _loadWithPrefs({
         'selected': _site('Idk'),
         'presets': [_site('Home')],
       });
       expect(state.selected?.name, 'Idk');
       expect(
-        state.presets.map((p) => p.name).toSet(),
-        {'Idk', 'Home'},
+        state.presets.map((p) => p.name).toList(),
+        ['Home'],
       );
     });
 
-    test('null selection with presets falls through to the first', () async {
+    test('null selection loads as-is (invariant enforced on write)', () async {
       final state = await _loadWithPrefs({
         'selected': null,
         'presets': [_site('Alpha'), _site('Beta')],
       });
-      expect(state.selected?.name, 'Alpha');
+      expect(state.selected, isNull);
     });
 
-    test('duplicate preset names collapse', () async {
+    test('duplicates load as-is (savePreset dedupes on write)', () async {
       final state = await _loadWithPrefs({
         'selected': _site('Home'),
         'presets': [_site('Home'), _site('Home')],
       });
-      expect(state.presets.where((p) => p.name == 'Home').length, 1);
+      expect(state.presets.where((p) => p.name == 'Home').length, 2);
       expect(state.selected?.name, 'Home');
     });
 

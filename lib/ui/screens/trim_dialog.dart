@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/flight_events.dart';
 import '../../core/format.dart';
+import '../../core/path_utils.dart';
 import '../../services/flight_trim.dart';
 import '../../theme/app_colors.dart';
 import './recording_info.dart';
@@ -57,7 +58,7 @@ class _TrimDialogState extends State<TrimDialog> {
 
   Future<void> _save() async {
     final fileName = _name.text.trim();
-    if (fileName.isEmpty || fileName.contains(Platform.pathSeparator)) {
+    if (fileName.isEmpty || basename(fileName) != fileName) {
       setState(() => _error = 'Give the clip a plain file name.');
       return;
     }

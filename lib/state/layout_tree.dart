@@ -10,7 +10,7 @@ library;
 import 'dart:math' as math;
 import 'dart:ui' show Size;
 
-import 'package:flutter/material.dart' show debugPrint;
+import 'package:flutter/foundation.dart' show debugPrint;
 
 /// Per-tile-type minimum size in logical pixels (from `TileRegistry`).
 typedef MinSizeLookup = Size Function(String tileType);
@@ -123,47 +123,10 @@ class SplitNode extends LayoutNode {
 
 int _splitIdCounter = 0;
 
-/// Time-based unique ids: the old monotonic `s0, s1, …` counter reset to 0
-/// on every app restart, so a newly inserted split could reuse an id that
-/// already existed in the persisted tree. `setRatio`/`flipOrientation` match
-/// by id, so dragging one divider then moved every other divider sharing
-/// the id (e.g. resizing the middle tiles also resized the left tile, and
-/// two dividers lit up pink at once). Basing ids on wall-clock time makes
-/// collisions across restarts practically impossible.
+/// Unique split ids based on wall-clock time plus a process counter.
 String _nextSplitId() {
   final t = DateTime.now().microsecondsSinceEpoch.toRadixString(36);
   return 's${t}_${(_splitIdCounter++).toRadixString(36)}';
-}
-
-/// Walks [root] and reassigns any duplicate split ids in place (by
-/// rebuilding the affected nodes). Run after loading persisted JSON so old
-/// trees that already contain duplicates heal themselves.
-LayoutNode? ensureUniqueSplitIds(LayoutNode? root) {
-  final seen = <String>{};
-  LayoutNode? fix(LayoutNode? node) {
-    if (node is SplitNode) {
-      var id = node.id;
-      if (!seen.add(id)) {
-        id = _nextSplitId();
-        seen.add(id);
-      }
-      final a = fix(node.a);
-      final b = fix(node.b);
-      if (id == node.id && identical(a, node.a) && identical(b, node.b)) {
-        return node;
-      }
-      return SplitNode(
-        id: id,
-        vertical: node.vertical,
-        ratio: node.ratio,
-        a: a ?? node.a,
-        b: b ?? node.b,
-      );
-    }
-    return node;
-  }
-
-  return fix(root);
 }
 
 /// Leaf: one tile instance.
@@ -312,10 +275,7 @@ double _clampRatio(
 
 // ── Single-node updates + snapping (pure) ────────────────────────────────────
 
-/// Updates the ratio of the *first* split with [nodeId] (depth-first).
-/// Unlike a naive recursive rebuild this stops after one match, so even a
-/// tree that still contains duplicate ids (loaded from an old install)
-/// only moves the divider the user actually grabbed.
+/// Updates the ratio of the split with [nodeId] (depth-first, first match).
 LayoutNode? setSplitRatio(LayoutNode? node, String nodeId, double ratio) {
   if (node == null) return null;
   if (node is SplitNode) {

@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:dead_reckoning/dead_reckoning.dart' show haversineDistanceM;
 
 import '../../core/flight_events.dart';
+import '../../core/path_utils.dart';
 import '../../services/flight_trim.dart';
 import '../../state/launch_site_store.dart';
 
@@ -67,7 +68,7 @@ class RecordingInfo {
     this.launchSite,
   });
 
-  String get name => path.split(Platform.pathSeparator).last;
+  String get name => basename(path);
 
   String get directory => path.substring(0, path.length - name.length);
 

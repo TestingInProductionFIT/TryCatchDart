@@ -1,23 +1,23 @@
 import 'package:flutter/material.dart';
 
-import '../ui/tiles/acceleration_chart_tile.dart';
-import '../ui/tiles/altitude_chart_tile.dart';
-import '../ui/tiles/battery_chart_tile.dart';
-import '../ui/tiles/channel_health_tile.dart';
-import '../ui/tiles/control_panel_tile.dart';
-import '../ui/tiles/flight_3d_satellite_tile.dart';
-import '../ui/tiles/flight_3d_tile.dart';
-import '../ui/tiles/fsm_tile.dart';
-import '../ui/tiles/hall_sensor_tile.dart';
-import '../ui/tiles/highlights_tile.dart';
-import '../ui/tiles/map_tile.dart';
-import '../ui/tiles/max_altitude_tile.dart';
-import '../ui/tiles/nosecone_tile.dart';
-import '../ui/tiles/rocket_3d_tile.dart';
-import '../ui/tiles/dead_reckoning_tile.dart';
-import '../ui/tiles/events_tile.dart';
-import '../ui/tiles/stats_tile.dart';
-import '../ui/tiles/velocity_chart_tile.dart';
+import './tiles/acceleration_chart_tile.dart';
+import './tiles/altitude_chart_tile.dart';
+import './tiles/battery_chart_tile.dart';
+import './tiles/channel_health_tile.dart';
+import './tiles/control_panel_tile.dart';
+import './tiles/flight_3d_satellite_tile.dart';
+import './tiles/flight_3d_tile.dart';
+import './tiles/fsm_tile.dart';
+import './tiles/hall_sensor_tile.dart';
+import './tiles/highlights_tile.dart';
+import './tiles/map_tile.dart';
+import './tiles/max_altitude_tile.dart';
+import './tiles/nosecone_tile.dart';
+import './tiles/rocket_3d_tile.dart';
+import './tiles/dead_reckoning_tile.dart';
+import './tiles/events_tile.dart';
+import './tiles/stats_tile.dart';
+import './tiles/velocity_chart_tile.dart';
 
 /// Broad category used by the tile picker's filter chips.
 enum TileCategory {
@@ -254,8 +254,6 @@ abstract final class TileRegistry {
     for (final d in all) {
       if (d.id == id) return d;
     }
-    // Legacy workspaces persisted the nose-cone tile as 'parachute'.
-    if (id == 'parachute') return byId('nosecone');
     return null;
   }
 

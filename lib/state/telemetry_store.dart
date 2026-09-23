@@ -7,8 +7,9 @@ import 'package:dead_reckoning/dead_reckoning.dart';
 
 import '../core/app_config.dart';
 import '../core/dead_reckoning_adapter.dart';
+import '../core/flight_stats.dart' as stats;
 import '../core/ring_buffer.dart';
-import './elevation_service.dart';
+import '../services/elevation_service.dart';
 import './telemetry_provider.dart';
 
 /// Aggregate of everything the dashboard knows about the current flight.
@@ -53,31 +54,14 @@ class TelemetryState {
   });
 
   /// Maximum barometric altitude reached so far (m AGL).
-  double get maxAltitude {
-    var m = latest?.baroAltitude ?? 0.0;
-    for (final f in history) {
-      if (f.baroAltitude > m) m = f.baroAltitude;
-    }
-    return m;
-  }
+  double get maxAltitude =>
+      stats.maxBaroAltitude(history, latest?.baroAltitude ?? 0.0);
 
   /// Maximum total speed reached so far (m/s).
-  double get maxSpeed {
-    var m = 0.0;
-    for (final f in history) {
-      if (f.speedTotal > m) m = f.speedTotal;
-    }
-    return m;
-  }
+  double get maxSpeed => stats.maxTotalSpeed(history);
 
   /// Maximum total acceleration reached so far (m/s²).
-  double get maxAccel {
-    var m = 0.0;
-    for (final f in history) {
-      if (f.accelTotal > m) m = f.accelTotal;
-    }
-    return m;
-  }
+  double get maxAccel => stats.maxTotalAccel(history);
 
   /// `receivedAtMs` of the first frame in history, or `null` when empty.
   int? get firstPacketMs =>
@@ -141,6 +125,10 @@ class TelemetryStore extends Notifier<TelemetryState> {
   TelemetryState build() {
     _history = RingBuffer(_historyCapacity);
     _deadReckoningHistory = RingBuffer(_historyCapacity);
+    ref.onDispose(() {
+      _deadReckoningTicker?.cancel();
+      _deadReckoningTicker = null;
+    });
 
     // Auto-ingest the live serial stream for the lifetime of the provider.
     ref.listen(telemetryStreamProvider, (previous, next) {

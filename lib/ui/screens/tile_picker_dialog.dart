@@ -11,7 +11,7 @@ import '../../state/launch_site_store.dart';
 import '../../state/replay_controller.dart';
 import '../../state/telemetry_provider.dart';
 import '../../state/telemetry_store.dart';
-import '../../state/tile_registry.dart';
+import '../tile_registry.dart';
 import '../../state/workspace_controller.dart';
 import '../../theme/app_colors.dart';
 

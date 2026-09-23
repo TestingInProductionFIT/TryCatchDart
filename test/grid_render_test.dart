@@ -5,7 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:trycatch/ui/screens/dashboard_screen.dart';
-import 'package:trycatch/state/tile_registry.dart';
+import 'package:trycatch/ui/tile_registry.dart';
 
 /// Reproduction for "tiles only render in edit mode when a view has 2+".
 void main() {

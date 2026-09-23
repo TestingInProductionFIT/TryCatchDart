@@ -76,7 +76,7 @@ set_target_properties(${BINARY_NAME}
 # them to the application.
 include(flutter/generated_plugins.cmake)
 
-# tray_manager 0.5.3 still calls app_indicator_new(), which the
+# tray_manager still calls app_indicator_new(), which the
 # ayatana-appindicator headers mark deprecated (upstream has not migrated to
 # ayatana_app_indicator_new). Our APPLY_STANDARD_SETTINGS adds -Werror, so the
 # deprecation notice fails the build. Silence it for that third-party target

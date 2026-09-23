@@ -100,46 +100,11 @@ class LaunchSiteStore extends AsyncNotifier<LaunchSiteState> {
       final prefs = await SharedPreferences.getInstance();
       final raw = prefs.getString(_prefsKey);
       if (raw == null) return const LaunchSiteState();
-      final loaded =
-          LaunchSiteState.fromJson(jsonDecode(raw) as Map<String, dynamic>);
-      final normalized = _normalize(loaded);
-      if (!identical(normalized, loaded)) {
-        // Best-effort: persist the repaired invariant (selection is always
-        // one of the saved presets).
-        try {
-          await prefs.setString(_prefsKey, jsonEncode(normalized.toJson()));
-        } catch (_) {}
-      }
-      return normalized;
+      return LaunchSiteState.fromJson(jsonDecode(raw) as Map<String, dynamic>);
     } catch (_) {
       // Corrupt settings must never take the app down.
       return const LaunchSiteState();
     }
-  }
-
-  /// Enforces the saved-only invariant: preset names are unique, the
-  /// selection (when set) is one of the presets — a stray selection (e.g.
-  /// from the old session-only flow) is adopted into the presets — and an
-  /// empty selection with presets present falls through to the first.
-  /// Returns the input when nothing needs repair.
-  static LaunchSiteState _normalize(LaunchSiteState state) {
-    final seen = <String>{};
-    final presets = <LaunchSite>[];
-    for (final p in state.presets) {
-      if (seen.add(p.name)) presets.add(p);
-    }
-    var selected = state.selected;
-    var changed = presets.length != state.presets.length;
-    if (selected != null && !presets.any((p) => p.name == selected!.name)) {
-      presets.add(selected);
-      presets.sort((a, b) => a.name.compareTo(b.name));
-      changed = true;
-    } else if (selected == null && presets.isNotEmpty) {
-      selected = presets.first;
-      changed = true;
-    }
-    if (!changed) return state;
-    return LaunchSiteState(selected: selected, presets: presets);
   }
 
   Future<void> _persist(LaunchSiteState next) async {
