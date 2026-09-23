@@ -1,5 +1,10 @@
 import './layout_tree.dart';
 
+/// Leaf settings key carrying the 3D flight tiles' camera mode
+/// ([FlightCameraMode.name], e.g. `'onboard'`). Lives in the state layer so
+/// both the persistence format and the UI scope agree on the vocabulary.
+const String leafCameraModeKey = 'cameraMode';
+
 /// A named workspace: an independent tile arrangement (a layout tree).
 class Workspace {
   final String id;

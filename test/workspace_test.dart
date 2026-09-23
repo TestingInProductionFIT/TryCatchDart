@@ -132,6 +132,67 @@ void main() {
       expect(restored.leaves.map((l) => l.tileType), ['map', 'fsm']);
     });
 
+    test('leaf settings round-trip through JSON', () {
+      const settings = {leafCameraModeKey: 'onboard'};
+      final root = SplitNode(
+        vertical: false,
+        ratio: 0.5,
+        a: LeafNode(
+            tileId: 'w_3d', tileType: 'flight_3d', settings: settings),
+        b: leaf('map'),
+      );
+
+      final restored = LayoutNode.fromJson(root.toJson()) as SplitNode;
+      expect(restored.leaves.first.settings, settings);
+      expect(restored.leaves.last.settings, isEmpty);
+    });
+
+    test('setLeafSettings updates only the target leaf', () {
+      final root = treeFromOrder([leaf('map'), leaf('flight_3d')]);
+      final next = setLeafSettings(
+          root, 'w_flight_3d', {leafCameraModeKey: 'onboard'})!;
+      final byId = {for (final l in next.leaves) l.tileId: l};
+      expect(byId['w_flight_3d']!.settings[leafCameraModeKey], 'onboard');
+      expect(byId['w_map']!.settings, isEmpty);
+    });
+
+    test('swap/retile/move carry the settings with the content', () {
+      LeafNode camLeaf(String id) => LeafNode(
+          tileId: id,
+          tileType: 'flight_3d',
+          settings: const {leafCameraModeKey: 'onboard'});
+
+      final swapped =
+          swapLeaves(treeFromOrder([camLeaf('a'), leaf('map')]), 'a', 'w_map')!;
+      final swappedById = {for (final l in swapped.leaves) l.tileId: l};
+      // Ids travel with the content, settings included.
+      expect(swappedById['a']!.tileType, 'flight_3d');
+      expect(swappedById['a']!.settings[leafCameraModeKey], 'onboard');
+      expect(swappedById['w_map']!.tileType, 'map');
+      expect(swappedById['w_map']!.settings, isEmpty);
+
+      final retiled = retileLeaf(
+          treeFromOrder([camLeaf('a'), leaf('map')]),
+          'a',
+          'flight_3d_sat')! as SplitNode;
+      expect(
+          retiled.leaves
+              .firstWhere((l) => l.tileId == 'a')
+              .settings[leafCameraModeKey],
+          'onboard');
+
+      final moved = moveLeafBeside(
+          treeFromOrder([camLeaf('a'), leaf('map'), leaf('stats')]),
+          'a',
+          'w_stats',
+          SplitDirection.left);
+      expect(
+          moved.leaves
+              .firstWhere((l) => l.tileId == 'a')
+              .settings[leafCameraModeKey],
+          'onboard');
+    });
+
     test('ignores unknown persisted fields', () {
       final workspace = Workspace.fromJson({
         'id': 'ws1',

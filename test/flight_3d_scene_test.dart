@@ -567,4 +567,143 @@ void main() {
       }
     });
   });
+
+  group('onboard camera follows the full attitude', () {
+    FlightScene sceneWith({
+      required Vector3 pos,
+      double pitchDeg = 0,
+      double yawDeg = 0,
+      double rollDeg = 0,
+    }) =>
+        FlightScene(
+          trail: const [],
+          rocketPos: pos,
+          rocketIsDeadReckoning: false,
+          maxAlt: pos.y,
+          maxHoriz: 0,
+          pitchDeg: pitchDeg,
+          yawDeg: yawDeg,
+          rollDeg: rollDeg,
+          showNoseCone: true,
+          showParachute: false,
+          siteName: null,
+        );
+
+    FlightCamera onboard(
+      FlightScene scene, {
+      double az = 0,
+      double el = 0,
+      double zoom = 1,
+    }) =>
+        computeFlightCamera(
+          scene: scene,
+          mode: FlightCameraMode.onboard,
+          azimuthDeg: az,
+          elevationDeg: el,
+          zoom: zoom,
+          aspect: 800 / 600,
+        );
+
+    Vector3 gaze(FlightCamera cam) =>
+        (cam.target - cam.eye).normalized();
+
+    test('level flight looks out the side, yaw swings it', () {
+      final east = gaze(onboard(sceneWith(pos: Vector3(0, 100, 0))));
+      expect(east.x, closeTo(1, 1e-9));
+      expect(east.y, closeTo(0, 1e-9));
+      expect(east.z, closeTo(0, 1e-9));
+
+      final south = gaze(onboard(
+          sceneWith(pos: Vector3(0, 100, 0), yawDeg: 90)));
+      expect(south.x, closeTo(0, 1e-9));
+      expect(south.y, closeTo(0, 1e-9));
+      expect(south.z, closeTo(1, 1e-9));
+    });
+
+    test('lens rides at the rocket, zoom drives the lens not the distance',
+        () {
+      final pos = Vector3(30, 200, -40);
+      final cam = onboard(sceneWith(pos: pos), zoom: 4);
+      expect(cam.eye.x, closeTo(pos.x, 1e-9));
+      expect(cam.eye.y, closeTo(pos.y, 1e-9));
+      expect(cam.eye.z, closeTo(pos.z, 1e-9));
+      expect(cam.eye.distanceTo(cam.target), closeTo(10, 1e-9));
+      expect(cam.fovY, closeTo(flightFovY / 4, 1e-9));
+    });
+
+    test('roll spins the gaze around the nose', () {
+      // Vertical rocket, rolled 90°: the side gaze swings from east onto
+      // the nose axis plane (here north) while the nose itself stays up.
+      final cam = onboard(
+          sceneWith(pos: Vector3(0, 100, 0), rollDeg: 90));
+      final look = gaze(cam);
+      expect(look.x, closeTo(0, 1e-6));
+      expect(look.y, closeTo(0, 1e-6));
+      expect(look.z, closeTo(-1, 1e-6));
+    });
+
+    test('pitched-over rocket tilts the horizon (nose stays up)', () {
+      // Nose horizontal to the north: the nose must paint straight up on
+      // screen while world-up falls to the screen edge. Probe points sit
+      // ahead of the lens (pure side points are at eye depth, where the
+      // projection is singular).
+      final eye = Vector3(0, 100, 0);
+      final cam = onboard(
+          sceneWith(pos: eye, pitchDeg: 90, yawDeg: 0));
+      const size = Size(800, 600);
+      final ahead = eye + gaze(cam) * 10;
+      final center = projectToScreen(ahead, cam.vp, size)!;
+      final noseUp =
+          projectToScreen(ahead + Vector3(0, 0, -5), cam.vp, size)!;
+      final worldUp =
+          projectToScreen(ahead + Vector3(0, 5, 0), cam.vp, size)!;
+      expect(noseUp.dx, closeTo(center.dx, 2.0));
+      expect(noseUp.dy, lessThan(center.dy));
+      expect(worldUp.dx, greaterThan(center.dx));
+      for (final v in cam.view.storage) {
+        expect(v.isNaN, isFalse);
+      }
+    });
+
+    test('local look-around matches the old yaw-relative law in level flight',
+        () {
+      // Level flight keeps world-up as the strapped up, so an azimuth
+      // offset must equal the compass yaw (yaw + 90 + offset) exactly.
+      final cam = onboard(sceneWith(pos: Vector3(0, 100, 0)), az: 20);
+      final look = gaze(cam);
+      final yawRad = (90 + 20) * math.pi / 180;
+      expect(look.x, closeTo(math.sin(yawRad), 1e-9));
+      expect(look.y, closeTo(0, 1e-9));
+      expect(look.z, closeTo(-math.cos(yawRad), 1e-9));
+    });
+  });
+
+  group('onboard smoothing', () {
+    test('dampAngleDeg takes the short way around the wrap', () {
+      expect(dampAngleDeg(350, 10, 0.5), closeTo(360, 1e-9));
+      expect(dampAngleDeg(10, 350, 0.5), closeTo(0, 1e-9));
+      expect(dampAngleDeg(0, 90, 0.25), closeTo(22.5, 1e-9));
+      expect(dampAngleDeg(45, 45, 0.3), closeTo(45, 1e-9));
+    });
+
+    test('first update snaps, later ticks ease a fraction', () {
+      final s = OnboardAttitudeSmoother();
+      s.update(pitchDeg: 5, yawDeg: 350, rollDeg: 0);
+      expect(s.pitchDeg, closeTo(5, 1e-9));
+      expect(s.yawDeg, closeTo(350, 1e-9));
+      s.update(pitchDeg: 15, yawDeg: 10, rollDeg: 0);
+      expect(s.pitchDeg, closeTo(5 + 10 * onboardSmoothFactor, 1e-9));
+      // 350 → 10 eases forward (+20° path), not back around.
+      expect(s.yawDeg, closeTo(350 + 20 * onboardSmoothFactor, 1e-9));
+    });
+
+    test('jumps past the snap threshold teleport instead of slewing', () {
+      final s = OnboardAttitudeSmoother();
+      s.update(pitchDeg: 0, yawDeg: 0, rollDeg: 0);
+      s.update(pitchDeg: 0, yawDeg: 100, rollDeg: 0);
+      expect(s.yawDeg, closeTo(100, 1e-9));
+      s.update(pitchDeg: 80, yawDeg: 100, rollDeg: 0);
+      expect(s.pitchDeg, closeTo(80, 1e-9));
+    });
+  });
 }

@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../theme/app_colors.dart';
 import '../components/app_card.dart';
+import './tile_leaf_scope.dart';
 import './tile_picker_dialog.dart';
 import '../../state/layout_tree.dart';
 import '../tile_registry.dart';
@@ -168,6 +169,18 @@ class _WorkspaceGridState extends ConsumerState<WorkspaceGrid> {
 
     final isDragged = _dragLeafId == tileId;
 
+    // Leaf identity + persisted settings ride down to the tile: stateful
+    // tiles (the 3D flight views' camera mode) restore their selection and
+    // report changes back so the save file follows the live UI.
+    final tile = TileLeafScope.fromSettings(
+      tileId: tileId,
+      settings: workspace.leafOf(tileId)?.settings ?? const {},
+      onCameraMode: (mode) => ref
+          .read(workspaceProvider.notifier)
+          .setTileCameraMode(tileId, mode),
+      child: descriptor.builder(context),
+    );
+
     Widget card = AppCard(
       fillChild: true,
       title: descriptor.title,
@@ -180,9 +193,7 @@ class _WorkspaceGridState extends ConsumerState<WorkspaceGrid> {
               swapTarget: swapTarget,
             )
           : null,
-      child: widget.editMode
-          ? AbsorbPointer(child: descriptor.builder(context))
-          : descriptor.builder(context),
+      child: widget.editMode ? AbsorbPointer(child: tile) : tile,
     );
 
     if (widget.editMode) {

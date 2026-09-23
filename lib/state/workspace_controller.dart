@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import './default_layouts.dart';
 import './layout_tree.dart';
 import '../ui/tile_registry.dart';
+import '../ui/tiles/shared/flight_3d_common.dart' show FlightCameraMode;
 import './workspace_models.dart';
 import '../services/prefs_keys.dart';
 
@@ -241,6 +242,15 @@ class WorkspaceStore extends AsyncNotifier<WorkspaceState> {
     });
   }
 
+  /// Persists a 3D flight tile's camera-mode selection on its leaf, so the
+  /// save file (and the promote-to-defaults output) follows the live UI.
+  Future<void> setTileCameraMode(String tileId, FlightCameraMode mode) async {
+    await _updateActive((ws) => ws.copyWith(
+          root: setLeafSettings(
+              ws.root, tileId, {leafCameraModeKey: mode.name}),
+        ));
+  }
+
   /// Swaps the content of two leaves (drag a tile onto another in edit mode).
   Future<void> swapTiles({
     required String tileId,
@@ -450,8 +460,16 @@ class WorkspaceStore extends AsyncNotifier<WorkspaceState> {
   /// Recursively writes a [LayoutNode] as Dart constructor code.
   static void _writeNode(StringBuffer buf, dynamic node, String indent) {
     if (node is LeafNode) {
-      buf.write(
-          "LeafNode(tileId: GridIds.next(), tileType: '${node.tileType}')");
+      if (node.settings.isEmpty) {
+        buf.write(
+            "LeafNode(tileId: GridIds.next(), tileType: '${node.tileType}')");
+      } else {
+        final pairs = node.settings.entries
+            .map((e) => "'${_escapeDart(e.key)}': '${_escapeDart(e.value)}'")
+            .join(', ');
+        buf.write("LeafNode(tileId: GridIds.next(), "
+            "tileType: '${node.tileType}', settings: const {$pairs})");
+      }
     } else if (node is SplitNode) {
       buf.writeln('SplitNode(');
       buf.writeln('$indent  vertical: ${node.vertical},');

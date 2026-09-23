@@ -62,13 +62,76 @@ FlightCamera computeFlightCamera({
 }) {
   // Camera target/distance. Chase keeps a constant standoff from the
   // rocket (it used to scale with the flight extents, so the camera drifted
-  // away as the flight grew); orbit-field frames the whole scene; pad sits
-  // by the launch rail and tracks the rocket like the legacy visualizer.
+  // away as the flight grew); orbit-field frames the whole scene; onboard
+  // rides at the rocket, looking out its side with the nose up, following
+  // the full attitude.
   final center = Vector3(0, scene.maxAlt * 0.45, 0);
   final sceneRadius = math.max(40.0, math.max(scene.maxHoriz, scene.maxAlt));
+
+  if (mode == FlightCameraMode.onboard) {
+    // Strap-down side camera: the lens rides at the rocket, looks out the
+    // airframe's right side and keeps the nose as "up", so the view follows
+    // the full attitude — yaw swings the horizon, pitch tilts it, roll
+    // spins it. Both vectors come from the same orientation matrix the
+    // mesh paints with, so lens and airframe can never disagree.
+    // [azimuthDeg] carries the tile-local spin around the nose axis
+    // (0 = exactly sideways, level with the airframe); [elevationDeg] is
+    // pinned at 0 by the shell, so the gaze never tilts off the airframe
+    // plane. The shared orbit angles are deliberately ignored here, so
+    // other views rotating never moves this lens — and the zoom is fixed
+    // (a strap-down camera has no lens to zoom).
+    var eye = scene.rocketPos;
+    if (eye.y < 2.0) eye = Vector3(eye.x, 2.0, eye.z);
+    final orientation = RocketMesh.orientationMatrix(
+      pitchDeg: scene.pitchDeg,
+      yawDeg: scene.yawDeg,
+      rollDeg: scene.rollDeg,
+      scale: 1.0,
+    );
+    Vector3 column(int i) {
+      final c = orientation.getColumn(i);
+      return Vector3(c.x, c.y, c.z).normalized();
+    }
+
+    var upVec = column(1);
+    final lookDir = column(0);
+    // Spin around the nose axis only — the shell pins the elevation at 0,
+    // so the gaze stays in the airframe plane (the tilt path below only
+    // runs for direct callers passing a nonzero elevation).
+    lookDir.applyAxisAngle(upVec, -radians(azimuthDeg));
+    // Capped like the orbit cameras so the gaze stays off the up axis and
+    // the view matrix stays well-conditioned.
+    final lookEl = radians(elevationDeg.clamp(-15.0, 80.0));
+    final elAxis = lookDir.cross(upVec);
+    if (elAxis.length > 1e-6) {
+      lookDir.applyAxisAngle(elAxis.normalized(), lookEl);
+    }
+    // Defensive: never build the view matrix with a near-collinear up.
+    if (lookDir.dot(upVec).abs() > 0.995) {
+      upVec = column(2);
+      if (lookDir.dot(upVec).abs() > 0.995) upVec = Vector3(0, 1, 0);
+    }
+    final target = eye + lookDir * 10.0;
+    final fovY =
+        (flightFovY / zoom).clamp(10 * math.pi / 180, 100 * math.pi / 180);
+    final light = (lookDir.clone()..scale(0.6)) + Vector3(-0.25, 0.8, 0.1);
+    final view = makeViewMatrix(eye, target, upVec);
+    final vp = flightProjection(eyeDist: 10.0, fovY: fovY, aspect: aspect) *
+        view;
+    return FlightCamera(
+      view: view,
+      vp: vp,
+      eye: eye,
+      target: target,
+      dist: 10.0,
+      fovY: fovY,
+      aspect: aspect,
+      lightDir: light.normalized(),
+    );
+  }
+
   final (Vector3 target, double dist) = switch (mode) {
     FlightCameraMode.chase => (scene.rocketPos, 7.0 / zoom),
-    FlightCameraMode.pad => (scene.rocketPos, 0),
     _ => (
         center,
         math.max(60.0, sceneRadius * 2.2) / zoom,
@@ -85,10 +148,6 @@ FlightCamera computeFlightCamera({
     math.cos(el) * math.cos(az),
   );
   var eye = target + camDir * dist;
-  if (mode == FlightCameraMode.pad) {
-    // Fixed spectator spot by the pad, tracking the rocket.
-    eye = Vector3(22, 3, 38) * (1 / zoom);
-  }
   if (eye.y < 2.0) eye = Vector3(eye.x, 2.0, eye.z);
 
   // Headlight slightly above the camera, like the orientation viewer.
@@ -197,6 +256,99 @@ FlightCamera clampEyeAboveTerrain(FlightCamera cam, double minEyeY) {
     fovY: cam.fovY,
     aspect: cam.aspect,
     lightDir: cam.lightDir,
+  );
+}
+
+// ── Onboard lens: smoothing + vignette ───────────────────────────────────────
+
+/// Per-tick blend factor for the onboard strap-down lens: a light touch, so
+/// most of the raw attitude shows through each tick and only the high-
+/// frequency jitter melts away.
+const double onboardSmoothFactor = 0.3;
+
+/// Raw-attitude jump that snaps the smoother instead of slewing (replay
+/// seeks, new flights, link dropouts). Below this the lens eases over.
+const double onboardSnapDegrees = 30.0;
+
+/// Shortest-path lerp between degree angles (wraps at 360, so 350 → 10
+/// eases forward through 0 instead of slewing back 340°). Pure.
+double dampAngleDeg(double prev, double next, double t) {
+  var d = (next - prev) % 360.0;
+  if (d > 180.0) d -= 360.0;
+  if (d < -180.0) d += 360.0;
+  return prev + d * t;
+}
+
+/// Tiny exponential smoother for the onboard attitude, one per tile. First
+/// update (or any jump past [onboardSnapDegrees]) snaps straight to raw so
+/// seeks and new flights never smear across the sky.
+class OnboardAttitudeSmoother {
+  double _pitch = 0;
+  double _yaw = 0;
+  double _roll = 0;
+  bool _hasValue = false;
+
+  double get pitchDeg => _pitch;
+  double get yawDeg => _yaw;
+  double get rollDeg => _roll;
+
+  void reset() => _hasValue = false;
+
+  void _snap(double pitchDeg, double yawDeg, double rollDeg) {
+    _pitch = pitchDeg;
+    _yaw = yawDeg;
+    _roll = rollDeg;
+    _hasValue = true;
+  }
+
+  static double _circDelta(double from, double to) {
+    var d = (to - from) % 360.0;
+    if (d > 180.0) d -= 360.0;
+    if (d < -180.0) d += 360.0;
+    return d;
+  }
+
+  void update({
+    required double pitchDeg,
+    required double yawDeg,
+    required double rollDeg,
+    double factor = onboardSmoothFactor,
+  }) {
+    if (!_hasValue) {
+      _snap(pitchDeg, yawDeg, rollDeg);
+      return;
+    }
+    if ((pitchDeg - _pitch).abs() > onboardSnapDegrees ||
+        _circDelta(_yaw, yawDeg).abs() > onboardSnapDegrees ||
+        _circDelta(_roll, rollDeg).abs() > onboardSnapDegrees) {
+      _snap(pitchDeg, yawDeg, rollDeg);
+      return;
+    }
+    _pitch += (pitchDeg - _pitch) * factor;
+    _yaw = dampAngleDeg(_yaw, yawDeg, factor);
+    _roll = dampAngleDeg(_roll, rollDeg, factor);
+  }
+}
+
+/// Camera-lens vignette for the onboard view: a hard-edged dark ring hugging
+/// the frame periphery, painted last so it reads as glass in front of the
+/// scene. (The gradient radius is a fraction of the shortest side, so stop
+/// 1.0 lands past the corners and they always reach full [strength].)
+void paintVignette(Canvas canvas, Size size, {double strength = 0.65}) {
+  canvas.drawRect(
+    Offset.zero & size,
+    Paint()
+      ..shader = RadialGradient(
+        center: Alignment.center,
+        radius: 0.9,
+        colors: [
+          const Color(0x00000000),
+          const Color(0x00000000),
+          Colors.black.withValues(alpha: strength),
+          Colors.black.withValues(alpha: strength),
+        ],
+        stops: const [0.0, 0.7, 0.9, 1.0],
+      ).createShader(Offset.zero & size),
   );
 }
 

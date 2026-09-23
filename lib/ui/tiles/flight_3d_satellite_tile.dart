@@ -160,6 +160,10 @@ class _Flight3dSatelliteWidgetState
     if (scene == null || anchor == null) {
       return Center(child: WaitingForData());
     }
+    // Onboard eases the strap-down attitude one tick (jitter melts, jumps
+    // snap); every other mode renders the raw scene.
+    final renderScene =
+        mode == FlightCameraMode.onboard ? smoothOnboardScene(scene) : scene;
     _ensurePatch(anchor);
 
     final anchorKey =
@@ -179,10 +183,17 @@ class _Flight3dSatelliteWidgetState
 
     return Flight3dShell(
       painter: SatFlightPainter(
-        scene: scene,
+        scene: renderScene,
         mode: mode,
-        azimuthDeg: camera.azimuthDeg,
-        elevationDeg: camera.elevationDeg,
+        // Onboard spins locally around the long axis (strapped to the full
+        // attitude, never the shared orbit angles, never tilting); every
+        // other mode shares one look direction.
+        azimuthDeg: mode == FlightCameraMode.onboard
+            ? onboardAzimuthDeg
+            : camera.azimuthDeg,
+        elevationDeg: mode == FlightCameraMode.onboard
+            ? 0.0
+            : camera.elevationDeg,
         zoom: zoom,
         terrain: _terrain,
         meshes: _meshes,
@@ -265,7 +276,7 @@ class SatFlightPainter extends CustomPainter {
     // plane — is the ground truth here. Reported positions below the
     // surface (sensor noise, DEM/site mismatch) ride on top of it instead
     // of burying the airframe, and the badge reports by how much. The
-    // display scene is built BEFORE the camera so chase/pad views track
+    // display scene is built BEFORE the camera so chase/onboard views track
     // the clamped rocket — never the raw reported position.
     final dem = terrain?.dem;
     double surfaceAt(Vector3 p) => terrainSurfaceY(
@@ -308,7 +319,7 @@ class SatFlightPainter extends CustomPainter {
       aspect: aspect,
     );
     // The lens itself must stay out of the hills too: a target on the
-    // surface can still leave a low chase/pad eye inside the next hill.
+    // surface can still leave a low chase/onboard eye inside the next hill.
     cam = clampEyeAboveTerrain(
       cam,
       surfaceAt(Vector3(cam.eye.x, 0, cam.eye.z)) + 2.0,
@@ -347,24 +358,30 @@ class SatFlightPainter extends CustomPainter {
       paintUnderGroundLabel(
           canvas, cam.vp, size, meshAnchor, formatUnderMeters(under));
     }
-    paintRocketMesh(
-      canvas,
-      size,
-      cam.vp,
-      cam.view,
-      cam.lightDir,
-      rocketPos: meshAnchor,
-      pitchDeg: scene.pitchDeg,
-      yawDeg: scene.yawDeg,
-      rollDeg: scene.rollDeg,
-      scale: _rocketScale,
-      baseLift: -RocketMesh.cgY,
-      // Airframe configuration comes from the FSM state (cone pops at
-      // apogee, canopy renders under parachute only).
-      showNoseCone: scene.showNoseCone,
-      showParachute: scene.showParachute,
-    );
+    // Onboard the lens rides at the rocket looking to the side — the
+    // airframe itself stays out of its own view.
+    if (mode != FlightCameraMode.onboard) {
+      paintRocketMesh(
+        canvas,
+        size,
+        cam.vp,
+        cam.view,
+        cam.lightDir,
+        rocketPos: meshAnchor,
+        pitchDeg: scene.pitchDeg,
+        yawDeg: scene.yawDeg,
+        rollDeg: scene.rollDeg,
+        scale: _rocketScale,
+        baseLift: -RocketMesh.cgY,
+        // Airframe configuration comes from the FSM state (cone pops at
+        // apogee, canopy renders under parachute only).
+        showNoseCone: scene.showNoseCone,
+        showParachute: scene.showParachute,
+      );
+    }
     // No compass gizmo here either — its N/E letters don't belong over imagery.
+    // Lens glass last: the onboard vignette sits over the whole frame.
+    if (mode == FlightCameraMode.onboard) paintVignette(canvas, size);
   }
 
   /// Drapes the satellite terrain from RETAINED world-space meshes (see

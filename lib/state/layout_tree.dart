@@ -41,6 +41,9 @@ sealed class LayoutNode {
       'leaf' => LeafNode(
           tileId: json['tileId'] as String,
           tileType: json['tileType'] as String,
+          settings: (json['settings'] as Map?)
+                  ?.map((k, v) => MapEntry(k.toString(), v.toString())) ??
+              const {},
         ),
       _ => throw FormatException('Unknown layout node type: $type'),
     };
@@ -134,7 +137,23 @@ class LeafNode extends LayoutNode {
   final String tileId;
   final String tileType;
 
-  LeafNode({required this.tileId, required this.tileType});
+  /// Per-tile settings bag (string map), e.g. the 3D flight tiles' camera
+  /// mode. Persisted with the workspace; tiles that need a setting read it
+  /// and report changes back so the save file follows the live UI.
+  final Map<String, String> settings;
+
+  LeafNode({
+    required this.tileId,
+    required this.tileType,
+    Map<String, String> settings = const {},
+  }) : settings = Map.unmodifiable(settings);
+
+  /// Copy with a replaced settings bag.
+  LeafNode withSettings(Map<String, String> settings) => LeafNode(
+        tileId: tileId,
+        tileType: tileType,
+        settings: settings,
+      );
 
   @override
   List<LeafNode> get leaves => [this];
@@ -143,8 +162,12 @@ class LeafNode extends LayoutNode {
   Size minSize(MinSizeLookup minOf) => minOf(tileType);
 
   @override
-  Map<String, dynamic> toJson() =>
-      {'type': 'leaf', 'tileId': tileId, 'tileType': tileType};
+  Map<String, dynamic> toJson() => {
+        'type': 'leaf',
+        'tileId': tileId,
+        'tileType': tileType,
+        'settings': settings,
+      };
 }
 
 /// Visual thickness of the divider between split children.
@@ -519,18 +542,39 @@ LayoutNode? removeLeaf(LayoutNode? root, String tileId) {
 }
 
 /// Replaces the tile type of the leaf with [tileId], keeping its id (and
-/// therefore its position) stable.
+/// therefore its position) stable. Settings travel with the leaf.
 LayoutNode? retileLeaf(LayoutNode? root, String tileId, String newType) {
   if (root == null) return null;
   if (root is LeafNode) {
     return root.tileId == tileId
-        ? LeafNode(tileId: root.tileId, tileType: newType)
+        ? LeafNode(
+            tileId: root.tileId,
+            tileType: newType,
+            settings: root.settings,
+          )
         : root;
   }
   if (root is SplitNode) {
     return root.withChildren(
       a: retileLeaf(root.a, tileId, newType),
       b: retileLeaf(root.b, tileId, newType),
+    );
+  }
+  return root;
+}
+
+/// Replaces the settings bag of the leaf with [tileId], keeping its id,
+/// type and position stable.
+LayoutNode? setLeafSettings(
+    LayoutNode? root, String tileId, Map<String, String> settings) {
+  if (root == null) return null;
+  if (root is LeafNode) {
+    return root.tileId == tileId ? root.withSettings(settings) : root;
+  }
+  if (root is SplitNode) {
+    return root.withChildren(
+      a: setLeafSettings(root.a, tileId, settings),
+      b: setLeafSettings(root.b, tileId, settings),
     );
   }
   return root;
@@ -560,10 +604,16 @@ LayoutNode? swapLeaves(LayoutNode? root, String tileId, String otherId) {
   LayoutNode replace(LayoutNode node) {
     if (node is LeafNode) {
       if (node.tileId == tileId) {
-        return LeafNode(tileId: source.tileId, tileType: source.tileType);
+        return LeafNode(
+            tileId: source.tileId,
+            tileType: source.tileType,
+            settings: source.settings);
       }
       if (node.tileId == otherId) {
-        return LeafNode(tileId: target.tileId, tileType: target.tileType);
+        return LeafNode(
+            tileId: target.tileId,
+            tileType: target.tileType,
+            settings: target.settings);
       }
       return node;
     }
@@ -619,8 +669,8 @@ LayoutNode mergeAtDivider(LayoutNode root, String nodeId, KeepSide keepSide) {
   return root;
 }
 
-/// Inserts a new leaf ([tileType] / [newId]) directly beside [targetId] in
-/// the given [direction].
+/// Inserts a new leaf ([tileType] / [newId], plus optional [settings])
+/// directly beside [targetId] in the given [direction].
 ///   left / right  → side-by-side split (vertical: false)
 ///   top  / bottom → stacked split       (vertical: true)
 /// No-op (returns [root] unchanged) when [targetId] is not in the tree.
@@ -629,11 +679,13 @@ LayoutNode insertBesideLeaf(
   String targetId,
   SplitDirection direction,
   String tileType,
-  String newId,
-) {
+  String newId, {
+  Map<String, String> settings = const {},
+}) {
   if (root is LeafNode) {
     if (root.tileId != targetId) return root;
-    final newLeaf = LeafNode(tileId: newId, tileType: tileType);
+    final newLeaf =
+        LeafNode(tileId: newId, tileType: tileType, settings: settings);
     final vertical =
         direction == SplitDirection.top || direction == SplitDirection.bottom;
     final newFirst =
@@ -646,18 +698,19 @@ LayoutNode insertBesideLeaf(
     );
   }
   if (root is SplitNode) {
-    final newA =
-        insertBesideLeaf(root.a, targetId, direction, tileType, newId);
+    final newA = insertBesideLeaf(root.a, targetId, direction, tileType, newId,
+        settings: settings);
     if (!identical(newA, root.a)) return root.withChildren(a: newA);
-    final newB =
-        insertBesideLeaf(root.b, targetId, direction, tileType, newId);
+    final newB = insertBesideLeaf(root.b, targetId, direction, tileType, newId,
+        settings: settings);
     if (!identical(newB, root.b)) return root.withChildren(b: newB);
   }
   return root;
 }
 
 /// Removes [sourceId] from the tree and re-inserts it beside [targetId] in
-/// [direction]. This is the "restructure drag" operation.
+/// [direction]. Settings travel with the moved leaf. This is the
+/// "restructure drag" operation.
 /// No-ops: source == target, source is the sole leaf, target not found.
 LayoutNode moveLeafBeside(
   LayoutNode root,
@@ -681,6 +734,7 @@ LayoutNode moveLeafBeside(
   if (afterRemove == null) return root; // sole leaf — can't leave the tree empty
   return insertBesideLeaf(
     afterRemove, targetId, direction, source!.tileType, source!.tileId,
+    settings: source!.settings,
   );
 }
 

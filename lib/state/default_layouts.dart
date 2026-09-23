@@ -133,7 +133,7 @@ abstract final class DefaultLayouts {
         ),
         b: LeafNode(tileId: GridIds.next(), tileType: 'map'),
       ),
-      b: LeafNode(tileId: GridIds.next(), tileType: 'flight_3d_sat'),
+      b: LeafNode(tileId: GridIds.next(), tileType: 'flight_3d_sat', settings: const {'cameraMode': 'free'}),
     ),
   );
 
@@ -144,7 +144,7 @@ abstract final class DefaultLayouts {
     root: SplitNode(
       vertical: false,
       ratio: 0.5,
-      a: LeafNode(tileId: GridIds.next(), tileType: 'flight_3d_sat'),
+      a: LeafNode(tileId: GridIds.next(), tileType: 'flight_3d_sat', settings: const {'cameraMode': 'free'}),
       b: SplitNode(
         vertical: false,
         ratio: 0.5,
@@ -154,10 +154,10 @@ abstract final class DefaultLayouts {
           a: SplitNode(
             vertical: true,
             ratio: 0.4952114924181964,
-            a: LeafNode(tileId: GridIds.next(), tileType: 'altitude_chart'),
-            b: LeafNode(tileId: GridIds.next(), tileType: 'velocity_chart'),
+            a: LeafNode(tileId: GridIds.next(), tileType: 'flight_3d_sat', settings: const {'cameraMode': 'onboard'}),
+            b: LeafNode(tileId: GridIds.next(), tileType: 'highlights'),
           ),
-          b: LeafNode(tileId: GridIds.next(), tileType: 'acceleration_chart'),
+          b: LeafNode(tileId: GridIds.next(), tileType: 'events'),
         ),
         b: SplitNode(
           vertical: true,
@@ -165,10 +165,10 @@ abstract final class DefaultLayouts {
           a: SplitNode(
             vertical: true,
             ratio: 0.4952114924181964,
-            a: LeafNode(tileId: GridIds.next(), tileType: 'highlights'),
-            b: LeafNode(tileId: GridIds.next(), tileType: 'events'),
+            a: LeafNode(tileId: GridIds.next(), tileType: 'altitude_chart'),
+            b: LeafNode(tileId: GridIds.next(), tileType: 'velocity_chart'),
           ),
-          b: LeafNode(tileId: GridIds.next(), tileType: 'map'),
+          b: LeafNode(tileId: GridIds.next(), tileType: 'acceleration_chart'),
         ),
       ),
     ),

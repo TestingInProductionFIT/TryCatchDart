@@ -27,7 +27,7 @@ import '../../../state/telemetry_store.dart';
 /// Camera behaviour of the 3D flight views.
 enum FlightCameraMode {
   chase('Chase rocket', Icons.center_focus_strong),
-  pad('Launch pad', Icons.rocket_launch),
+  onboard('Onboard', Icons.videocam),
   orbit('Orbit field', Icons.threesixty),
   free('Free orbit', Icons.control_camera);
 
@@ -35,6 +35,16 @@ enum FlightCameraMode {
   final IconData icon;
 
   const FlightCameraMode(this.label, this.icon);
+}
+
+/// Parses a persisted camera-mode name ([FlightCameraMode.name]); `null`
+/// for missing or unknown names so callers can fall back to their default.
+FlightCameraMode? tryParseFlightCameraMode(String? name) {
+  if (name == null) return null;
+  for (final mode in FlightCameraMode.values) {
+    if (mode.name == name) return mode;
+  }
+  return null;
 }
 
 /// Everything a flight painter needs, rebuilt on every telemetry tick.
@@ -69,6 +79,27 @@ class FlightScene {
     required this.showParachute,
     required this.siteName,
   });
+
+  /// Copy with a replaced display attitude (the onboard lens eases the
+  /// attitude each tick; trail and extents pass through untouched).
+  FlightScene withAttitude({
+    required double pitchDeg,
+    required double yawDeg,
+    required double rollDeg,
+  }) =>
+      FlightScene(
+        trail: trail,
+        rocketPos: rocketPos,
+        rocketIsDeadReckoning: rocketIsDeadReckoning,
+        maxAlt: maxAlt,
+        maxHoriz: maxHoriz,
+        pitchDeg: pitchDeg,
+        yawDeg: yawDeg,
+        rollDeg: rollDeg,
+        showNoseCone: showNoseCone,
+        showParachute: showParachute,
+        siteName: siteName,
+      );
 }
 
 /// Pure lat/lon → world mapping (east/up/south metres around [lat0]/[lon0]).
