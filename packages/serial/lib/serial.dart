@@ -4,6 +4,7 @@ library;
 export 'connectors/connector.dart';
 export 'connectors/mock_connector.dart';
 export 'connectors/registry.dart';
+export 'connectors/segfault_connector.dart';
 export 'constants.dart';
 export 'hardware/mock.dart';
 export 'hardware/mock_bq.dart';

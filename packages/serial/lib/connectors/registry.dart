@@ -7,12 +7,19 @@ library;
 
 import 'connector.dart';
 import 'mock_connector.dart';
+import 'segfault_connector.dart';
 
 /// The MOCK connector instance (original TryCatch format).
 const TelemetryConnector mockConnector = MockConnector();
 
+/// The SegFault connector instance (OG rocket firmware).
+const TelemetryConnector segfaultConnector = SegfaultConnector();
+
 /// Every available connector, in settings display order.
-const List<TelemetryConnector> allConnectors = [mockConnector];
+const List<TelemetryConnector> allConnectors = [
+  mockConnector,
+  segfaultConnector,
+];
 
 /// Default connector id (used before the persisted setting loads and as a
 /// fallback for corrupt preferences).
