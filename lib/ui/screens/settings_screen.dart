@@ -235,7 +235,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
 
     final connectorId =
-        ref.watch(activeConnectorIdProvider).value ?? defaultConnectorId;
+        ref.watch(activeConnectorIdProvider).value ?? defaultVisibleConnectorId;
     final replaying = ref.watch(replayProvider.select((s) => s.isActive));
 
     return Center(
@@ -278,7 +278,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                           mainAxisSize: MainAxisSize.min,
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            for (final connector in allConnectors) ...[
+                            for (final connector in visibleConnectors) ...[
                               _ConnectorRow(
                                 connector: connector,
                                 selected: connector.id == connectorId,

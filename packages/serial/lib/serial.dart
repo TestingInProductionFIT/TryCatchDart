@@ -24,6 +24,7 @@ export 'worker/protocol.dart';
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'connectors/registry.dart' show isDevMode;
 import 'hardware/mock.dart';
 import 'hardware/mock_bq.dart';
 import 'hardware/real.dart';
@@ -51,13 +52,23 @@ class SerialService {
   /// Stream of raw incoming [Uint8List] byte chunks from the active port.
   Stream<Uint8List> get byteStream => _byteStreamController.stream;
 
-  /// Returns a combined list of all detected physical ports and the virtual
-  /// mock ports (MOCK + MOCK-BQ).
+  /// Returns a combined list of all detected physical ports and — in debug
+  /// builds only — the virtual mock ports (MOCK + MOCK-BQ).
+  ///
+  /// `connect()` still accepts the mock names in every build (tests and
+  /// replay tooling rely on it); they are just not *listed* outside dev mode.
   static List<String> get availablePorts => [
-    MockSerialPort.portName,
-    MockBqSerialPort.portName,
-    ...RealSerialPort.availablePorts,
-  ];
+        if (isDevMode) ...[
+          MockSerialPort.portName,
+          MockBqSerialPort.portName,
+        ],
+        ...RealSerialPort.availablePorts,
+      ];
+
+  /// Whether [portName] selects one of the dev-only virtual mock ports.
+  static bool isMockPortName(String portName) =>
+      portName == MockSerialPort.portName ||
+      portName == MockBqSerialPort.portName;
 
   /// Whether a connection is currently active (physical or virtual).
   bool get isConnected {

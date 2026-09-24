@@ -269,34 +269,38 @@ class _LaunchSiteDialogBodyState extends ConsumerState<_LaunchSiteDialogBody> {
                   ],
                 ),
               ),
-              InkWell(
-                onTap: () => _openEdit(preset),
-                mouseCursor: SystemMouseCursors.click,
-                borderRadius: BorderRadius.circular(4),
-                child: Tooltip(
-                  message: 'Edit site',
+              // The dev-only mock pad is read-only: selectable, but no
+              // edit/remove actions.
+              if (!isMockLaunchSite(preset)) ...[
+                InkWell(
+                  onTap: () => _openEdit(preset),
                   mouseCursor: SystemMouseCursors.click,
-                  child: const Padding(
-                    padding: EdgeInsets.all(4),
-                    child: Icon(Icons.edit_outlined, size: 17),
+                  borderRadius: BorderRadius.circular(4),
+                  child: Tooltip(
+                    message: 'Edit site',
+                    mouseCursor: SystemMouseCursors.click,
+                    child: const Padding(
+                      padding: EdgeInsets.all(4),
+                      child: Icon(Icons.edit_outlined, size: 17),
+                    ),
                   ),
                 ),
-              ),
-              InkWell(
-                onTap: () => ref
-                    .read(launchSiteProvider.notifier)
-                    .deletePreset(preset.name),
-                mouseCursor: SystemMouseCursors.click,
-                borderRadius: BorderRadius.circular(4),
-                child: Tooltip(
-                  message: 'Remove site',
+                InkWell(
+                  onTap: () => ref
+                      .read(launchSiteProvider.notifier)
+                      .deletePreset(preset.name),
                   mouseCursor: SystemMouseCursors.click,
-                  child: const Padding(
-                    padding: EdgeInsets.all(4),
-                    child: Icon(Icons.delete_outline, size: 17),
+                  borderRadius: BorderRadius.circular(4),
+                  child: Tooltip(
+                    message: 'Remove site',
+                    mouseCursor: SystemMouseCursors.click,
+                    child: const Padding(
+                      padding: EdgeInsets.all(4),
+                      child: Icon(Icons.delete_outline, size: 17),
+                    ),
                   ),
                 ),
-              ),
+              ],
             ],
           ),
         ),

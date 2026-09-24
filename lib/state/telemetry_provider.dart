@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:serial/serial.dart';
 
@@ -50,10 +51,19 @@ final linkStatsStreamProvider = StreamProvider<LinkStats>((ref) {
 });
 
 /// Most recently reported list of available serial ports.
+///
+/// Dev-gated: the MOCK / MOCK-BQ simulator ports only show in debug builds.
+/// Release builds list physical ports alone (the worker still accepts a mock
+/// name via `connect()` for tests, it just isn't offered in the picker).
 final availablePortsProvider = StreamProvider<List<String>>((ref) async* {
+  List<String> visible(List<String> ports) => kDebugMode
+      ? ports
+      : ports.where((p) => !SerialService.isMockPortName(p)).toList();
   final worker = ref.watch(serialWorkerProvider);
-  yield worker.currentPorts;
-  yield* worker.portsStream;
+  yield visible(worker.currentPorts);
+  await for (final ports in worker.portsStream) {
+    yield visible(ports);
+  }
 });
 
 /// Stream of uplink attempt reports from the serial worker (one per
@@ -141,7 +151,14 @@ class SerialConfigNotifier extends Notifier<SerialConfig> {
   @override
   SerialConfig build() => const SerialConfig();
 
-  void setPort(String? port) => state = state.copyWith(selectedPort: port);
+  void setPort(String? port) {
+    // The mock simulator ports are dev-only: ignore them in release builds
+    // (the picker never offers them there).
+    if (port != null && !kDebugMode && SerialService.isMockPortName(port)) {
+      return;
+    }
+    state = state.copyWith(selectedPort: port);
+  }
 
   /// Dispatches a [ConnectCommand] to the serial worker with the configured hardware settings.
   ///
@@ -150,8 +167,8 @@ class SerialConfigNotifier extends Notifier<SerialConfig> {
   void connect() {
     final cfg = state;
     if (cfg.selectedPort == null) return;
-    final connectorId =
-        ref.read(activeConnectorIdProvider).value ?? defaultConnectorId;
+    final connectorId = ref.read(activeConnectorIdProvider).value ??
+        defaultVisibleConnectorId;
     ref
         .read(serialWorkerProvider)
         .send(ConnectCommand(cfg.selectedPort!, connectorId: connectorId));

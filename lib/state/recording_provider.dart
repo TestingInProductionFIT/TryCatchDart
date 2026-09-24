@@ -22,7 +22,7 @@ abstract final class RecordingService {
     final site = ref.read(currentLaunchSiteProvider);
     if (site == null) return;
     final connectorId =
-        ref.read(activeConnectorIdProvider).value ?? defaultConnectorId;
+        ref.read(activeConnectorIdProvider).value ?? defaultVisibleConnectorId;
     final now = DateTime.now();
     final timestamp =
         '${now.year}-${_twoDigits(now.month)}-${_twoDigits(now.day)}_'

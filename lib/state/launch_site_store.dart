@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -91,6 +92,56 @@ final currentLaunchSiteProvider = Provider<LaunchSite?>(
   (ref) => ref.watch(launchSiteProvider).value?.selected,
 );
 
+/// Dev-only seeded launch site matching the mock flight simulator's pad
+/// (Prague, MSL 403 m). Only ever seeded/visible in debug builds — release
+/// builds start empty and strip this entry when reading prefs written by
+/// a debug build.
+const LaunchSite mockLaunchSite = LaunchSite(
+  name: 'MOCK Pad',
+  latitude: 50.0755,
+  longitude: 14.4378,
+  altitudeMsl: 403,
+);
+
+/// Whether [site] is the dev-only mock launch site.
+bool isMockLaunchSite(LaunchSite? site) =>
+    site != null && site.name == mockLaunchSite.name;
+
+/// Fresh state for first launch: debug shows the mock pad (selected),
+/// release starts empty. In-memory only — the mock is never written to disk.
+LaunchSiteState _freshState() => kDebugMode
+    ? const LaunchSiteState(selected: mockLaunchSite, presets: [mockLaunchSite])
+    : const LaunchSiteState();
+
+/// Adds the mock pad to [state]'s presets (sorted, as if added via
+/// [LaunchSiteStore.savePreset]) when missing. Dev-only, in-memory only —
+/// the mock is never persisted. Selection is left untouched.
+LaunchSiteState _injectMock(LaunchSiteState state) {
+  if (state.presets.any((p) => p.name == mockLaunchSite.name)) return state;
+  final presets = [...state.presets, mockLaunchSite]
+    ..sort((a, b) => a.name.compareTo(b.name));
+  return state.copyWith(presets: presets);
+}
+
+/// Removes the mock pad from [state] (presets + selection). Used by release
+/// builds reading prefs that a debug build wrote.
+LaunchSiteState _stripMock(LaunchSiteState state) {
+  if (!state.presets.any((p) => p.name == mockLaunchSite.name) &&
+      !isMockLaunchSite(state.selected)) {
+    return state;
+  }
+  final remaining =
+      state.presets.where((p) => p.name != mockLaunchSite.name).toList();
+  final selected =
+      isMockLaunchSite(state.selected) ? null : state.selected;
+  // When the mock was selected but real presets remain, fall through to the
+  // first one so the app still has a site; otherwise leave empty.
+  return state.copyWith(
+    presets: remaining,
+    selected: selected ?? (remaining.isNotEmpty ? remaining.first : null),
+  );
+}
+
 class LaunchSiteStore extends AsyncNotifier<LaunchSiteState> {
   static const String _prefsKey = PrefsKeys.launchSites;
 
@@ -99,19 +150,28 @@ class LaunchSiteStore extends AsyncNotifier<LaunchSiteState> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final raw = prefs.getString(_prefsKey);
-      if (raw == null) return const LaunchSiteState();
-      return LaunchSiteState.fromJson(jsonDecode(raw) as Map<String, dynamic>);
+      if (raw == null) return _freshState();
+      final loaded =
+          LaunchSiteState.fromJson(jsonDecode(raw) as Map<String, dynamic>);
+      // Release builds never show the dev-only mock site, even when the
+      // prefs file was written by a debug build. Debug builds inject it
+      // in memory (never persisted) so it always appears in the list.
+      if (!kDebugMode) return _stripMock(loaded);
+      return _injectMock(loaded);
     } catch (_) {
       // Corrupt settings must never take the app down.
-      return const LaunchSiteState();
+      return _freshState();
     }
   }
 
+  /// Writes [next] to disk without the mock pad (dev-only, in-memory only)
+  /// while keeping it in the live state.
   Future<void> _persist(LaunchSiteState next) async {
-    state = AsyncData(next);
+    final disk = _stripMock(next);
+    state = AsyncData(kDebugMode ? _injectMock(next) : disk);
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_prefsKey, jsonEncode(next.toJson()));
+      await prefs.setString(_prefsKey, jsonEncode(disk.toJson()));
     } catch (_) {
       // Persistence failure is non-fatal; state stays in memory.
     }
@@ -122,8 +182,15 @@ class LaunchSiteStore extends AsyncNotifier<LaunchSiteState> {
   Future<void> select(LaunchSite site) async =>
       _persist((state.value ?? const LaunchSiteState()).copyWith(selected: site));
 
-  /// Adds or updates (by name) a preset and selects it.
+  /// Adds or updates (by name) a preset and selects it. The dev-only mock
+  /// pad is read-only: saving under its name just selects the canonical
+  /// mock without altering it.
   Future<void> savePreset(LaunchSite site) async {
+    if (isMockLaunchSite(site)) {
+      final current = state.value ?? const LaunchSiteState();
+      await _persist(current.copyWith(selected: mockLaunchSite));
+      return;
+    }
     final current = state.value ?? const LaunchSiteState();
     final presets = [...current.presets]
       ..removeWhere((p) => p.name == site.name)
@@ -132,10 +199,12 @@ class LaunchSiteStore extends AsyncNotifier<LaunchSiteState> {
     await _persist(current.copyWith(presets: presets, selected: site));
   }
 
-  /// Deletes a preset by name. When the deleted preset was the selected
+  /// Deletes a preset by name. The dev-only mock pad is read-only and
+  /// cannot be deleted (no-op). When the deleted preset was the selected
   /// site, selection falls through to the first remaining preset — or to
   /// nothing when none remain (the empty state that prompts adding a site).
   Future<void> deletePreset(String name) async {
+    if (name == mockLaunchSite.name) return;
     final current = state.value ?? const LaunchSiteState();
     final remaining =
         current.presets.where((p) => p.name != name).toList();

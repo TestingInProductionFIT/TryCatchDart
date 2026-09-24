@@ -28,8 +28,20 @@ Future<LaunchSiteState> _loadWithPrefs(Map<String, dynamic> stored) async {
 }
 
 void main() {
-  group('LaunchSiteStore saved-only invariant', () {
-    test('loads stored state as-is (no load-time repair)', () async {
+  group('LaunchSiteStore dev mock pad', () {
+    test('fresh launch shows the mock pad selected (in memory only)', () async {
+      SharedPreferences.setMockInitialValues({});
+      final container = ProviderContainer();
+      try {
+        final state = await container.read(launchSiteProvider.future);
+        expect(state.presets.map((p) => p.name).toList(), ['MOCK Pad']);
+        expect(state.selected?.name, 'MOCK Pad');
+      } finally {
+        container.dispose();
+      }
+    });
+
+    test('stored presets gain the mock pad in memory', () async {
       final state = await _loadWithPrefs({
         'selected': _site('Idk'),
         'presets': [_site('Home')],
@@ -37,7 +49,91 @@ void main() {
       expect(state.selected?.name, 'Idk');
       expect(
         state.presets.map((p) => p.name).toList(),
-        ['Home'],
+        ['Home', 'MOCK Pad'],
+      );
+    });
+
+    test('mock pad is never written to disk', () async {
+      SharedPreferences.setMockInitialValues({
+        PrefsKeys.launchSites: jsonEncode({
+          'selected': _site('Home'),
+          'presets': [_site('Home')],
+        }),
+      });
+      final container = ProviderContainer();
+      try {
+        await container.read(launchSiteProvider.future);
+        await container
+            .read(launchSiteProvider.notifier)
+            .savePreset(LaunchSite(
+              name: 'Field',
+              latitude: 51.0,
+              longitude: 15.0,
+              altitudeMsl: 300,
+            ));
+        final prefs = await SharedPreferences.getInstance();
+        final disk = jsonDecode(prefs.getString(PrefsKeys.launchSites)!)
+            as Map<String, dynamic>;
+        expect(
+          (disk['presets'] as List)
+              .map((e) => (e as Map<String, dynamic>)['name']),
+          ['Field', 'Home'],
+        );
+        final state = container.read(launchSiteProvider).value!;
+        expect(
+          state.presets.map((p) => p.name).toList(),
+          ['Field', 'Home', 'MOCK Pad'],
+        );
+      } finally {
+        container.dispose();
+      }
+    });
+
+    test('mock pad cannot be deleted or overwritten', () async {
+      final container = ProviderContainer();
+      try {
+        SharedPreferences.setMockInitialValues({
+          PrefsKeys.launchSites: jsonEncode({
+            'selected': _site('Home'),
+            'presets': [_site('Home')],
+          }),
+        });
+        await container.read(launchSiteProvider.future);
+        await container
+            .read(launchSiteProvider.notifier)
+            .deletePreset('MOCK Pad');
+        var state = container.read(launchSiteProvider).value!;
+        expect(state.presets.map((p) => p.name), contains('MOCK Pad'));
+        await container.read(launchSiteProvider.notifier).savePreset(
+              const LaunchSite(
+                name: 'MOCK Pad',
+                latitude: 0,
+                longitude: 0,
+                altitudeMsl: 0,
+              ),
+            );
+        state = container.read(launchSiteProvider).value!;
+        final mock = state.presets.singleWhere((p) => p.name == 'MOCK Pad');
+        expect(mock.latitude, 50.0755);
+        expect(mock.longitude, 14.4378);
+        expect(mock.altitudeMsl, 403);
+        expect(state.selected?.name, 'MOCK Pad');
+      } finally {
+        container.dispose();
+      }
+    });
+  });
+
+  group('LaunchSiteStore saved-only invariant', () {
+    test('loads stored selection as-is (mock injected alongside)', () async {
+      final state = await _loadWithPrefs({
+        'selected': _site('Idk'),
+        'presets': [_site('Home')],
+      });
+      expect(state.selected?.name, 'Idk');
+      expect(
+        state.presets.map((p) => p.name).toList(),
+        ['Home', 'MOCK Pad'],
       );
     });
 
@@ -47,6 +143,10 @@ void main() {
         'presets': [_site('Alpha'), _site('Beta')],
       });
       expect(state.selected, isNull);
+      expect(
+        state.presets.map((p) => p.name).toList(),
+        ['Alpha', 'Beta', 'MOCK Pad'],
+      );
     });
 
     test('duplicates load as-is (savePreset dedupes on write)', () async {
@@ -58,16 +158,16 @@ void main() {
       expect(state.selected?.name, 'Home');
     });
 
-    test('empty state stays empty (prompts adding a site)', () async {
+    test('empty disk still shows the dev mock pad', () async {
       final state = await _loadWithPrefs({
         'selected': null,
         'presets': [],
       });
       expect(state.selected, isNull);
-      expect(state.presets, isEmpty);
+      expect(state.presets.map((p) => p.name).toList(), ['MOCK Pad']);
     });
 
-    test('deleting the last preset clears the selection', () async {
+    test('deleting the last real preset falls back to the mock pad', () async {
       SharedPreferences.setMockInitialValues({
         PrefsKeys.launchSites: jsonEncode({
           'selected': _site('Solo'),
@@ -81,8 +181,8 @@ void main() {
             .read(launchSiteProvider.notifier)
             .deletePreset('Solo');
         final state = container.read(launchSiteProvider).value!;
-        expect(state.presets, isEmpty);
-        expect(state.selected, isNull);
+        expect(state.presets.map((p) => p.name).toList(), ['MOCK Pad']);
+        expect(state.selected?.name, 'MOCK Pad');
       } finally {
         container.dispose();
       }
@@ -104,7 +204,7 @@ void main() {
         final state = container.read(launchSiteProvider).value!;
         expect(
           state.presets.map((p) => p.name).toList(),
-          ['Alpha'],
+          ['Alpha', 'MOCK Pad'],
         );
         expect(state.selected?.name, 'Alpha');
       } finally {
