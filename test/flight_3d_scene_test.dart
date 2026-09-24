@@ -415,6 +415,34 @@ void main() {
       final dir = (target - eye).normalized();
       expect(projectToScreen(eye - dir * 1.0, vp, size), isNull);
     });
+
+    test('geometry between lens and near plane is culled (no streak)', () {
+      final eye = Vector3(0, 5, 10);
+      final target = Vector3(0, 0, 0);
+      // near = 0.1 here: 5 cm out is between lens and near — the old bare
+      // `w > eps` test projected it with a 20× divide into a streak.
+      final vp = vpFor(eye, target);
+      final dir = (target - eye).normalized();
+      expect(projectToScreen(eye + dir * 0.05, vp, size), isNull);
+      // Just past near still draws.
+      expect(projectToScreen(eye + dir * 0.2, vp, size), isNotNull);
+    });
+
+    test('straddling segment pulls in to the near plane', () {
+      final eye = Vector3(0, 5, 10);
+      final target = Vector3(0, 0, 0);
+      final vp = vpFor(eye, target);
+      final dir = (target - eye).normalized();
+      // One end between lens and near, other far ahead: the line draws
+      // (pulled in) instead of vanishing or streaking.
+      final clipped =
+          clipWorldSegment(eye + dir * 0.05, eye + dir * 5.0, vp, size);
+      expect(clipped, isNotNull);
+      // Fully between lens and near: nothing to draw.
+      expect(
+          clipWorldSegment(eye + dir * 0.02, eye + dir * 0.05, vp, size),
+          isNull);
+    });
   });
 
   group('clipSegment2D', () {

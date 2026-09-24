@@ -363,10 +363,12 @@ void paintVignette(Canvas canvas, Size size, {double strength = 0.85}) {
 
 // ── Projection helpers ───────────────────────────────────────────────────────
 
-/// Clip-space → NDC → pixel coordinates; `null` when at/behind the camera.
+/// Clip-space → NDC → pixel coordinates; `null` when behind the lens or
+/// between the lens and the near plane (whose `1/w` divide would explode
+/// into streaks — see [_clipInFront]).
 Offset? projectToScreen(Vector3 world, Matrix4 vp, Size size) {
   final clip = vp.transformed(Vector4(world.x, world.y, world.z, 1));
-  if (clip.w <= clipEps) return null;
+  if (!_clipInFront(clip)) return null;
   final ndc = clip.xyz / clip.w;
   return Offset(
     (ndc.x * 0.5 + 0.5) * size.width,
@@ -466,14 +468,16 @@ void drawWorldSegment(Canvas canvas, Vector3 a, Vector3 b, Matrix4 vp,
     Vector3 a, Vector3 b, Matrix4 vp, Size size) {
   var ca = _clipOf(a, vp);
   var cb = _clipOf(b, vp);
-  // Fully behind the camera: nothing to draw.
-  if (ca.w <= clipEps && cb.w <= clipEps) return null;
-  // Partially behind: pull the outside end to the near-plane intersection
+  final aIn = _clipInFront(ca);
+  final bIn = _clipInFront(cb);
+  // Fully outside the near planes: nothing to draw.
+  if (!aIn && !bIn) return null;
+  // Partially outside: pull the outside end to the near-plane intersection
   // instead of dropping the whole line (receding lines used to vanish at
   // low camera angles).
-  if (ca.w <= clipEps) {
+  if (!aIn) {
     ca = _clipNear(ca, cb);
-  } else if (cb.w <= clipEps) {
+  } else if (!bIn) {
     cb = _clipNear(cb, ca);
   }
   final pa = _divideClip(ca, size);
@@ -483,10 +487,16 @@ void drawWorldSegment(Canvas canvas, Vector3 a, Vector3 b, Matrix4 vp,
   return clipSegment2D(pa, pb, safeRect);
 }
 
-/// Near-plane guard matching [projectToScreen]'s cutoff: any positive w is
-/// in front of the camera and drawable. (A previous 0.5 m cutoff ate the
-/// rocket mesh and ground cells close to the lens.)
+/// Near-plane guard for [projectToScreen] and friends: drawable means past
+/// the lens (`w > eps`) AND past the true near plane (`z + w > eps` —
+/// the perspective matrix is OpenGL-style, so near is `z = -w`, not a
+/// fixed `w` cutoff; geometry between lens and near must not project).
+/// (An older 0.5 m cutoff ate the rocket mesh and ground cells close to
+/// the lens; a bare `w > eps` kept between-lens-and-near streaks.)
 const double clipEps = 1e-6;
+
+bool _clipInFront(Vector4 c) =>
+    c.w > clipEps && (c.z + c.w) > clipEps;
 
 Vector4 _clipOf(Vector3 world, Matrix4 vp) =>
     vp.transformed(Vector4(world.x, world.y, world.z, 1));
@@ -496,12 +506,55 @@ Offset _divideClip(Vector4 c, Size size) => Offset(
       (0.5 - c.y / c.w * 0.5) * size.height,
     );
 
-/// Intersection of segment out→inn with the w = [clipEps] plane.
+/// Intersection of segment out→inn with the near volume (both the lens
+/// plane `w = eps` and the near plane `z + w = eps`): the farther of the
+/// two crossings, so the pulled-in end satisfies both. A single-plane
+/// crossing is wrong for grazing edges that pierce the planes in
+/// either order.
 Vector4 _clipNear(Vector4 out, Vector4 inn) {
-  final denom = inn.w - out.w;
-  if (denom.abs() < 1e-12) return inn;
-  final t = ((clipEps - out.w) / denom).clamp(0.0, 1.0);
+  var t = 0.0;
+  final dw = inn.w - out.w;
+  if (dw.abs() >= 1e-12) {
+    t = math.max(t, (clipEps - out.w) / dw);
+  }
+  final dn = (inn.z + inn.w) - (out.z + out.w);
+  if (dn.abs() >= 1e-12) {
+    t = math.max(t, (clipEps - (out.z + out.w)) / dn);
+  }
+  t = t.clamp(0.0, 1.0);
   return out * (1 - t) + inn * t;
+}
+
+/// Generic Sutherland–Hodgman pass of polygon [poly] against one clip-space
+/// plane, keeping the `dist > eps` side.
+List<Vector4> _clipPlane4(
+  List<Vector4> poly,
+  double Function(Vector4 v) dist,
+) {
+  if (poly.isEmpty) return poly;
+  final out = <Vector4>[];
+  for (var i = 0; i < poly.length; i++) {
+    final cur = poly[i];
+    final prev = poly[(i + poly.length - 1) % poly.length];
+    final dCur = dist(cur);
+    final dPrev = dist(prev);
+    final curIn = dCur > clipEps;
+    final prevIn = dPrev > clipEps;
+    Vector4 cross(Vector4 o, Vector4 n, double dO, double dN) {
+      final denom = dN - dO;
+      if (denom.abs() < 1e-12) return n;
+      final t = ((clipEps - dO) / denom).clamp(0.0, 1.0);
+      return o * (1 - t) + n * t;
+    }
+
+    if (curIn) {
+      if (!prevIn) out.add(cross(prev, cur, dPrev, dCur));
+      out.add(cur);
+    } else if (prevIn) {
+      out.add(cross(cur, prev, dCur, dPrev));
+    }
+  }
+  return out;
 }
 
 /// Fills a world-space quad, clipped against the near plane (Sutherland–
@@ -509,20 +562,13 @@ Vector4 _clipNear(Vector4 out, Vector4 inn) {
 /// camera angles instead of popping out.
 void fillWorldQuad(
     Canvas canvas, List<Vector3> corners, Matrix4 vp, Size size, Paint paint) {
-  final poly = [for (final c in corners) _clipOf(c, vp)];
-  final clipped = <Vector4>[];
-  for (var i = 0; i < poly.length; i++) {
-    final cur = poly[i];
-    final prev = poly[(i + poly.length - 1) % poly.length];
-    final curIn = cur.w > clipEps;
-    final prevIn = prev.w > clipEps;
-    if (curIn) {
-      if (!prevIn) clipped.add(_clipNear(prev, cur));
-      clipped.add(cur);
-    } else if (prevIn) {
-      clipped.add(_clipNear(cur, prev));
-    }
-  }
+  var poly = [for (final c in corners) _clipOf(c, vp)];
+  // Near-volume clip (lens plane, then true near plane) so the ground keeps
+  // covering the view at low camera angles instead of popping out — and so
+  // between-lens-and-near corners never project into streaks.
+  poly = _clipPlane4(poly, (v) => v.w);
+  poly = _clipPlane4(poly, (v) => v.z + v.w);
+  final clipped = poly;
   if (clipped.length < 3) return;
   final path = Path();
   for (var i = 0; i < clipped.length; i++) {
@@ -738,10 +784,12 @@ void drawWorldDashedSegment(Canvas canvas, Vector3 a, Vector3 b, Matrix4 vp,
     {double dashPx = 6, double gapPx = 4}) {
   var ca = _clipOf(a, vp);
   var cb = _clipOf(b, vp);
-  if (ca.w <= clipEps && cb.w <= clipEps) return;
-  if (ca.w <= clipEps) {
+  final aIn = _clipInFront(ca);
+  final bIn = _clipInFront(cb);
+  if (!aIn && !bIn) return;
+  if (!aIn) {
     ca = _clipNear(ca, cb);
-  } else if (cb.w <= clipEps) {
+  } else if (!bIn) {
     cb = _clipNear(cb, ca);
   }
   final pa = _divideClip(ca, size);

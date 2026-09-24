@@ -727,6 +727,191 @@ void main() {
     }
   });
 
+  testWidgets('hillside beside the lens never streaks the sky',
+      (tester) async {
+    // A tall wall beside (not containing) a low chase lens: the wall may
+    // legitimately cover the frame side it stands on, but near-plane
+    // slivers must never smear across the open sky on the other side
+    // (the field-report wedge signature).
+    ElevationGrid wallDem() {
+      const n = 32;
+      const dLat = 0.0006;
+      const dLon = 0.001;
+      final heights = Float32List(n * n);
+      double smooth(double t) {
+        final c = t.clamp(0.0, 1.0);
+        return c * c * (3 - 2 * c);
+      }
+
+      for (var j = 0; j < n; j++) {
+        for (var i = 0; i < n; i++) {
+          final eastM = ((i / (n - 1)) - 0.5) *
+              2 *
+              dLon *
+              111320 *
+              math.cos(lat0 * math.pi / 180);
+          // Flat pad apron with a 100 m wall rising east of the camera
+          // (right of frame looking north).
+          heights[j * n + i] = 100 * smooth((eastM - 30) / 10);
+        }
+      }
+      return ElevationGrid(
+        northLat: lat0 + dLat,
+        southLat: lat0 - dLat,
+        westLon: lon0 - dLon,
+        eastLon: lon0 + dLon,
+        datumMsl: 0,
+        cols: n,
+        rows: n,
+        heights: heights,
+        normals: ElevationGrid.buildNormals(
+          heights: heights,
+          cols: n,
+          rows: n,
+          northLat: lat0 + dLat,
+          southLat: lat0 - dLat,
+          westLon: lon0 - dLon,
+          eastLon: lon0 + dLon,
+        ),
+      );
+    }
+
+    Future<ui.Image> bandImage(List<int> stops) async {
+      final recorder = ui.PictureRecorder();
+      final canvas = ui.Canvas(recorder);
+      canvas.drawRect(
+        const ui.Rect.fromLTWH(0, 0, 256, 256),
+        ui.Paint()
+          ..shader = ui.Gradient.linear(
+            const ui.Offset(0, 0),
+            const ui.Offset(256, 256),
+            [ui.Color(stops[0]), ui.Color(stops[1])],
+          ),
+      );
+      final picture = recorder.endRecording();
+      final image = await picture.toImage(256, 256);
+      picture.dispose();
+      return image;
+    }
+
+    final outerImg = await bandImage([0xFF3A7D2C, 0xFFB8A24A]);
+    final midImg = await bandImage([0xFF7D3A2C, 0xFF4A7DB8]);
+    final padImg = await bandImage([0xFF2C5A7D, 0xFFA24AB8]);
+    try {
+      SatellitePatch tier(ui.Image img) => SatellitePatch(
+            image: img,
+            northLat: lat0 + 0.001,
+            southLat: lat0 - 0.001,
+            westLon: lon0 - 0.001,
+            eastLon: lon0 + 0.001,
+            coverageHalfMeters: 3500,
+            averageColor: const ui.Color(0xFF6E7F56),
+          );
+      final terrain = SatelliteTerrain(
+          outer: tier(outerImg), mid: tier(midImg), pad: tier(padImg),
+          dem: wallDem());
+      // Low flight over the flat apron, wall well clear of the lens:
+      // nothing above eye level west of the camera. Empty trail keeps the
+      // top rows pure sky in the reference render.
+      final scene = FlightScene(
+        trail: const [],
+        rocketPos: Vector3(0, 5, 20),
+        rocketIsDeadReckoning: false,
+        maxAlt: 50,
+        maxHoriz: 60,
+        pitchDeg: 0,
+        yawDeg: 0,
+        rollDeg: 0,
+        showNoseCone: true,
+        showParachute: false,
+        siteName: null,
+      );
+      Future<Uint8List> render(double el) => renderPixels(
+          tester,
+          painterFor(
+              scene: scene,
+              terrain: terrain,
+              mode: FlightCameraMode.chase,
+              azimuthDeg: 0,
+              elevationDeg: el));
+      final a = await render(4.0);
+      final plain = await renderPixels(
+          tester,
+          painterFor(
+              scene: scene,
+              terrain: null,
+              mode: FlightCameraMode.chase,
+              azimuthDeg: 0,
+              elevationDeg: 4.0));
+
+      double region(Uint8List img, int x0, int x1, [int y0 = 0, int y1 = 120]) {
+        var contaminated = 0;
+        var total = 0;
+        for (var y = y0; y < y1; y++) {
+          for (var x = x0; x < x1; x++) {
+            total++;
+            final i = y * 800 + x;
+            var px = 0;
+            for (var c = 0; c < 3; c++) {
+              px += (img[i * 4 + c] - plain[i * 4 + c]).abs();
+            }
+            if (px > 150) contaminated++;
+          }
+        }
+        return contaminated / total;
+      }
+
+      // The wall legitimately covers the mid-right (guards a vacuous pass
+      // where relief renders nothing at all).
+      final wallFrac = region(a, 450, 800, 150, 450);
+      debugPrint('wall coverage: $wallFrac');
+      expect(wallFrac, greaterThan(0.2));
+
+      // A 0.15° nudge must not hard-flip drape pixels: near-plane slivers
+      // escaping the clip (the streak signature) sweep wildly between
+      // frames, while real hillsides — however steep — stay put. Like the
+      // wobble test, only fully drape-covered interior pixels count, so
+      // silhouette sweeps and overlays can't trip it.
+      final b = await render(4.15);
+      final maskA = maskFor(a, plain);
+      final maskB = maskFor(b, plain);
+      var flips = 0;
+      var interior = 0;
+      for (var y = 3; y < 600 - 3; y++) {
+        for (var x = 3; x < 800 - 3; x++) {
+          final i = y * 800 + x;
+          var full = true;
+          for (var dy = -3; dy <= 3 && full; dy++) {
+            for (var dx = -3; dx <= 3; dx++) {
+              final j = i + dy * 800 + dx;
+              if (maskA[j] == 0 || maskB[j] == 0) {
+                full = false;
+                break;
+              }
+            }
+          }
+          if (!full) continue;
+          interior++;
+          var px = 0;
+          for (var c = 0; c < 3; c++) {
+            px += (a[i * 4 + c] - b[i * 4 + c]).abs();
+          }
+          if (px > 150) flips++;
+        }
+      }
+      debugPrint('wall-scene interior=$interior flips=$flips');
+      expect(interior, greaterThan(100000));
+      // Same order as the ridge test's allowance: a clip escape would flip
+      // thousands here (streaks sweep disproportionately), real hillsides
+      // only shimmer at warp seams.
+      expect(flips, lessThanOrEqualTo(64));
+    } finally {
+      outerImg.dispose();
+      midImg.dispose();
+      padImg.dispose();
+    }
+  });
+
   testWidgets('close chase: texture error converges with density',
       (tester) async {
     // Static world meshes interpolate UVs affinely per triangle; near a
@@ -852,6 +1037,7 @@ void main() {
               ),
               mid: null,
               pad: pad,
+              padLo: null,
             ),
             anchor: a,
           ));

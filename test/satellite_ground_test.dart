@@ -206,6 +206,35 @@ void main() {
         expect(p.c.w, greaterThan(0));
       }
     });
+
+    test('between lens and near plane is outside (no streak)', () {
+      // w > 0 but z + w < 0: the old bare `w > eps` test kept these and
+      // their 1/w divide exploded into screen-spanning streaks.
+      ClipVert n(double w, double z) =>
+          (c: Vector4(0, 0, z, w), u: 0, v: 0, shade: 1.0, alpha: 1.0);
+      // All three between lens and near: nothing survives.
+      expect(
+          clipTriangleNear(n(0.05, -0.06), n(0.08, -0.09), n(0.03, -0.04)),
+          isEmpty);
+      // Two inside (z + w > 0), one between: clips to a quad, crossings
+      // pinned to the near plane.
+      final out = clipTriangleNear(
+          n(2, -1), n(0.05, -0.06), n(3, -1));
+      expect(out.length, 4);
+      for (final p in out) {
+        expect(p.c.w, greaterThan(0));
+        expect(p.c.z + p.c.w, greaterThan(0));
+      }
+    });
+
+    test('behind the lens is outside even with z + w > 0', () {
+      ClipVert n(double w, double z) =>
+          (c: Vector4(0, 0, z, w), u: 0, v: 0, shade: 1.0, alpha: 1.0);
+      expect(
+          clipTriangleNear(n(-1, 5), n(-2, 6), n(2, -1)), isNotEmpty);
+      expect(
+          clipTriangleNear(n(-1, 5), n(-2, 6), n(-3, 7)), isEmpty);
+    });
   });
 
   group('shouldApplyTerrainStage', () {
@@ -300,11 +329,22 @@ void main() {
       expect(mesh.uvPts[4].dx, greaterThan(mesh.uvPts[0].dx));
     });
 
-    test('demDistanceFade is full near, gone far', () {
-      expect(demDistanceFade(0), 1.0);
-      expect(demDistanceFade(3000), 1.0);
-      expect(demDistanceFade(8000), 0.0);
-      expect(demDistanceFade(20000), 0.0);
+    test('lensFade dissolves sub-lens-range geometry only', () {
+      expect(lensFade(-1.0), 0.0);
+      expect(lensFade(0.0), 0.0);
+      expect(lensFade(lensFadeStart), 0.0);
+      expect(lensFade(lensFadeEnd), 1.0);
+      expect(lensFade(100.0), 1.0);
+      final mid = lensFade((lensFadeStart + lensFadeEnd) / 2);
+      expect(mid, greaterThan(0.0));
+      expect(mid, lessThan(1.0));
+      // Monotonic across the band.
+      var prev = 0.0;
+      for (var w = lensFadeStart; w <= lensFadeEnd + 1e-9; w += 0.05) {
+        final f = lensFade(w);
+        expect(f, greaterThanOrEqualTo(prev));
+        prev = f;
+      }
     });
   });
 

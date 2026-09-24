@@ -186,10 +186,33 @@ typedef ClipVert = ({
   double alpha
 });
 
-/// Near-plane epsilon for drape clipping.
+/// Near-plane slop for drape clipping (clip-space units around the plane).
 const double drapeClipEps = 1e-6;
 
-/// Sutherland–Hodgman clip of triangle ([a], [b], [c]) against w = [eps].
+/// Near-lens fade band (clip-space w ≈ metres of depth): relief passing
+/// within centimetres of the lens (buried/clamped cameras inside coarse
+/// relief) projects to frame-spanning minified smears — geometrically
+/// "correct" (a wall touching your eye fills half the view) but
+/// unreadable. Fading to 0 below [lensFadeEnd] dissolves those degenerate
+/// triangles instead of smearing them; real foreground lives metres out
+/// (chase standoff 7 m, eye clamp +2 m) and never notices. Pure.
+const double lensFadeStart = 0.15;
+const double lensFadeEnd = 0.6;
+
+/// 0 at/below [lensFadeStart], 1 at/above [lensFadeEnd], smoothstep between
+/// (no popping while panning through the band). Pure — unit-tested.
+double lensFade(double w) {
+  final t =
+      ((w - lensFadeStart) / (lensFadeEnd - lensFadeStart)).clamp(0.0, 1.0);
+  return t * t * (3 - 2 * t);
+}
+
+/// Sutherland–Hodgman clip of triangle ([a], [b], [c]) against the true
+/// near plane (plus the lens plane): first against `w = [eps]`, then
+/// against `z + w = [eps]` (`vector_math` uses an OpenGL-style matrix, so
+/// near is `z = -w`, not a fixed `w` cutoff). Two passes because a
+/// grazing edge can pierce the planes in either order; a single pass with
+/// a combined predicate would keep behind-the-lens segments.
 List<ClipVert> clipTriangleNear(
   ClipVert a,
   ClipVert b,
@@ -203,27 +226,39 @@ List<ClipVert> clipTriangleNear(
         shade: out.shade + (inn.shade - out.shade) * t,
         alpha: out.alpha + (inn.alpha - out.alpha) * t,
       );
-  ClipVert cross(ClipVert out, ClipVert inn) {
-    final denom = inn.c.w - out.c.w;
-    if (denom.abs() < 1e-12) return inn;
-    return lerp(out, inn, ((eps - out.c.w) / denom).clamp(0.0, 1.0));
+
+  List<ClipVert> clipPlane(
+    List<ClipVert> poly,
+    double Function(ClipVert v) dist,
+  ) {
+    if (poly.isEmpty) return poly;
+    final out = <ClipVert>[];
+    for (var i = 0; i < poly.length; i++) {
+      final cur = poly[i];
+      final prev = poly[(i + poly.length - 1) % poly.length];
+      final dCur = dist(cur);
+      final dPrev = dist(prev);
+      final curIn = dCur > eps;
+      final prevIn = dPrev > eps;
+      ClipVert cross(ClipVert o, ClipVert n, double dO, double dN) {
+        final denom = dN - dO;
+        if (denom.abs() < 1e-12) return n;
+        return lerp(o, n, ((eps - dO) / denom).clamp(0.0, 1.0));
+      }
+
+      if (curIn) {
+        if (!prevIn) out.add(cross(prev, cur, dPrev, dCur));
+        out.add(cur);
+      } else if (prevIn) {
+        out.add(cross(cur, prev, dCur, dPrev));
+      }
+    }
+    return out;
   }
 
   final vs = [a, b, c];
-  final clipped = <ClipVert>[];
-  for (var i = 0; i < vs.length; i++) {
-    final cur = vs[i];
-    final prev = vs[(i + vs.length - 1) % vs.length];
-    final curIn = cur.c.w > eps;
-    final prevIn = prev.c.w > eps;
-    if (curIn) {
-      if (!prevIn) clipped.add(cross(prev, cur));
-      clipped.add(cur);
-    } else if (prevIn) {
-      clipped.add(cross(cur, prev));
-    }
-  }
-  return clipped;
+  return clipPlane(
+      clipPlane(vs, (v) => v.c.w), (v) => v.c.z + v.c.w);
 }
 
 /// Edge fade for raw (unclamped) patch UVs [u]/[v].

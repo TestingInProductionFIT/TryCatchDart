@@ -131,7 +131,8 @@ Per-card `BoxShadow` + `Clip.antiAlias` on grid tiles silently blanks the worksp
 - Do not reintroduce either on grid tiles without testing on-device.
 - Grid keeps dividers as invisible `Positioned` children in live mode so the Stack child count is identical in both edit and live modes.
 - Nuclear fallback: `flutter::ImpellerSwitch::Disabled` in `windows/runner/flutter_window.cpp`.
-- `Canvas.transform` perspective drapes also silently paint nothing on Impeller/OpenGLES — use the custom clip-space projection in the satellite tile instead.
+- `Canvas.transform` with a perspective matrix paints fine (probed in `test/canvas_transform_probe_test.dart`; the engine plumbs `TransformFullPerspective` through). The satellite tile keeps its tessellated mesh anyway because DEM relief needs per-vertex heights, which 2D draw calls cannot carry — not because the transform is broken.
+- The satellite drape's `drawVertices` input lists (positions/UVs/colors/indices) must be fresh objects per tier per frame — sharing/reusing the same list across tiers corrupts rendering (the engine must not see the same list with different content in one frame; symptom is a uniform brown smear). Scratch clip-space buffers that never escape into engine objects MAY be shared. Near-lens relief (clampEyeAboveTerrain margins, coarse tessellation) can still legitimately fill the frame with minified hillside — do not "fix" that with sky oracles; pin stability across micro camera moves instead (`hillside beside the lens` test).
 
 ### 2.5 Pointer input (desktop)
 

@@ -344,6 +344,11 @@ const int satMeshOuterRes = 80;
 const int satMeshMidRes = 96;
 const int satMeshPadRes = 160;
 
+/// Far LOD for the pad centre (same extent/imagery as [satMeshPadRes]):
+/// used while its quads are sub-pixel but the tier can't be skipped
+/// outright — 4× fewer verts/tris per frame for an invisible delta.
+const int satMeshPadFarRes = 80;
+
 /// Distance fade for DEM displacement: full relief within
 /// [demLiftFullMeters] of the anchor, fading to flat by
 /// [demLiftFadeMeters] (far-field displacement swam while panning, so
@@ -389,11 +394,13 @@ class TerrainMesh {
   int get vertexCount => rows * cols;
 }
 
-/// Retained meshes for every present tier of a terrain.
+/// Retained meshes for every present tier of a terrain, plus the pad
+/// tier's far LOD (see [satMeshPadFarRes]).
 typedef TerrainMeshSet = ({
   TerrainMesh outer,
   TerrainMesh? mid,
   TerrainMesh? pad,
+  TerrainMesh? padLo,
 });
 
 /// Builds one retained tier mesh over ±[halfMeters] around the anchor.
@@ -514,6 +521,9 @@ TerrainMeshSet buildTerrainMeshes(
     pad: terrain.pad == null
         ? null
         : one(terrain.pad!, satPadHalfMeters, satMeshPadRes),
+    padLo: terrain.pad == null
+        ? null
+        : one(terrain.pad!, satPadHalfMeters, satMeshPadFarRes),
   );
 }
 
