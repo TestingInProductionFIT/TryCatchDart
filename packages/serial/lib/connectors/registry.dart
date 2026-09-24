@@ -13,6 +13,7 @@ library;
 import 'connector.dart';
 import 'mock_connector.dart';
 import 'segfault_connector.dart';
+import 'segfault_demo_connector.dart';
 
 /// Mirrors Flutter's `kDebugMode` without taking a Flutter dependency
 /// (this package is pure Dart): true in debug, false in profile/release.
@@ -26,6 +27,9 @@ const TelemetryConnector mockConnector = MockConnector();
 /// The SegFault connector instance (OG rocket firmware).
 const TelemetryConnector segfaultConnector = SegfaultConnector();
 
+/// The SegFault Demo connector instance (minimal event firmware).
+const TelemetryConnector segfaultDemoConnector = SegfaultDemoConnector();
+
 /// Every available connector, in settings display order.
 ///
 /// Full list for decoding — always includes `mock` so v3 recordings stamped
@@ -34,13 +38,16 @@ const TelemetryConnector segfaultConnector = SegfaultConnector();
 const List<TelemetryConnector> allConnectors = [
   mockConnector,
   segfaultConnector,
+  segfaultDemoConnector,
 ];
 
 /// Connectors the settings picker may offer. The MOCK connector is a dev
-/// tool and only shows in debug builds; release builds offer SegFault alone.
+/// tool and only shows in debug builds; release builds offer the SegFault
+/// firmwares alone.
 List<TelemetryConnector> get visibleConnectors => [
       if (isDevMode) mockConnector,
       segfaultConnector,
+      segfaultDemoConnector,
     ];
 
 /// Whether [id] is the dev-only MOCK connector.

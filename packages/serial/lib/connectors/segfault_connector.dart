@@ -65,7 +65,14 @@ abstract final class SegfaultPacketCodec {
   ///
   /// Returns `null` for wrong lengths or a bad sync word. Any state id is
   /// accepted (unmapped ids surface as unknown via `stateForId`).
-  static TelemetryFrame? decode(Uint8List packet, {required int receivedAtMs}) {
+  /// When [assumeGpsFix] is false (demo firmware with `EnableGps = false`),
+  /// the frame carries no fix flags — offsets still decode to base+offset
+  /// (zero while GPS is disabled), but consumers see "no fix".
+  static TelemetryFrame? decode(
+    Uint8List packet, {
+    required int receivedAtMs,
+    bool assumeGpsFix = true,
+  }) {
     if (packet.length != SegfaultFraming.totalPacketLength) return null;
     final b = ByteData.sublistView(packet);
     if (b.getUint16(0, Endian.little) != SegfaultFraming.syncWord) {
@@ -103,8 +110,9 @@ abstract final class SegfaultPacketCodec {
     return TelemetryFrame(
       receivedAtMs: receivedAtMs,
       // No fix flags on the wire; offsets default to the base when the
-      // GPS is invalid, so frames assume a fix (see module doc).
-      flags: FrameFlags.gpsFix | FrameFlags.gpsFix3d,
+      // GPS is invalid, so OG frames assume a fix (see module doc).
+      // Demo firmware disables GPS entirely — same bytes, no fix.
+      flags: assumeGpsFix ? FrameFlags.gpsFix | FrameFlags.gpsFix3d : 0,
       sequence: packetId,
       latitude: baseLatitudeDeg + latOff * gpsOffsetScaleDeg,
       longitude: baseLongitudeDeg + lonOff * gpsOffsetScaleDeg,
@@ -196,7 +204,16 @@ abstract final class SegfaultPacketCodec {
 ///
 /// There is no CRC on the wire, so every 33-byte frame behind a sync word
 /// is accepted; `crcErrorCount`/`crcErrorBytes` stay 0.
+///
+/// When [assumeGpsFix] is false, decoded frames carry no GPS fix flags
+/// (demo firmware with GPS disabled) — same bytes, same positions.
 class SegfaultConnectorParser extends ConnectorStreamParser {
+  SegfaultConnectorParser({this.assumeGpsFix = true});
+
+  /// Whether decoded frames assume a GPS fix (OG firmware) or report no
+  /// fix (demo firmware, `AvionicsConfig::EnableGps = false`).
+  final bool assumeGpsFix;
+
   final _buf = <int>[];
 
   @override
@@ -244,8 +261,11 @@ class SegfaultConnectorParser extends ConnectorStreamParser {
       );
       _buf.removeRange(0, SegfaultFraming.totalPacketLength);
 
-      final frame =
-          SegfaultPacketCodec.decode(packet, receivedAtMs: nowMs);
+      final frame = SegfaultPacketCodec.decode(
+        packet,
+        receivedAtMs: nowMs,
+        assumeGpsFix: assumeGpsFix,
+      );
       if (frame == null) {
         // Sync validated above; unreachable unless the buffer raced.
         // Count it as garbage so health counters stay consistent.
