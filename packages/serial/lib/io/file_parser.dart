@@ -1,24 +1,26 @@
 import 'dart:io';
 import 'dart:typed_data';
 
-import '../constants.dart';
-import '../worker/protocol.dart';
-import 'packet_parser.dart';
+import '../connectors/connector.dart';
+import '../telemetry/telemetry_frame.dart';
 import 'recording_file.dart';
 
 /// Handles reading and decoding recording files.
 ///
-/// The file must open with a valid v2 [RecordingHeader] whose framing
-/// matches [TelemetryFraming.payloadLength]. Files without a valid header
-/// (including v1 recordings) yield no packets. Only the header's telemetry
-/// section is decoded — the trailing command log is never fed to the
-/// telemetry parser (use [readRecordingCommands] for it).
+/// The file must open with a valid v3 [RecordingHeader]. Files without a
+/// valid header (including v1/v2 recordings) yield no frames. Only the
+/// header's telemetry section is decoded — the trailing command log is
+/// never fed to the telemetry parser (use [readRecordingCommands] for it).
 class FileParser {
-  /// Reads framed binary data from [filePath] and yields parsed [TelemetryPacket]s.
+  /// Reads framed binary data from [filePath] and yields internal
+  /// [TelemetryFrame]s decoded with [connector].
   ///
   /// Sequential chunk-by-chunk stream processing ensures low RAM usage when parsing large logs,
-  /// preserving historical chunk arrival timestamps for each reconstructed packet.
-  Stream<TelemetryPacket> parseFile(String filePath) async* {
+  /// preserving historical chunk arrival timestamps for each reconstructed frame.
+  Stream<TelemetryFrame> parseFile(
+    String filePath, {
+    required TelemetryConnector connector,
+  }) async* {
     final file = File(filePath);
     final reader = await file.open(mode: FileMode.read);
 
@@ -27,8 +29,7 @@ class FileParser {
       if (fileLength < recordingHeaderLength) return;
       final fileHeader =
           RecordingHeader.decode(await reader.read(recordingHeaderLength));
-      if (fileHeader == null ||
-          fileHeader.payloadLength != TelemetryFraming.payloadLength) {
+      if (fileHeader == null) {
         return;
       }
       // Bound decoding to the telemetry section so the trailing command
@@ -42,7 +43,7 @@ class FileParser {
         telemetryEnd = fileHeader.commandsOffset
             .clamp(recordingHeaderLength, fileLength);
       }
-      final parser = PacketParser();
+      final parser = connector.createParser();
 
       while (await reader.position() < telemetryEnd) {
         // Read 12-byte header: Int64 timestamp (bytes 0-7), Uint32 length (bytes 8-11)
@@ -57,10 +58,10 @@ class FileParser {
         final chunk = await reader.read(payloadLength);
         final timestampMs = timestampMicros ~/ 1000;
 
-        // Feed chunk into parser using historical chunk arrival timestamp
-        final packets = parser.feed(chunk, timestampMs: timestampMs);
-        for (final packet in packets) {
-          yield packet;
+        // Feed chunk into the connector parser using the historical chunk
+        // arrival timestamp
+        for (final frame in parser.feed(chunk, timestampMs: timestampMs)) {
+          yield frame;
         }
       }
     } finally {

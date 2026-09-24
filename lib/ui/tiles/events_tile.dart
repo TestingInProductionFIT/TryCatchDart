@@ -3,11 +3,15 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:serial/serial.dart' show TelemetryField;
+
 import '../../core/flight_events.dart';
 import '../../core/format.dart';
 import '../../state/replay_controller.dart';
+import '../../state/telemetry_provider.dart';
 import '../../state/telemetry_store.dart';
 import '../../theme/app_colors.dart';
+import '../components/connector_gate.dart';
 import '../components/flight_event_style.dart';
 import '../components/waiting_for_data.dart';
 
@@ -53,15 +57,28 @@ class _EventsTileState extends ConsumerState<EventsTile> {
     final replayActive = ref.watch(replayProvider.select((s) => s.isActive));
     final replaying = store.replaying && replayActive;
 
+    // Events derive from FSM transitions — a connector without flight
+    // states has no milestones to show.
+    final connector = ref.watch(activeConnectorProvider);
+    final unsupported =
+        connector.unsupportedPlaceholder(TelemetryField.fsm);
+    if (unsupported != null) return unsupported;
+
     if (!replaying && store.history.isEmpty) {
       return const Center(child: WaitingForData());
     }
 
     // Live scans the store ring; replay scans the whole pre-decoded flight
-    // so milestones past the live ring cap still show.
+    // so milestones past the live ring cap still show. Both use the active
+    // connector's event table (auto-selected to the recording's connector
+    // during playback).
     final events = replaying
         ? ref.watch(replayFlightEventsProvider)
-        : detectFlightEvents(store.history.toList(growable: false));
+        : detectFlightEvents(
+            store.history.toList(growable: false),
+            eventDefs: connector.events,
+            connector: connector,
+          );
     if (events.isEmpty) {
       return Center(
         child: Text(
@@ -136,7 +153,7 @@ class _EventRow extends ConsumerWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  event.type.label,
+                  event.label,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: AppText.mono.copyWith(
@@ -146,7 +163,7 @@ class _EventRow extends ConsumerWidget {
                   ),
                 ),
                 Text(
-                  event.type.transitionLabel.toUpperCase(),
+                  event.transitionLabel.toUpperCase(),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: AppText.microLabel.copyWith(fontSize: 9),
@@ -176,7 +193,7 @@ class _EventRow extends ConsumerWidget {
     final isLoading = ref.watch(replayProvider.select((s) => s.isLoading));
     return Tooltip(
       message:
-          '${event.type.label} at ${formatMinSec(event.positionMs)} — tap to seek',
+          '${event.label} at ${formatMinSec(event.positionMs)} — tap to seek',
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: isLoading

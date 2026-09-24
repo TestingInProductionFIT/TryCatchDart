@@ -317,7 +317,7 @@ class _ReplayTimeline extends ConsumerWidget {
                         height: _hitSize,
                         child: IconButton(
                           tooltip:
-                              '${p.event.type.label} at ${formatMinSec(p.event.positionMs)} — tap to seek',
+                              '${p.event.label} at ${formatMinSec(p.event.positionMs)} — tap to seek',
                           onPressed: isLoading
                               ? null
                               : () => controller.seek(p.event.positionMs),

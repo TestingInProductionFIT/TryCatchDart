@@ -3,7 +3,9 @@ import 'dart:typed_data';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:serial/serial.dart';
 
+import './connector_provider.dart';
 import './recording_provider.dart';
+export './connector_provider.dart';
 export './recording_provider.dart';
 
 // ─── Core worker provider ──────────────────────────────────────────────────────
@@ -19,12 +21,13 @@ final serialWorkerProvider = Provider<SerialWorker>((ref) {
 
 // ─── Event-derived stream providers ───────────────────────────────────────────
 
-/// Stream of parsed [TelemetryPacket]s from the serial worker.
+/// Stream of [TelemetryFrame]s decoded by the worker's active connector.
 ///
-/// In tiles: `ref.watch(telemetryStreamProvider)`
-///   → `AsyncValue<TelemetryPacket>` (loading / data / error)
-final telemetryStreamProvider = StreamProvider<TelemetryPacket>((ref) {
-  return ref.watch(serialWorkerProvider).packetStream;
+/// Raw bytes never leave the serial package — the UI only deals in internal
+/// frames. In tiles: `ref.watch(telemetryStreamProvider)`
+///   → `AsyncValue<TelemetryFrame>` (loading / data / error)
+final telemetryStreamProvider = StreamProvider<TelemetryFrame>((ref) {
+  return ref.watch(serialWorkerProvider).frameStream;
 });
 
 /// Current serial worker status (connected, recording, active port, etc.).
@@ -141,10 +144,31 @@ class SerialConfigNotifier extends Notifier<SerialConfig> {
   void setPort(String? port) => state = state.copyWith(selectedPort: port);
 
   /// Dispatches a [ConnectCommand] to the serial worker with the configured hardware settings.
+  ///
+  /// The active connector id rides along so the worker parses the
+  /// bytestream with the connector the UI is showing.
   void connect() {
     final cfg = state;
     if (cfg.selectedPort == null) return;
-    ref.read(serialWorkerProvider).send(ConnectCommand(cfg.selectedPort!));
+    final connectorId =
+        ref.read(activeConnectorIdProvider).value ?? defaultConnectorId;
+    ref
+        .read(serialWorkerProvider)
+        .send(ConnectCommand(cfg.selectedPort!, connectorId: connectorId));
+  }
+
+  /// Selects the telemetry connector everywhere: persists the choice and
+  /// tells the worker to re-parse with it. The telemetry store watches the
+  /// connector id and clears the live flight itself (framings are
+  /// connector-specific, so stale frames must go).
+  Future<void> setConnector(String id) async {
+    if (!isKnownConnectorId(id)) return;
+    await ref.read(activeConnectorIdProvider.notifier).set(id);
+    final connected =
+        ref.read(serialStatusProvider).value?.isConnected ?? false;
+    if (connected) {
+      ref.read(serialWorkerProvider).send(SetConnectorCommand(id));
+    }
   }
 
   /// Dispatches a [DisconnectCommand] to the serial worker.

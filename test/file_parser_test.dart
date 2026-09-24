@@ -53,7 +53,7 @@ void main() {
       await file.writeAsBytes(builder.toBytes());
     }
 
-    test('parses telemetry packets from recorder binary file', () async {
+    test('parses telemetry frames from recorder binary file', () async {
       await recorder.start(
         testFilePath,
         launch: const LaunchRef(
@@ -62,19 +62,17 @@ void main() {
           mslM: 300,
           name: 'Test pad',
         ),
+        connectorId: mockConnector.id,
       );
 
       recorder.recordBytes(createTelemetryPacket(0x42));
       await recorder.stop();
 
-      final packets = await fileParser.parseFile(testFilePath).toList();
+      final frames =
+          await fileParser.parseFile(testFilePath, connector: mockConnector).toList();
 
-      expect(packets.length, 1);
-      expect(packets.first.rawData.length, TelemetryFraming.payloadLength);
-      expect(
-        FrameCodec.decode(packets.first.rawData, receivedAtMs: 0)!.sequence,
-        0x42,
-      );
+      expect(frames.length, 1);
+      expect(frames.first.sequence, 0x42);
     });
 
     test('correctly converts microsecond timestamps to milliseconds',
@@ -86,14 +84,12 @@ void main() {
         (timestampMicros, createTelemetryPacket(0x99)),
       ]);
 
-      final packets = await fileParser.parseFile(testFilePath).toList();
+      final frames =
+          await fileParser.parseFile(testFilePath, connector: mockConnector).toList();
 
-      expect(packets.length, 1);
-      expect(packets.first.receivedAtMs, expectedMs);
-      expect(
-        FrameCodec.decode(packets.first.rawData, receivedAtMs: 0)!.sequence,
-        0x99,
-      );
+      expect(frames.length, 1);
+      expect(frames.first.receivedAtMs, expectedMs);
+      expect(frames.first.sequence, 0x99);
     });
 
     test('handles packet split across multiple framed chunks', () async {
@@ -111,23 +107,22 @@ void main() {
         (timestampMicros2, chunk2),
       ]);
 
-      final packets = await fileParser.parseFile(testFilePath).toList();
+      final frames =
+          await fileParser.parseFile(testFilePath, connector: mockConnector).toList();
 
-      expect(packets.length, 1);
-      expect(packets.first.receivedAtMs, expectedMs2);
-      expect(
-        FrameCodec.decode(packets.first.rawData, receivedAtMs: 0)!.sequence,
-        0x07,
-      );
+      expect(frames.length, 1);
+      expect(frames.first.receivedAtMs, expectedMs2);
+      expect(frames.first.sequence, 0x07);
     });
 
     test('yields empty stream for an empty recording file', () async {
       final file = File(testFilePath);
       await file.create(recursive: true);
 
-      final packets = await fileParser.parseFile(testFilePath).toList();
+      final frames =
+          await fileParser.parseFile(testFilePath, connector: mockConnector).toList();
 
-      expect(packets, isEmpty);
+      expect(frames, isEmpty);
     });
 
     test('rejects files without a header, even with valid packets inside',
@@ -143,7 +138,11 @@ void main() {
         ...packet,
       ]);
 
-      expect(await fileParser.parseFile(testFilePath).toList(), isEmpty);
+      expect(
+          await fileParser
+              .parseFile(testFilePath, connector: mockConnector)
+              .toList(),
+          isEmpty);
     });
   });
 }

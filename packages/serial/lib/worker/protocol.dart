@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import '../constants.dart';
+import '../telemetry/telemetry_frame.dart';
 
 // ─── Commands (UI → Serial Worker Isolate) ───────────────────────────────────
 
@@ -10,10 +11,26 @@ sealed class SerialCommand {
 }
 
 /// Open a serial port using centralized hardware settings from [SerialHardwareConfig].
+///
+/// [connectorId] selects the telemetry connector used to parse the
+/// bytestream into internal [TelemetryFrame]s (see `connectors/registry.dart`).
 class ConnectCommand extends SerialCommand {
   final String port;
 
-  const ConnectCommand(this.port);
+  /// Stable connector id (defaults to the MOCK connector).
+  final String connectorId;
+
+  const ConnectCommand(this.port, {this.connectorId = 'mock'});
+}
+
+/// Switch the active telemetry connector without touching the connection.
+///
+/// The worker recreates its stream parser, so byte counters restart.
+class SetConnectorCommand extends SerialCommand {
+  /// Stable connector id (unknown ids fall back to the default connector).
+  final String connectorId;
+
+  const SetConnectorCommand(this.connectorId);
 }
 
 /// Close the active serial port connection.
@@ -41,7 +58,7 @@ class SendBytesCommand extends SerialCommand {
   const SendBytesCommand(this.bytes, {this.source = 0});
 }
 
-/// Start recording parsed telemetry packets to the given file path.
+/// Start recording the raw bytestream to the given file path.
 class StartRecordingCommand extends SerialCommand {
   final String filePath;
 
@@ -49,7 +66,15 @@ class StartRecordingCommand extends SerialCommand {
   /// recording carries its site (a site must be selected before recording).
   final LaunchRef launch;
 
-  const StartRecordingCommand({required this.filePath, required this.launch});
+  /// Stable connector id stamped into the recording header so playback can
+  /// auto-select the connector the file was recorded with.
+  final String connectorId;
+
+  const StartRecordingCommand({
+    required this.filePath,
+    required this.launch,
+    this.connectorId = 'mock',
+  });
 }
 
 /// Stop the current recording session and flush to disk.
@@ -62,10 +87,12 @@ class StopRecordingCommand extends SerialCommand {
 /// Base class for all events emitted from the serial worker isolate.
 sealed class SerialEvent {}
 
-/// Emitted whenever a full [TelemetryPacket] is received and parsed.
+/// Emitted whenever the active connector decodes a [TelemetryFrame] from
+/// the bytestream. Raw bytes never leave the worker — the UI only deals in
+/// internal frames.
 class PacketReceivedEvent extends SerialEvent {
-  final TelemetryPacket packet;
-  PacketReceivedEvent(this.packet);
+  final TelemetryFrame frame;
+  PacketReceivedEvent(this.frame);
 }
 
 /// Cumulative byte counters describing what the parser saw on the wire.
@@ -180,11 +207,15 @@ class SerialWorkerStatus {
   final bool isRecording;
   final String? recordingPath;
 
+  /// Stable id of the connector currently parsing the bytestream.
+  final String connectorId;
+
   const SerialWorkerStatus({
     this.isConnected = false,
     this.connectedPort,
     this.isRecording = false,
     this.recordingPath,
+    this.connectorId = 'mock',
   });
 
   static const _absent = Object();
@@ -194,6 +225,7 @@ class SerialWorkerStatus {
     Object? connectedPort = _absent,
     bool? isRecording,
     Object? recordingPath = _absent,
+    String? connectorId,
   }) {
     return SerialWorkerStatus(
       isConnected: isConnected ?? this.isConnected,
@@ -204,6 +236,7 @@ class SerialWorkerStatus {
       recordingPath: identical(recordingPath, _absent)
           ? this.recordingPath
           : recordingPath as String?,
+      connectorId: connectorId ?? this.connectorId,
     );
   }
 }

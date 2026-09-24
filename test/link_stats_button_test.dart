@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -19,7 +18,7 @@ Future<void> _pumpButton(
   WidgetTester tester, {
   SerialWorkerStatus status = const SerialWorkerStatus(),
   Stream<LinkStats>? linkStats,
-  Stream<TelemetryPacket>? packets,
+  Stream<TelemetryFrame>? packets,
 }) async {
   await tester.pumpWidget(
     ProviderScope(
@@ -41,8 +40,7 @@ Future<void> _pumpButton(
   await tester.pump(const Duration(milliseconds: 100));
 }
 
-TelemetryPacket _packet() =>
-    TelemetryPacket(receivedAtMs: 0, rawData: Uint8List(0));
+TelemetryFrame _packet() => TelemetryFrame(receivedAtMs: 0);
 
 void main() {
   group('LinkStatsButton (connection-agnostic)', () {
@@ -69,7 +67,7 @@ void main() {
     });
 
     testWidgets('shows live pkt/s while flowing', (tester) async {
-      final packets = StreamController<TelemetryPacket>();
+      final packets = StreamController<TelemetryFrame>();
       addTearDown(packets.close);
       await _pumpButton(tester, packets: packets.stream);
 

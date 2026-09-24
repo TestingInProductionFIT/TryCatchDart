@@ -9,7 +9,7 @@ import '../../state/telemetry_provider.dart';
 import '../../theme/app_colors.dart';
 import 'package:serial/serial.dart';
 
-extension RocketCommandUi on RocketCommand {
+extension ConnectorCommandUi on ConnectorCommand {
   IconData get icon => switch (id) {
         'arm' => Icons.gpp_good_outlined,
         'disarm' => Icons.gpp_bad_outlined,
@@ -42,7 +42,7 @@ class _ControlPanelWidgetState extends ConsumerState<ControlPanelTile> {
     super.dispose();
   }
 
-  void _onTileTap(RocketCommand command) {
+  void _onTileTap(ConnectorCommand command) {
     final notifier = ref.read(serialConfigProvider.notifier);
     final connected =
         ref.read(serialStatusProvider).value?.isConnected ?? false;
@@ -106,10 +106,20 @@ class _ControlPanelWidgetState extends ConsumerState<ControlPanelTile> {
     // is derived from the available height, so the buttons stretch to fill
     // the tile instead of sitting in a fixed strip. Falls back to
     // scrolling at the 54px minimum (icon-over-label needs the room) when
-    // the tile is too short.
+    // the tile is too short. The catalog comes from the active connector.
+    final commands = ref.watch(activeConnectorProvider).commands;
+    if (commands.isEmpty) {
+      return Center(
+        child: Text(
+          'No commands on this connector',
+          style: TextStyle(fontSize: 12, color: AppColors.mutedForeground),
+          textAlign: TextAlign.center,
+        ),
+      );
+    }
     return LayoutBuilder(builder: (context, constraints) {
       final columns = constraints.maxWidth > 460 ? 3 : 2;
-      final rows = (RocketCommands.all.length / columns).ceil();
+      final rows = (commands.length / columns).ceil();
       final bounded = constraints.maxHeight.isFinite;
       final fillExtent =
           (constraints.maxHeight - 8 * (rows - 1)) / rows;
@@ -126,7 +136,7 @@ class _ControlPanelWidgetState extends ConsumerState<ControlPanelTile> {
           mainAxisSpacing: 8,
         ),
         children: [
-          for (final command in RocketCommands.all)
+          for (final command in commands)
             _CommandTile(
               command: command,
               state: _sentCommandId == command.id
@@ -149,7 +159,7 @@ class _ControlPanelWidgetState extends ConsumerState<ControlPanelTile> {
 enum _TileState { idle, confirm, sent }
 
 class _CommandTile extends StatelessWidget {
-  final RocketCommand command;
+  final ConnectorCommand command;
   final _TileState state;
   final bool enabled;
   final VoidCallback onTap;

@@ -197,11 +197,17 @@ List<Vector3> capTrailPoints(List<Vector3> points,
 /// (frames arriving but no fix and no configured site).
 ///
 /// This is the live path and always renders raw frames. Replays use
-/// [buildReplayScene], which can smooth over the whole recording.
-FlightScene? buildFlightScene(TelemetryState state, LaunchSite? site) {
+/// [buildReplayScene], which can smooth over the whole recording. Airframe
+/// flags resolve with [connector] (defaults to the MOCK connector).
+FlightScene? buildFlightScene(
+  TelemetryState state,
+  LaunchSite? site, {
+  TelemetryConnector? connector,
+}) {
   final history = state.history;
   if (history.isEmpty) return null;
   final latest = state.latest!;
+  final c = connector ?? mockConnector;
 
   final anchor = flightAnchor(state, site);
   if (anchor == null) return null;
@@ -275,8 +281,8 @@ FlightScene? buildFlightScene(TelemetryState state, LaunchSite? site) {
     pitchDeg: latest.pitch,
     yawDeg: latest.yaw,
     rollDeg: latest.roll,
-    showNoseCone: latest.fsmState.hasNosecone,
-    showParachute: latest.fsmState.showsParachute,
+    showNoseCone: c.stateForId(latest.fsmStateId).hasNosecone,
+    showParachute: c.stateForId(latest.fsmStateId).showsParachute,
     siteName: site?.name,
   );
 }
@@ -297,8 +303,10 @@ FlightScene? buildReplayScene({
   required int positionMs,
   required LaunchSite? site,
   bool smoothingEnabled = false,
+  TelemetryConnector? connector,
 }) {
   if (frames.isEmpty) return null;
+  final c = connector ?? mockConnector;
   final t0 = frames.first.receivedAtMs;
   var lo = 0;
   var hi = frames.length;
@@ -380,8 +388,8 @@ FlightScene? buildReplayScene({
       pitchDeg: padAttitude.pitchDeg,
       yawDeg: padAttitude.yawDeg,
       rollDeg: padAttitude.rollDeg,
-      showNoseCone: tipFrame.fsmState.hasNosecone,
-      showParachute: tipFrame.fsmState.showsParachute,
+      showNoseCone: c.stateForId(tipFrame.fsmStateId).hasNosecone,
+      showParachute: c.stateForId(tipFrame.fsmStateId).showsParachute,
       siteName: site?.name,
     );
   }
@@ -446,8 +454,8 @@ FlightScene? buildReplayScene({
     pitchDeg: pitchDeg,
     yawDeg: yawDeg,
     rollDeg: rollDeg,
-    showNoseCone: tipFrame.fsmState.hasNosecone,
-    showParachute: tipFrame.fsmState.showsParachute,
+    showNoseCone: c.stateForId(tipFrame.fsmStateId).hasNosecone,
+    showParachute: c.stateForId(tipFrame.fsmStateId).showsParachute,
     siteName: site?.name,
   );
 }
@@ -461,6 +469,7 @@ FlightScene? resolveFlightScene({
   required TelemetryState state,
   required LaunchSite? site,
   required ReplayState replay,
+  TelemetryConnector? connector,
 }) {
   if (replay.isActive && replay.frames.isNotEmpty) {
     return buildReplayScene(
@@ -468,9 +477,10 @@ FlightScene? resolveFlightScene({
       positionMs: replay.positionMs,
       site: site,
       smoothingEnabled: replay.smoothingEnabled,
+      connector: connector,
     );
   }
-  return buildFlightScene(state, site);
+  return buildFlightScene(state, site, connector: connector);
 }
 
 /// Display attitude shared by the orientation viewer: raw live angles, or

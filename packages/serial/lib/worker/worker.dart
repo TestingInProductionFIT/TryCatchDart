@@ -14,7 +14,7 @@ import '../serial.dart';
 /// Runs a headless event loop responsible for:
 /// 1. Native serial port I/O (via pure FFI libserialport).
 /// 2. 1:1 raw binary disk dumping (via [Recorder]).
-/// 3. Stream framing and packet parsing (via [PacketParser]).
+/// 3. Bytestream → internal-frame parsing via the selected [TelemetryConnector].
 void workerMain(SendPort mainSendPort) async {
   // ── Handshake Step 1 ─────────────────────────────────────────────────────────
   // Create an inbox for receiving commands from the main UI isolate
@@ -25,10 +25,11 @@ void workerMain(SendPort mainSendPort) async {
 
   // Initialize isolate-local services
   final service = SerialService();
-  final parser = PacketParser();
+  var connector = connectorById(defaultConnectorId) ?? mockConnector;
+  var parser = connector.createParser();
   final recorder = Recorder();
 
-  var status = const SerialWorkerStatus();
+  var status = SerialWorkerStatus(connectorId: connector.id);
   StreamSubscription<Uint8List>? byteSubscription;
   Timer? statsTimer;
   int lastStatsEmitMs = 0;
@@ -56,6 +57,17 @@ void workerMain(SendPort mainSendPort) async {
     mainSendPort.send(LinkStatsEvent(snapshotStats()));
   }
 
+  /// Switches the active connector, recreating the stream parser.
+  ///
+  /// Unknown ids fall back to the default connector. The status update
+  /// notifies the UI so it can re-resolve states/commands/capabilities.
+  void useConnector(String connectorId) {
+    connector = connectorById(connectorId) ?? mockConnector;
+    parser = connector.createParser();
+    lastStatsEmitMs = 0;
+    pushStatus(status.copyWith(connectorId: connector.id));
+  }
+
   /// Steady heartbeat so the UI graph decays to zero during silence and
   /// keeps a regular sample cadence (not just on chunk arrival).
   void ensureStatsTimer() {
@@ -73,8 +85,8 @@ void workerMain(SendPort mainSendPort) async {
         recorder.recordBytes(chunk);
 
         // 2. Decode valid telemetry frames and forward them to the UI isolate
-        for (final packet in parser.feed(chunk)) {
-          mainSendPort.send(PacketReceivedEvent(packet));
+        for (final frame in parser.feed(chunk)) {
+          mainSendPort.send(PacketReceivedEvent(frame));
         }
         // 3. Fresh channel-health snapshot (throttled).
         emitStats();
@@ -103,11 +115,11 @@ void workerMain(SendPort mainSendPort) async {
     if (message is! SerialCommand) continue;
 
     switch (message) {
-      case ConnectCommand(:final port):
+      case ConnectCommand(:final port, :final connectorId):
         byteSubscription?.cancel();
         byteSubscription = null;
         service.disconnect();
-        parser.resetStats();
+        useConnector(connectorId);
 
         // Connect using centralized SerialHardwareConfig settings
         final ok = service.connect(port);
@@ -127,6 +139,10 @@ void workerMain(SendPort mainSendPort) async {
         service.disconnect();
         parser.resetStats();
         pushStatus(status.copyWith(isConnected: false, connectedPort: null));
+        emitStats(force: true);
+
+      case SetConnectorCommand(:final connectorId):
+        useConnector(connectorId);
         emitStats(force: true);
 
       case ListPortsCommand():
@@ -156,8 +172,16 @@ void workerMain(SendPort mainSendPort) async {
           ));
         }
 
-      case StartRecordingCommand(:final filePath, :final launch):
-        await recorder.start(filePath, launch: launch);
+      case StartRecordingCommand(
+            :final filePath,
+            :final launch,
+            :final connectorId
+          ):
+        await recorder.start(
+          filePath,
+          launch: launch,
+          connectorId: connectorId,
+        );
         pushStatus(status.copyWith(isRecording: true, recordingPath: filePath));
 
       case StopRecordingCommand():

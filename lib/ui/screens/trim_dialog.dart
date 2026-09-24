@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:serial/serial.dart' show connectorById;
 
 import '../../core/flight_events.dart';
 import '../../core/format.dart';
@@ -44,7 +45,13 @@ class _TrimDialogState extends State<TrimDialog> {
           if (widget.info.altProfile.length < 2) {
             widget.info.altProfile = buildAltProfile(flight.frames);
           }
-          widget.info.events = detectFlightEvents(flight.frames);
+          final previewConnector =
+              connectorById(widget.info.connectorId);
+          widget.info.events = detectFlightEvents(
+            flight.frames,
+            eventDefs: previewConnector?.events,
+            connector: previewConnector,
+          );
         });
       });
     }

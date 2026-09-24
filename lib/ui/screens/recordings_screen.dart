@@ -47,7 +47,8 @@ class _RecordingsScreenState extends ConsumerState<RecordingsScreen> {
   /// Fully parsing every file up front would hold the whole list hostage to
   /// the slowest file. Decoded previews are cached for the session (keyed by
   /// path + size + mtime) so refreshes don't re-parse unchanged files.
-  /// Headers yield duration/packets/max-alt straight from 136 bytes.
+  /// Headers yield duration/packets/max-alt/connector straight from the
+  /// fixed header.
   final _infoCache = <String, RecordingInfo>{};
 
   Future<List<RecordingInfo>> _scanRecordings() async {
@@ -78,6 +79,9 @@ class _RecordingsScreenState extends ConsumerState<RecordingsScreen> {
           final header = await tryReadRecordingHeader(entity.path);
           if (header != null) {
             info.launchSite = launchSiteFromHeader(header);
+            if (header.connectorId.isNotEmpty) {
+              info.connectorId = header.connectorId;
+            }
             if (header.hasStats) {
               info.durationMs = header.durationMs;
               info.packets = header.packetCount;

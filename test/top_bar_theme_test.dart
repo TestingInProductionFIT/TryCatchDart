@@ -26,7 +26,7 @@ void main() {
             serialStatusProvider.overrideWith(
                 (ref) => Stream.value(const SerialWorkerStatus())),
             telemetryStreamProvider.overrideWith(
-                (ref) => Stream<TelemetryPacket>.empty()),
+                (ref) => Stream<TelemetryFrame>.empty()),
             linkStatsStreamProvider
                 .overrideWith((ref) => Stream<LinkStats>.empty()),
           ],

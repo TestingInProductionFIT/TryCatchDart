@@ -79,6 +79,46 @@ void main() {
       ];
       expect(detectFlightEvents(frames), isEmpty);
     });
+
+    test('connector event tables drive detection', () {
+      const defs = [
+        ConnectorEventDef(label: 'Liftoff', fromStateId: 1, toStateId: 2),
+      ];
+      final events = detectFlightEvents(
+        [_frame(0, FsmState.armed), _frame(100, FsmState.ascent)],
+        eventDefs: defs,
+      );
+      expect(events, hasLength(1));
+      expect(events.single.label, 'Liftoff');
+      expect(events.single.transitionLabel, 'Armed → Ascent');
+      // The same id pair maps into the nominal style table.
+      expect(events.single.type, FlightEventType.launch);
+
+      // Transitions outside the table are ignored.
+      expect(
+        detectFlightEvents(
+          [_frame(0, FsmState.ascent), _frame(100, FsmState.apogee)],
+          eventDefs: defs,
+        ),
+        isEmpty,
+      );
+    });
+
+    test('connector-specific transitions surface untyped', () {
+      const defs = [
+        ConnectorEventDef(label: 'Bench', fromStateId: 6, toStateId: 7),
+      ];
+      final events = detectFlightEvents(
+        [_frame(0, FsmState.debugUnlocked), _frame(100, FsmState.debugLocked)],
+        eventDefs: defs,
+      );
+      expect(events, hasLength(1));
+      expect(events.single.type, isNull);
+      expect(events.single.label, 'Bench');
+      // The fallback style still renders untyped events.
+      expect(flightEventStyleOf(events.single.type).color().a,
+          greaterThan(0));
+    });
   });
 
   group('placeFlightEvents', () {
@@ -88,9 +128,11 @@ void main() {
     const inset = 24.0;
     const travel = width - 2 * inset;
 
-    FlightEvent at(int ms, [FlightEventType type = FlightEventType.launch]) =>
+    FlightEvent at(int ms, [FlightEventType? type = FlightEventType.launch]) =>
         FlightEvent(
           type: type,
+          label: type?.label ?? 'Custom',
+          transitionLabel: type?.transitionLabel ?? '? → ?',
           frameIndex: 0,
           positionMs: ms,
           receivedAtMs: ms,
@@ -186,12 +228,16 @@ void main() {
         [
           const FlightEvent(
             type: FlightEventType.launch,
+            label: 'Launch',
+            transitionLabel: 'Armed → Ascent',
             frameIndex: 0,
             positionMs: -50,
             receivedAtMs: -50,
           ),
           const FlightEvent(
             type: FlightEventType.touchdown,
+            label: 'Touchdown',
+            transitionLabel: 'Parachute → Landed',
             frameIndex: 1,
             positionMs: 99999,
             receivedAtMs: 99999,

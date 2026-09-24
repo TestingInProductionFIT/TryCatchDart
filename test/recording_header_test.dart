@@ -47,6 +47,7 @@ void main() {
         launchLongitude: 16.6928967,
         launchMslM: 378.4,
         launchName: 'Prague',
+        connectorId: 'mock',
       );
       final back = RecordingHeader.decode(header.encode())!;
       expect(back.payloadLength, TelemetryFraming.payloadLength);
@@ -64,6 +65,20 @@ void main() {
       expect(back.launchMslM, closeTo(378.4, 0.01));
       expect(back.launchName, 'Prague');
       expect(back.launchRef!.name, 'Prague');
+      expect(back.connectorId, 'mock');
+    });
+
+    test('rejects v2 headers (migrate with the v3 tool)', () async {
+      final v2 = ByteData(recordingHeaderLength);
+      v2.setUint32(0, recordingMagicV2, Endian.big); // 'TCR2'
+      expect(RecordingHeader.decode(v2.buffer.asUint8List()), isNull);
+    });
+
+    test('rejects a corrupt connector id', () async {
+      const header = RecordingHeader(connectorId: 'mock');
+      final corrupt = Uint8List.fromList(header.encode())
+        ..[140] ^= 0xFF; // inside the connector-id field
+      expect(RecordingHeader.decode(corrupt), isNull);
     });
 
     test('truncates long names without splitting UTF-8 runes', () async {
@@ -142,6 +157,7 @@ void main() {
             mslM: 378,
             name: 'Test site',
           ),
+          connectorId: mockConnector.id,
         );
         recorder.recordBytes(_packet(seq: 1, baro: 100));
         recorder.recordBytes(_packet(seq: 2, baro: 300));
@@ -159,14 +175,13 @@ void main() {
         expect(header.endMicros, greaterThanOrEqualTo(header.startMicros));
         expect(header.launchLatitude, closeTo(49.5, 1e-7));
         expect(header.launchName, 'Test site');
+        expect(header.connectorId, 'mock');
 
-        final packets =
-            await FileParser().parseFile(path).toList();
+        final frames = await FileParser()
+            .parseFile(path, connector: mockConnector)
+            .toList();
         expect(
-          [
-            for (final p in packets)
-              FrameCodec.decode(p.rawData, receivedAtMs: 0)!.sequence
-          ],
+          [for (final f in frames) f.sequence],
           [1, 2, 3],
         );
       } finally {
@@ -188,6 +203,7 @@ void main() {
             mslM: 378,
             name: 'Test site',
           ),
+          connectorId: mockConnector.id,
         );
         recorder.recordBytes(
             _packet(seq: 1, baro: 50, lat: 50.001, lon: 14.001));
@@ -211,7 +227,9 @@ void main() {
         await writeRecordingFile(
           path,
           const RecordingHeader(
-              payloadLength: TelemetryFraming.payloadLength),
+            payloadLength: TelemetryFraming.payloadLength,
+            connectorId: 'mock',
+          ),
           [
             RecordingChunk(tsUs: 1000000, payload: _packet(seq: 9, baro: 42)),
           ],
@@ -225,10 +243,12 @@ void main() {
             mslM: 3.0,
             name: 'Pad',
           ),
+          connectorId: 'mock',
         ))!;
         expect(first.packetCount, 1);
         expect(first.hasLaunchSite, isTrue);
         expect(first.launchName, 'Pad');
+        expect(first.connectorId, 'mock');
         final sizeOnce = await File(path).length();
 
         final second = (await finalizeRecordingFile(
@@ -239,13 +259,15 @@ void main() {
             mslM: 3.0,
             name: 'Pad',
           ),
+          connectorId: 'mock',
         ))!;
         expect(second.packetCount, 1);
         expect(await File(path).length(), sizeOnce);
 
-        final packets =
-            await FileParser().parseFile(path).toList();
-        expect(packets.length, 1);
+        final frames = await FileParser()
+            .parseFile(path, connector: mockConnector)
+            .toList();
+        expect(frames.length, 1);
       } finally {
         await dir.delete(recursive: true);
       }
@@ -260,7 +282,9 @@ void main() {
         await writeRecordingFile(
           src,
           const RecordingHeader(
-              payloadLength: TelemetryFraming.payloadLength),
+            payloadLength: TelemetryFraming.payloadLength,
+            connectorId: 'mock',
+          ),
           [
             for (var i = 0; i < 10; i++)
               RecordingChunk(
@@ -277,6 +301,7 @@ void main() {
             mslM: 3.0,
             name: 'Pad',
           ),
+          connectorId: 'mock',
         );
 
         final dst = _path(dir, 'clip.bin');
@@ -293,6 +318,7 @@ void main() {
         expect(header.maxBaroAltM, closeTo(50, 0.01));
         expect(header.launchName, 'Pad');
         expect(header.launchMslM, closeTo(3.0, 0.01));
+        expect(header.connectorId, 'mock');
 
         final chunks = await readRecordingChunks(dst);
         expect(chunks.length, 4);
@@ -311,7 +337,11 @@ void main() {
               tsUs: 1700000000000000, payload: _packet(seq: 1, baro: 5)),
         ]);
         expect(await tryReadRecordingHeader(path), isNull);
-        expect(await FileParser().parseFile(path).toList(), isEmpty);
+        expect(
+            await FileParser()
+                .parseFile(path, connector: mockConnector)
+                .toList(),
+            isEmpty);
         expect(
           (await decodeRecordingFrames(path)).isEmpty,
           isTrue,

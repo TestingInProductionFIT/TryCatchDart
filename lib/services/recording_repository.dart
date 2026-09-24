@@ -7,43 +7,40 @@ import './flight_trim.dart';
 ///
 /// State (`ReplayController`) and UI (`recording_card`, `trim_dialog`,
 /// `lab_tab`, `recordings_screen`) must go through here instead of calling
-/// `FileParser` / `readRecordingChunks` / `FrameCodec` directly, so chunk
-/// framing, header validation and decode stay in one place.
+/// `FileParser` / `readRecordingChunks` directly, so chunk framing, header
+/// validation and connector decode stay in one place.
 abstract final class RecordingRepository {
   /// Loads a recording in a single pass: header + chunks are read once,
-  /// then packets/frames/profile are derived in memory. The trailing
+  /// then frames/profile are derived in memory. The trailing
   /// command log is loaded alongside (empty for command-free files).
+  ///
+  /// The header's [RecordingHeader.connectorId] selects the connector that
+  /// decodes the chunk stream; unknown connector ids yield `null` (the
+  /// recording needs a connector this build doesn't ship).
   static Future<LoadedRecording?> loadReplay(String path) async {
     final header = await tryReadRecordingHeader(path);
-    if (header == null ||
-        header.payloadLength != TelemetryFraming.payloadLength) {
+    if (header == null) {
       return null;
     }
+    final connector = connectorById(header.connectorId);
+    if (connector == null) return null;
     final launch = header.launchRef;
     if (launch == null) return null;
     final chunks = await readRecordingChunks(path);
     if (chunks.isEmpty) return null;
 
-    final parser = PacketParser();
-    final packets = <TelemetryPacket>[];
+    final parser = connector.createParser();
     final frames = <TelemetryFrame>[];
     for (final chunk in chunks) {
-      for (final packet in parser.feed(chunk.payload, timestampMs: chunk.tsMs)) {
-        packets.add(packet);
-        final frame = FrameCodec.decode(
-          packet.rawData,
-          receivedAtMs: packet.receivedAtMs,
-        );
-        if (frame != null) frames.add(frame);
-      }
+      frames.addAll(parser.feed(chunk.payload, timestampMs: chunk.tsMs));
     }
-    if (packets.isEmpty) return null;
+    if (frames.isEmpty) return null;
     final commands = await readRecordingCommands(path);
     return LoadedRecording(
       header: header,
-      packets: packets,
+      connector: connector,
       frames: frames,
-      channelProfile: buildChannelProfile(chunks),
+      channelProfile: buildChannelProfile(chunks, connector: connector),
       commands: commands,
     );
   }
@@ -53,12 +50,14 @@ abstract final class RecordingRepository {
       decodeRecordingFrames(path);
 }
 
-/// Fully decoded recording for replay (packets drive the ticker, frames fix
-/// chart axes, profile drives the channel-health view, commands drive the
-/// commands tile).
+/// Fully decoded recording for replay (frames drive the ticker, fix
+/// chart axes and carry the recording's connector; profile drives the
+/// channel-health view, commands drive the commands tile).
 class LoadedRecording {
   final RecordingHeader header;
-  final List<TelemetryPacket> packets;
+
+  /// Connector the recording was made with (from the header stamp).
+  final TelemetryConnector connector;
   final List<TelemetryFrame> frames;
   final List<ChannelBin> channelProfile;
 
@@ -68,7 +67,7 @@ class LoadedRecording {
 
   const LoadedRecording({
     required this.header,
-    required this.packets,
+    required this.connector,
     required this.frames,
     required this.channelProfile,
     this.commands = const [],

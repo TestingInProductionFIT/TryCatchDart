@@ -34,6 +34,7 @@ void main() {
           launchLongitude: 16.693,
           launchMslM: 403,
           launchName: 'Pad',
+          connectorId: 'mock',
         ).encode());
       for (var i = 0; i < packetCount; i++) {
         final packet = FrameCodec.encodePacket(
@@ -56,7 +57,7 @@ void main() {
       await writeRecording();
       container = ProviderContainer(overrides: [
         telemetryStreamProvider
-            .overrideWith((ref) => Stream<TelemetryPacket>.empty()),
+            .overrideWith((ref) => Stream<TelemetryFrame>.empty()),
         serialStatusProvider.overrideWith(
             (ref) => Stream.value(const SerialWorkerStatus())),
       ]);

@@ -2,14 +2,17 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:serial/serial.dart';
 
 import '../../theme/app_colors.dart';
 import '../components/app_card.dart';
 import '../tiles/shared/map_tiles.dart';
 import '../../state/launch_site_store.dart';
+import '../../state/replay_controller.dart';
+import '../../state/telemetry_provider.dart';
 
-/// Settings screen: offline maps, appearance and about. Launch sites live
-/// in the top-bar site dialog.
+/// Settings screen: connector, offline maps, appearance and about.
+/// Launch sites live in the top-bar site dialog.
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
 
@@ -231,12 +234,83 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       return null;
     }
 
+    final connectorId =
+        ref.watch(activeConnectorIdProvider).value ?? defaultConnectorId;
+    final replaying = ref.watch(replayProvider.select((s) => s.isActive));
+
     return Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 640),
         child: ListView(
           padding: const EdgeInsets.all(AppDimens.pagePadding),
           children: [
+            AppCard(
+              title: 'CONNECTOR',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // 1. What this is.
+                  Text(
+                    'How the ground station reads the rocket. States, '
+                    'commands and tiles follow the selected connector.',
+                    style: TextStyle(
+                        fontSize: 12.5, color: AppColors.mutedForeground),
+                  ),
+                  const SizedBox(height: 10),
+                  // 2. The picker (one bordered row per connector; the
+                  // selected row carries the accent border + tint).
+                  // Locked (not just no-op) while replaying: the recording
+                  // owns the connector for the session.
+                  AbsorbPointer(
+                    absorbing: replaying,
+                    child: Opacity(
+                      opacity: replaying ? 0.45 : 1.0,
+                      child: RadioGroup<String>(
+                        groupValue: connectorId,
+                        onChanged: (id) {
+                          if (!replaying && id != null) {
+                            ref
+                                .read(serialConfigProvider.notifier)
+                                .setConnector(id);
+                          }
+                        },
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            for (final connector in allConnectors) ...[
+                              _ConnectorRow(
+                                connector: connector,
+                                selected: connector.id == connectorId,
+                                onTap: replaying
+                                    ? null
+                                    : () => ref
+                                        .read(serialConfigProvider.notifier)
+                                        .setConnector(connector.id),
+                              ),
+                              const SizedBox(height: 8),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  // 3. Status line: static, so it never shifts layout.
+                  Text(
+                    replaying
+                        ? 'Locked while replaying — the recording picks its own connector.'
+                        : 'Recordings remember this choice and replay with it.',
+                    style: AppText.mono.copyWith(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.mutedForeground,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: AppDimens.gap),
             AppCard(
               title: 'OFFLINE MAPS',
               child: Column(
@@ -425,6 +499,91 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// One connector option: bordered row with a compact radio, name +
+/// description, and a check holding the trailing slot when selected
+/// (so rows never shift width between states).
+class _ConnectorRow extends StatelessWidget {
+  final TelemetryConnector connector;
+  final bool selected;
+  final VoidCallback? onTap;
+
+  const _ConnectorRow({
+    required this.connector,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(AppDimens.radiusSmall),
+        onTap: onTap,
+        child: Container(
+          padding:
+              const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(AppDimens.radiusSmall),
+            border: Border.all(
+              color: selected ? AppColors.primary : AppColors.border,
+              width: selected ? 1.5 : 1,
+            ),
+            color: selected
+                ? AppColors.primary.withValues(alpha: 0.06)
+                : Colors.transparent,
+          ),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 28,
+                height: 28,
+                child: Radio<String>(
+                  value: connector.id,
+                  visualDensity: VisualDensity.compact,
+                  materialTapTargetSize:
+                      MaterialTapTargetSize.shrinkWrap,
+                ),
+              ),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      connector.displayName,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 1),
+                    Text(
+                      connector.description,
+                      style: TextStyle(
+                          fontSize: 12, color: AppColors.mutedForeground),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Opacity(
+                opacity: selected ? 1.0 : 0.0,
+                child: Icon(
+                  Icons.check,
+                  size: 16,
+                  color: AppColors.primary,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

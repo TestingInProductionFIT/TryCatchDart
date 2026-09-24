@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:serial/serial.dart';
 
+import '../../state/telemetry_provider.dart';
 import '../../state/telemetry_store.dart';
 import '../../theme/app_colors.dart';
 import '../components/centered_stat.dart';
+import '../components/connector_gate.dart';
 import '../components/waiting_for_data.dart';
 import './shared/time_series_chart.dart';
 
@@ -17,6 +20,10 @@ class AccelerationChartTile extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final unsupported = ref
+        .watch(activeConnectorProvider)
+        .unsupportedPlaceholder(TelemetryField.acceleration);
+    if (unsupported != null) return unsupported;
     final latest = ref.watch(telemetryStoreProvider).latest;
     return LayoutBuilder(builder: (context, constraints) {
       if (constraints.maxHeight.isFinite &&

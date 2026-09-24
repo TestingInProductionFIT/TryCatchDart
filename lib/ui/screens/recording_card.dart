@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:serial/serial.dart' show connectorById;
+
 import '../../core/flight_events.dart';
 import '../../core/format.dart';
 import '../../services/flight_trim.dart';
@@ -74,7 +76,14 @@ class RecordingCardState extends ConsumerState<RecordingCard> {
           }
           info.altProfile = buildAltProfile(frames);
           info.track = buildTrackProfile(frames);
-          info.events = detectFlightEvents(frames);
+          // Previews decode with the file's own connector (see
+          // decodeRecordingFrames); its event table draws the markers.
+          final previewConnector = connectorById(info.connectorId);
+          info.events = detectFlightEvents(
+            frames,
+            eventDefs: previewConnector?.events,
+            connector: previewConnector,
+          );
         }
         info.previewDone = true;
       });

@@ -1,17 +1,17 @@
-/// Recording file format v2: fixed header + telemetry chunk stream +
+/// Recording file format v3: fixed header + telemetry chunk stream +
 /// command log.
 ///
-/// Layout (all big-endian, header is 136 bytes):
+/// Layout (all big-endian, header is 168 bytes):
 ///
 /// | Off | Size | Field           | Type  | Notes                                   |
 /// |-----|------|-----------------|-------|-----------------------------------------|
-/// | 0   | 4    | magic           | u32   | 0x54435232 ('TCR2')                     |
-/// | 4   | 2    | payloadLength   | u16   | Wire framing of the body (52)           |
+/// | 0   | 4    | magic           | u32   | 0x54435233 ('TCR3')                     |
+/// | 4   | 2    | payloadLength   | u16   | Wire framing of the body (52, mock)     |
 /// | 6   | 2    | flags           | u16   | Bit 0: launch site present              |
 /// |     |      |                 |       | Bit 1: stats present                    |
 /// | 8   | 8    | startMicros     | i64   | First chunk timestamp (µs epoch)        |
 /// | 16  | 8    | endMicros       | i64   | Last chunk timestamp                    |
-/// | 24  | 8    | packetCount     | u64   | Valid decoded packets                   |
+/// | 24  | 8    | packetCount     | u64   | Valid decoded frames                    |
 /// | 32  | 4    | maxBaroAltM     | f32   | Peak barometric altitude (m AGL)        |
 /// | 36  | 4    | maxSpeedMps     | f32   | Peak total speed (m/s)                  |
 /// | 40  | 4    | maxAccelMps2    | f32   | Peak total acceleration (m/s²)          |
@@ -21,42 +21,54 @@
 /// | 56  | 48   | launchName      | u8[48]| UTF-8, NUL-padded, rune-safe truncated |
 /// | 104 | 2    | headerCrc       | u16   | CRC16-CCITT over bytes 0..103           |
 /// | 106 | 2    | reserved        | u16   | Zero                                      |
-/// | 108 | 2    | headerLength    | u16   | Always 136                              |
-/// | 110 | 2    | formatVersion   | u16   | Always 2                                |
+/// | 108 | 2    | headerLength    | u16   | Always 168                              |
+/// | 110 | 2    | formatVersion   | u16   | Always 3                                |
 /// | 112 | 8    | telemetryByteLen| u64   | Telemetry chunk-stream bytes            |
 /// | 120 | 8    | commandsOffset  | u64   | Absolute offset of the command section  |
 /// | 128 | 4    | commandCount    | u32   | Fixed 16-byte command records following |
-/// | 132 | 2    | directoryCrc    | u16   | CRC16-CCITT over bytes 108..131         |
+/// | 132 | 2    | directoryCrc    | u16   | CRC16-CCITT over 108..131 + 134..167    |
 /// | 134 | 2    | reserved        | u16   | Zero                                      |
+/// | 136 | 32   | connectorId     | u8[32]| UTF-8, NUL-padded (e.g. 'mock')       |
 ///
 /// Behind the header the file holds the telemetry chunk stream (per chunk
 /// a 12-byte header — i64 micros + u32 length, big-endian — + raw stream
 /// bytes, exactly `telemetryByteLen` bytes), followed at [commandsOffset]
-/// by `commandCount` fixed 16-byte [SentCommand] records.
+/// by `commandCount` fixed 16-byte [SentCommand] records. The chunk bytes
+/// are the recording connector's raw bytestream and decode with that
+/// connector's parser ([connectorId] selects it for playback).
 ///
-/// The header is mandatory — files without the v2 magic (including every
-/// v1 `TCRC` recording) are rejected by every reader below. Use
-/// `tool/migrate_recordings.dart` to convert v1 files.
+/// The header is mandatory — files without the v3 magic (including every
+/// v2 `TCR2` recording) are rejected by every reader below. Use
+/// `tool/migrate_recordings_v3.dart` to convert v2 files (all stamped
+/// with the `mock` connector).
 library;
 
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import '../connectors/registry.dart';
 import '../constants.dart';
-import '../telemetry/frame_codec.dart';
+import '../telemetry/frame_codec.dart' show crc16CCITT;
 import '../telemetry/sent_command.dart';
 import '../worker/protocol.dart';
-import 'packet_parser.dart';
 
-/// Magic word opening every recording file ('TCR2', format v2).
-const int recordingMagic = 0x54435232;
+/// Magic word opening every recording file ('TCR3', format v3).
+const int recordingMagic = 0x54435233;
 
-/// Fixed header size in bytes (telemetry fields + section directory).
-const int recordingHeaderLength = 136;
+/// Magic word of the legacy v2 format ('TCR2') — rejected by every reader.
+/// Kept so the v2→v3 migration tool and rejection tests can name it.
+const int recordingMagicV2 = 0x54435232;
+
+/// Fixed header size in bytes (telemetry fields + section directory +
+/// connector id).
+const int recordingHeaderLength = 168;
 
 /// On-disk format version stamped into the section directory.
-const int recordingFormatVersion = 2;
+const int recordingFormatVersion = 3;
+
+/// Fixed byte size of the connector-id field (UTF-8, NUL-padded).
+const int recordingConnectorIdLength = 32;
 
 /// Flag: the launch-site fields carry the launch site (always set — a site
 /// is required before recording).
@@ -101,6 +113,12 @@ class RecordingHeader {
   /// Number of fixed 16-byte [SentCommand] records at [commandsOffset].
   final int commandCount;
 
+  /// Stable id of the connector the body was recorded with (e.g. `'mock'`).
+  /// Playback auto-selects this connector to decode the chunk stream and to
+  /// resolve states/commands/events. Empty on headers that predate the
+  /// connector stamp (never written by v3 code — only a defensive default).
+  final String connectorId;
+
   const RecordingHeader({
     this.payloadLength = 0,
     this.hasLaunchSite = false,
@@ -118,6 +136,7 @@ class RecordingHeader {
     this.telemetryByteLen = 0,
     this.commandsOffset = 0,
     this.commandCount = 0,
+    this.connectorId = '',
   });
 
   /// Flight duration covered by the body, in milliseconds.
@@ -157,6 +176,7 @@ class RecordingHeader {
         telemetryByteLen: telemetryByteLen,
         commandsOffset: commandsOffset,
         commandCount: commandCount,
+        connectorId: connectorId,
       );
 
   /// Serializes to exactly [recordingHeaderLength] bytes.
@@ -188,13 +208,34 @@ class RecordingHeader {
     b.setUint64(112, telemetryByteLen, Endian.big);
     b.setUint64(120, commandsOffset, Endian.big);
     b.setUint32(128, commandCount, Endian.big);
-    b.setUint16(132, crc16CCITT(b.buffer.asUint8List(), 108, 132), Endian.big);
     b.setUint16(134, 0, Endian.big);
+    final connectorBytes =
+        _truncateUtf8(connectorId, recordingConnectorIdLength);
+    b.buffer
+        .asUint8List()
+        .setRange(136, 136 + connectorBytes.length, connectorBytes);
+    b.setUint16(
+        132, _directoryCrc(b.buffer.asUint8List()), Endian.big);
     return b.buffer.asUint8List();
   }
 
+  /// CRC16-CCITT over the section directory, skipping the CRC field itself:
+  /// bytes 108..131 followed by 134..167 (covers the connector id).
+  static int _directoryCrc(Uint8List bytes) {
+    var crc = 0xFFFF;
+    for (var i = 108; i < recordingHeaderLength; i++) {
+      if (i == 132 || i == 133) continue;
+      crc ^= bytes[i] << 8;
+      for (var bit = 0; bit < 8; bit++) {
+        crc = (crc & 0x8000) != 0 ? (crc << 1) ^ 0x1021 : crc << 1;
+        crc &= 0xFFFF;
+      }
+    }
+    return crc;
+  }
+
   /// Parses and validates header bytes (`null` when malformed, the magic
-  /// mismatches — including v1 files — or either CRC mismatches).
+  /// mismatches — including v1/v2 files — or either CRC mismatches).
   static RecordingHeader? decode(Uint8List bytes) {
     if (bytes.length < recordingHeaderLength) return null;
     final b = ByteData.sublistView(bytes, 0, recordingHeaderLength);
@@ -206,13 +247,17 @@ class RecordingHeader {
         b.getUint16(110, Endian.big) != recordingFormatVersion) {
       return null;
     }
-    if (b.getUint16(132, Endian.big) != crc16CCITT(bytes, 108, 132)) {
+    if (b.getUint16(132, Endian.big) != _directoryCrc(bytes)) {
       return null;
     }
     final flags = b.getUint16(6, Endian.big);
     final nameBytes = bytes.sublist(56, 104);
     var nameEnd = nameBytes.indexOf(0);
     if (nameEnd < 0) nameEnd = nameBytes.length;
+    final connectorBytes =
+        bytes.sublist(136, 136 + recordingConnectorIdLength);
+    var connectorEnd = connectorBytes.indexOf(0);
+    if (connectorEnd < 0) connectorEnd = connectorBytes.length;
     return RecordingHeader(
       payloadLength: b.getUint16(4, Endian.big),
       hasLaunchSite: flags & recordingFlagLaunchSite != 0,
@@ -231,6 +276,8 @@ class RecordingHeader {
       telemetryByteLen: b.getUint64(112, Endian.big),
       commandsOffset: b.getUint64(120, Endian.big),
       commandCount: b.getUint32(128, Endian.big),
+      connectorId: utf8.decode(connectorBytes.sublist(0, connectorEnd),
+          allowMalformed: true),
     );
   }
 
@@ -451,14 +498,19 @@ Future<void> writeRecordingFile(
 /// An existing header is replaced, so the call is idempotent. A `null`
 /// [commands] preserves the already-filed command section (re-finalizing
 /// never drops commands by accident); pass an explicit list — possibly
-/// empty — to replace it. Failures (empty body, I/O errors) leave the
-/// file untouched and yield `null`.
+/// empty — to replace it. [connectorId] stamps the recording's connector
+/// (stats are computed with that connector's parser). Failures (empty
+/// body, unknown connector, I/O errors) leave the file untouched and yield
+/// `null`.
 Future<RecordingHeader?> finalizeRecordingFile(
   String path, {
   required LaunchRef launch,
+  required String connectorId,
   List<SentCommand>? commands,
 }) async {
   try {
+    final connector = connectorById(connectorId);
+    if (connector == null) return null;
     final file = File(path);
     final length = await file.length();
     if (length < 12) return null;
@@ -479,17 +531,14 @@ Future<RecordingHeader?> finalizeRecordingFile(
     }
     if (chunks.isEmpty) return null;
 
-    final parser = PacketParser();
+    final parser = connector.createParser();
     var packetCount = 0;
     var maxBaro = double.negativeInfinity;
     var maxSpeed = 0.0;
     var maxAccel = 0.0;
     for (final chunk in chunks) {
-      for (final packet
+      for (final frame
           in parser.feed(chunk.payload, timestampMs: chunk.tsMs)) {
-        final frame = FrameCodec.decode(packet.rawData,
-            receivedAtMs: packet.receivedAtMs);
-        if (frame == null) continue;
         packetCount++;
         if (frame.baroAltitude > maxBaro) maxBaro = frame.baroAltitude;
         if (frame.speedTotal > maxSpeed) maxSpeed = frame.speedTotal;
@@ -516,6 +565,7 @@ Future<RecordingHeader?> finalizeRecordingFile(
       telemetryByteLen: body.length,
       commandsOffset: recordingHeaderLength + body.length,
       commandCount: keptCommands.length,
+      connectorId: connector.id,
     );
 
     final tmp = File('$path.tmp');

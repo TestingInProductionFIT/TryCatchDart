@@ -1,10 +1,13 @@
 import 'package:dead_reckoning/dead_reckoning.dart' show haversineDistanceM;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:serial/serial.dart';
 
 import '../../core/format.dart';
 import '../../state/replay_controller.dart';
+import '../../state/telemetry_provider.dart';
 import '../../state/telemetry_store.dart';
+import '../components/connector_gate.dart';
 import '../components/position_readout.dart';
 import '../components/waiting_for_data.dart';
 
@@ -24,6 +27,10 @@ class StatsTile extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final unsupported = ref
+        .watch(activeConnectorProvider)
+        .unsupportedPlaceholder(TelemetryField.gpsPosition);
+    if (unsupported != null) return unsupported;
     final state = ref.watch(telemetryStoreProvider);
     final replaying = ref.watch(replayProvider).isActive;
     final latest = state.latest;

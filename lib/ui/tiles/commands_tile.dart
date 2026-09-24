@@ -147,7 +147,17 @@ class _CommandRow extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final description = describeUplink(command.bytes);
+    // Live rows resolve with the active connector; replay rows with the
+    // recording's own connector (auto-selected on play, but the row must
+    // not depend on the live toggle).
+    final TelemetryConnector connector;
+    if (replaying) {
+      final id = ref.watch(replayProvider.select((s) => s.connectorId));
+      connector = connectorById(id) ?? ref.watch(activeConnectorProvider);
+    } else {
+      connector = ref.watch(activeConnectorProvider);
+    }
+    final description = connector.describeCommand(command.bytes);
     final failed = command.status == CommandStatus.failed;
     final content = Padding(
       padding: const EdgeInsets.symmetric(vertical: 7),
@@ -157,6 +167,7 @@ class _CommandRow extends ConsumerWidget {
             command: command,
             replaying: replaying,
             positionMs: positionMs,
+            connector: connector,
           ),
           const SizedBox(width: 10),
           Expanded(
@@ -243,16 +254,20 @@ class _CommandDot extends ConsumerWidget {
   final bool replaying;
   final int positionMs;
 
+  /// Connector that named this row (already resolved by the parent row).
+  final TelemetryConnector connector;
+
   const _CommandDot({
     required this.command,
     required this.replaying,
     required this.positionMs,
+    required this.connector,
   });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final failed = command.status == CommandStatus.failed;
-    final description = describeUplink(command.bytes);
+    final description = connector.describeCommand(command.bytes);
     final Color color;
     final IconData icon;
     if (failed) {
@@ -260,7 +275,7 @@ class _CommandDot extends ConsumerWidget {
       icon = Icons.error_outline;
     } else {
       color = description.danger ? AppColors.destructive : AppColors.primary;
-      icon = _iconFor(command.bytes);
+      icon = _iconFor(command.bytes, connector);
     }
     var dimmed = false;
     if (replaying) {
@@ -282,10 +297,10 @@ class _CommandDot extends ConsumerWidget {
   }
 }
 
-/// Glyph per uplink frame: catalog id first, then the FSM set-state
-/// command, then a terminal fallback. Mirrors the control-panel mapping.
-IconData _iconFor(List<int> bytes) {
-  for (final cmd in RocketCommands.all) {
+/// Glyph per uplink frame: connector catalog id first, then a state-request
+/// match, then a terminal fallback. Mirrors the control-panel mapping.
+IconData _iconFor(List<int> bytes, TelemetryConnector connector) {
+  for (final cmd in connector.commands) {
     if (cmd.bytes.length == bytes.length) {
       var match = true;
       for (var i = 0; i < cmd.bytes.length; i++) {
@@ -306,13 +321,23 @@ IconData _iconFor(List<int> bytes) {
       }
     }
   }
-  if (bytes.length == 4 &&
-      bytes[0] == rocketMagicT &&
-      bytes[1] == rocketMagicC &&
-      bytes[2] == FsmStateCommands.setStateCmd) {
-    return Icons.account_tree_outlined;
+  for (final state in connector.states) {
+    final want = connector.bytesForState(state.id);
+    if (want != null &&
+        want.length == bytes.length &&
+        _bytesEqual(want, bytes)) {
+      return Icons.account_tree_outlined;
+    }
   }
   return Icons.terminal;
+}
+
+bool _bytesEqual(List<int> a, List<int> b) {
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) return false;
+  }
+  return true;
 }
 
 /// Milliseconds → `5 s ago` / `3 m 04 s ago` (clamped at zero).

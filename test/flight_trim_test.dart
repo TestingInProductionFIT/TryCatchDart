@@ -23,6 +23,7 @@ Future<String> _writeFake(String dir) async {
     launchLongitude: 14.0,
     launchMslM: 300,
     launchName: 'Test pad',
+    connectorId: 'mock',
   );
   await writeRecordingFile(path, header, chunks);
   return path;
@@ -146,7 +147,9 @@ void main() {
         await writeRecordingFile(
           path,
           const RecordingHeader(
-              payloadLength: TelemetryFraming.payloadLength),
+            payloadLength: TelemetryFraming.payloadLength,
+            connectorId: 'mock',
+          ),
           chunks,
         );
         // The provisional header gains real stats via finalize.
@@ -158,6 +161,7 @@ void main() {
             mslM: 3.0,
             name: 'Pad',
           ),
+          connectorId: 'mock',
         );
 
         // Decoding raw chunks directly yields nothing (they are stream

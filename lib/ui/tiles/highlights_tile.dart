@@ -5,8 +5,10 @@ import 'package:serial/serial.dart';
 
 import '../../core/format.dart';
 import '../../state/replay_controller.dart';
+import '../../state/telemetry_provider.dart';
 import '../../state/telemetry_store.dart';
 import '../../theme/app_colors.dart';
+import '../components/connector_gate.dart';
 import '../components/waiting_for_data.dart';
 
 /// Flight highlights: session extremes in one tile.
@@ -25,6 +27,14 @@ class HighlightsTile extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // Highlights are velocity/acceleration extremes — without either the
+    // tile has nothing to extreme over.
+    final connector = ref.watch(activeConnectorProvider);
+    if (!connector.capabilities.supports(TelemetryField.velocity) &&
+        !connector.capabilities.supports(TelemetryField.acceleration)) {
+      return connector
+          .unsupportedPlaceholder(TelemetryField.velocity)!;
+    }
     final state = ref.watch(telemetryStoreProvider);
     final replay = ref.watch(replayProvider);
     final site = ref.watch(effectiveLaunchSiteProvider);

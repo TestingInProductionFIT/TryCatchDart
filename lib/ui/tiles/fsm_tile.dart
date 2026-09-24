@@ -10,6 +10,7 @@ import '../../state/telemetry_provider.dart';
 import '../../state/telemetry_store.dart';
 import '../../theme/app_colors.dart';
 import '../components/centered_stat.dart';
+import '../components/connector_gate.dart';
 import '../components/waiting_for_data.dart';
 
 
@@ -30,8 +31,11 @@ class FsmTile extends ConsumerStatefulWidget {
 class _FsmWidgetState extends ConsumerState<FsmTile> {
   Timer? _ticker;
   Timer? _confirmTimer;
-  FsmState? _pendingState;
-  FsmState? _sentState;
+
+  /// Pending/sent state-request chips, by connector state id (descriptors
+  /// are re-created per read, so identity comparison is meaningless).
+  int? _pendingStateId;
+  int? _sentStateId;
 
   static const _confirmTimeout = Duration(seconds: 3);
 
@@ -52,94 +56,101 @@ class _FsmWidgetState extends ConsumerState<FsmTile> {
 
   /// Two-click state request, mirroring the control panel: first tap arms
   /// the chip for 3 s, second tap sends the set-state bytes on the wire.
-  void _onChipTap(FsmState state) {
+  void _onChipTap(ConnectorFsmState state) {
     final connected =
         ref.read(serialStatusProvider).value?.isConnected ?? false;
     if (!connected) return;
     if (ref.read(replayProvider).isActive) return;
 
-    if (_pendingState != state) {
+    if (_pendingStateId != state.id) {
       _confirmTimer?.cancel();
       setState(() {
-        _pendingState = state;
-        _sentState = null;
+        _pendingStateId = state.id;
+        _sentStateId = null;
       });
       _confirmTimer = Timer(_confirmTimeout, () {
-        if (mounted) setState(() => _pendingState = null);
+        if (mounted) setState(() => _pendingStateId = null);
       });
       return;
     }
 
     _confirmTimer?.cancel();
-    final ok = ref.read(serialConfigProvider.notifier).sendBytes(
-          FsmStateCommands.bytesFor(state),
-          source: CommandSource.fsm,
-        );
+    final bytes =
+        ref.read(activeConnectorProvider).bytesForState(state.id);
+    final ok = bytes != null &&
+        ref.read(serialConfigProvider.notifier).sendBytes(
+              bytes,
+              source: CommandSource.fsm,
+            );
     setState(() {
-      _pendingState = null;
-      _sentState = ok ? state : null;
+      _pendingStateId = null;
+      _sentStateId = ok ? state.id : null;
     });
     if (ok) {
       Timer(const Duration(seconds: 1), () {
-        if (mounted && _sentState == state) {
-          setState(() => _sentState = null);
+        if (mounted && _sentStateId == state.id) {
+          setState(() => _sentStateId = null);
         }
       });
     }
   }
 
-  /// Displayed pipeline order (flight order — debug states are
-  /// off-pipeline branches and show with an empty progress bar, like
-  /// unknown).
-  static const List<FsmState> _pipeline = [
-    FsmState.idle,
-    FsmState.armed,
-    FsmState.ascent,
-    FsmState.apogee,
-    FsmState.parachute,
-    FsmState.landed,
-  ];
-
-  /// Bench states live off the flight pipeline — shown in their own row
-  /// below the pipeline grid.
-  static const List<FsmState> _debugStates = [
-    FsmState.debugUnlocked,
-    FsmState.debugLocked,
-  ];
-
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(telemetryStoreProvider);
     final latest = state.latest;
+    final connector = ref.watch(activeConnectorProvider);
 
+    final unsupported =
+        connector.unsupportedPlaceholder(TelemetryField.fsm);
+    if (unsupported != null) return unsupported;
     if (latest == null) {
       return Center(child: WaitingForData());
     }
 
-    final current = latest.fsmState;
-    final color = AppColors.fsmColor(current);
+    // Pipeline order comes from the connector (flight order); off-pipeline
+    // branches (bench/debug states) show with an empty progress bar in
+    // their own row below the pipeline grid. The unknown fallback is never
+    // a chip (it can't be requested) — but it still renders as the big
+    // readout below when the rocket actually reports it.
+    final offerable = [
+      for (final s in connector.states)
+        if (s.id != connector.unknownStateId) s,
+    ];
+    final pipeline = [
+      for (final s in offerable)
+        if (s.pipeline) s,
+    ];
+    final offPipeline = [
+      for (final s in offerable)
+        if (!s.pipeline) s,
+    ];
+    final current = connector.stateForId(latest.fsmStateId);
+    final color = Color(current.colorArgb);
     final timeInState = _timeInState(state);
-    final currentIndex = _pipeline.indexOf(current);
+    final currentIndex = pipeline.indexWhere((s) => s.id == current.id);
     final connected =
         ref.watch(serialStatusProvider).value?.isConnected ?? false;
     final replaying = ref.watch(replayProvider).isActive;
     final enabled = connected && !replaying;
 
-    String tooltipFor(FsmState s) {
+    String tooltipFor(ConnectorFsmState s) {
       if (!connected) return 'Connect first';
-      if (_pendingState == s) return 'Tap again to send ${s.label} request';
+      if (_pendingStateId == s.id) {
+        return 'Tap again to send ${s.label} request';
+      }
       return 'Send ${s.label} request to rocket';
     }
 
-    Widget chipFor(FsmState s, {required bool passed}) {
-      final tileState = _sentState == s
+    Widget chipFor(ConnectorFsmState s, {required bool passed}) {
+      final tileState = _sentStateId == s.id
           ? _ChipState.sent
-          : _pendingState == s
+          : _pendingStateId == s.id
               ? _ChipState.confirm
               : _ChipState.idle;
       return _StateChip(
         state: s,
-        current: s == current,
+        current: s.id == current.id,
         passed: passed,
         tileState: tileState,
         enabled: enabled,
@@ -152,10 +163,11 @@ class _FsmWidgetState extends ConsumerState<FsmTile> {
 
     return LayoutBuilder(builder: (context, constraints) {
       final columns = (constraints.maxWidth / 108).floor().clamp(2, 4);
-      // Debug states are normal states — pipeline + debug chips always show
-      // together. Estimate the chip grids' height up front and fall back to
-      // the single-line readout when they cannot fit, so nothing overflows.
-      const allStates = 8; // 6 pipeline + 2 debug
+      // Debug states are normal states — pipeline + off-pipeline chips
+      // always show together. Estimate the chip grids' height up front and
+      // fall back to the single-line readout when they cannot fit, so
+      // nothing overflows.
+      final allStates = pipeline.length + offPipeline.length;
       final rows = (allStates / columns).ceil();
       final cellH =
           (constraints.maxWidth - (columns - 1) * 6) / columns / 3.4;
@@ -228,11 +240,12 @@ class _FsmWidgetState extends ConsumerState<FsmTile> {
               child: _ProgressBar(
                 progress: currentIndex < 0
                     ? 0
-                    : (currentIndex + 1) / _pipeline.length,
+                    : (currentIndex + 1) / pipeline.length,
                 color: color,
               ),
             ),
-          // Pipeline grid + debug row pinned to the bottom, sized to content.
+          // Pipeline grid + off-pipeline row pinned to the bottom, sized
+          // to content.
           GridView.count(
             crossAxisCount: columns,
             mainAxisSpacing: 6,
@@ -242,13 +255,12 @@ class _FsmWidgetState extends ConsumerState<FsmTile> {
             physics: const NeverScrollableScrollPhysics(),
             padding: EdgeInsets.zero,
             children: [
-              for (final s in _pipeline)
+              for (var i = 0; i < pipeline.length; i++)
                 chipFor(
-                  s,
-                  passed: currentIndex >= 0 &&
-                      _pipeline.indexOf(s) < currentIndex,
+                  pipeline[i],
+                  passed: currentIndex >= 0 && i < currentIndex,
                 ),
-              for (final s in _debugStates) chipFor(s, passed: false),
+              for (final s in offPipeline) chipFor(s, passed: false),
             ],
           ),
         ],
@@ -264,10 +276,10 @@ class _FsmWidgetState extends ConsumerState<FsmTile> {
     final history = state.history;
     if (history.isEmpty) return '';
     final latest = history[0];
-    final current = latest.fsmState; // newest frame
+    final current = latest.fsmStateId; // newest frame
     var since = history.getChronological(history.length - 1).receivedAtMs;
     for (final frame in history.newestFirst()) {
-      if (frame.fsmState != current) {
+      if (frame.fsmStateId != current) {
         since = frame.receivedAtMs;
         break;
       }
@@ -288,7 +300,7 @@ class _FsmWidgetState extends ConsumerState<FsmTile> {
 enum _ChipState { idle, confirm, sent }
 
 class _StateChip extends StatelessWidget {
-  final FsmState state;
+  final ConnectorFsmState state;
   final bool current;
   final bool passed;
   final _ChipState tileState;
@@ -313,7 +325,7 @@ class _StateChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = AppColors.fsmColor(state);
+    final color = Color(state.colorArgb);
 
     final Color background;
     final Color foreground;

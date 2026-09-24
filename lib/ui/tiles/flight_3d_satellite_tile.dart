@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vector_math/vector_math_64.dart' hide Colors;
 
 import '../../state/replay_controller.dart';
+import '../../state/telemetry_provider.dart';
 import '../../state/telemetry_store.dart';
 import '../components/waiting_for_data.dart';
 import './shared/flight_3d_common.dart';
@@ -145,6 +146,9 @@ class _Flight3dSatelliteWidgetState
 
     // Replays render from the recording's full frames (whole flight
     // addressable, shared trail/rocket smoothing); live renders raw.
+    // Airframe flags resolve with the active connector (auto-selected to
+    // the recording's connector during playback).
+    final connector = ref.watch(activeConnectorProvider);
     final FlightScene? scene;
     if (replay.isActive && replay.frames.isNotEmpty) {
       scene = buildReplayScene(
@@ -152,9 +156,10 @@ class _Flight3dSatelliteWidgetState
         positionMs: replay.positionMs,
         site: site,
         smoothingEnabled: replay.smoothingEnabled,
+        connector: connector,
       );
     } else {
-      scene = buildFlightScene(state, site);
+      scene = buildFlightScene(state, site, connector: connector);
     }
     final anchor = flightAnchor(state, site);
     if (scene == null || anchor == null) {

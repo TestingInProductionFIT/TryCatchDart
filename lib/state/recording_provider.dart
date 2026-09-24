@@ -21,6 +21,8 @@ abstract final class RecordingService {
   static Future<void> startRecording(Ref ref) async {
     final site = ref.read(currentLaunchSiteProvider);
     if (site == null) return;
+    final connectorId =
+        ref.read(activeConnectorIdProvider).value ?? defaultConnectorId;
     final now = DateTime.now();
     final timestamp =
         '${now.year}-${_twoDigits(now.month)}-${_twoDigits(now.day)}_'
@@ -37,6 +39,7 @@ abstract final class RecordingService {
             mslM: site.altitudeMsl,
             name: site.name,
           ),
+          connectorId: connectorId,
         ));
   }
 

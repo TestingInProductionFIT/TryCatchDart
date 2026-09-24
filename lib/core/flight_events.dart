@@ -2,14 +2,16 @@ import 'dart:math' as math;
 
 import 'package:serial/serial.dart';
 
-/// One flight milestone detected from the rocket's FSM transitions.
+/// Style vocabulary for the nominal flight milestones.
 ///
-/// The four milestones mirror the nominal flight profile. Each entry is a
-/// full definition: display [label], the matching state change ([from] →
-/// [to]) and a `transitionLabel` subtitle. Detection ([detectFlightEvents])
-/// is driven by this table — one event per matching transition, in frame
-/// order — so a recording may contain zero, one or several markers of each
-/// type (e.g. bench tests re-arming, or a file trimmed to cruise only).
+/// Each entry is a full definition: display [label], the matching state
+/// change ([from] → [to]) and a `transitionLabel` subtitle. Detection
+/// ([detectFlightEvents]) is driven by the active connector's event table
+/// ([TelemetryConnector.events]) — one event per matching transition, in
+/// frame order — so a recording may contain zero, one or several markers
+/// of each type (e.g. bench tests re-arming, or a file trimmed to cruise
+/// only). Events whose transition matches no entry here still surface with
+/// [FlightEvent.label]/`transitionLabel` but no styled [FlightEvent.type].
 enum FlightEventType {
   /// Liftoff.
   launch('Launch', FsmState.armed, FsmState.ascent),
@@ -40,8 +42,16 @@ enum FlightEventType {
 
 /// A single detected milestone inside a decoded flight.
 class FlightEvent {
-  /// Which transition this marker represents.
-  final FlightEventType type;
+  /// Style-table entry for this marker, or `null` when the connector's
+  /// transition matches no [FlightEventType] (render with the fallback
+  /// style, [flightEventStyleOf] handles null).
+  final FlightEventType? type;
+
+  /// Short human-readable name (connector event label).
+  final String label;
+
+  /// Human-readable transition subtitle, e.g. `Armed → Ascent`.
+  final String transitionLabel;
 
   /// Index of the first frame carrying the new state.
   final int frameIndex;
@@ -55,6 +65,8 @@ class FlightEvent {
 
   const FlightEvent({
     required this.type,
+    required this.label,
+    required this.transitionLabel,
     required this.frameIndex,
     required this.positionMs,
     required this.receivedAtMs,
@@ -62,35 +74,58 @@ class FlightEvent {
 
   @override
   String toString() =>
-      'FlightEvent(${type.name} @ frame $frameIndex, ${positionMs}ms)';
+      'FlightEvent($label @ frame $frameIndex, ${positionMs}ms)';
+}
+
+/// Maps a connector event definition to the style vocabulary by matching
+/// the nominal state-id pair, or `null` for connector-specific events
+/// outside the nominal profile.
+FlightEventType? flightEventTypeForDef(ConnectorEventDef def) {
+  for (final candidate in FlightEventType.values) {
+    if (candidate.from.id == def.fromStateId &&
+        candidate.to.id == def.toStateId) {
+      return candidate;
+    }
+  }
+  return null;
 }
 
 /// Scans [frames] (chronological) for FSM transitions marking flight
 /// milestones and returns one [FlightEvent] per match, in frame order.
 ///
-/// Matching is driven by the [FlightEventType] table — only the exact
-/// nominal transitions count; anything else (skipped states, debug states,
-/// repeats of the same state) is ignored. Empty or single-frame inputs
-/// yield no events.
-List<FlightEvent> detectFlightEvents(List<TelemetryFrame> frames) {
+/// Matching is driven by the connector's event table ([eventDefs],
+/// defaulting to [connector]'s — defaulting in turn to the MOCK
+/// connector): only the table's exact transitions count; anything else
+/// (skipped states, debug states, repeats of the same state) is ignored.
+/// Empty or single-frame inputs yield no events.
+List<FlightEvent> detectFlightEvents(
+  List<TelemetryFrame> frames, {
+  List<ConnectorEventDef>? eventDefs,
+  TelemetryConnector? connector,
+}) {
   final events = <FlightEvent>[];
   if (frames.length < 2) return events;
+  final resolvedConnector = connector ?? mockConnector;
+  final defs = eventDefs ?? resolvedConnector.events;
+  String labelFor(int id) => resolvedConnector.stateForId(id).label;
   final t0 = frames.first.receivedAtMs;
   for (var i = 1; i < frames.length; i++) {
-    final prev = frames[i - 1].fsmState;
-    final curr = frames[i].fsmState;
+    final prev = frames[i - 1].fsmStateId;
+    final curr = frames[i].fsmStateId;
     if (prev == curr) continue;
-    FlightEventType? type;
-    for (final candidate in FlightEventType.values) {
-      if (candidate.from == prev && candidate.to == curr) {
-        type = candidate;
+    ConnectorEventDef? def;
+    for (final candidate in defs) {
+      if (candidate.fromStateId == prev && candidate.toStateId == curr) {
+        def = candidate;
         break;
       }
     }
-    if (type == null) continue;
+    if (def == null) continue;
     events.add(
       FlightEvent(
-        type: type,
+        type: flightEventTypeForDef(def),
+        label: def.label,
+        transitionLabel: def.transitionLabel(labelFor),
         frameIndex: i,
         positionMs: frames[i].receivedAtMs - t0,
         receivedAtMs: frames[i].receivedAtMs,

@@ -133,17 +133,19 @@ class ChannelBin {
 }
 
 /// Buckets raw recording [chunks] into fixed-width bins by feeding them
-/// through a [PacketParser] with the same framing as the live path, so a
-/// replay shows the same unknown-bytes/s picture the live monitor did.
+/// through the recording connector's parser — the same framing as the live
+/// path, so a replay shows the same unknown-bytes/s picture the live
+/// monitor did.
 ///
 /// Gaps with no chunks become zero bins, keeping the time axis continuous.
 List<ChannelBin> buildChannelProfile(
   List<RecordingChunk> chunks, {
   int binMs = 500,
+  TelemetryConnector? connector,
 }) {
   if (chunks.isEmpty) return const [];
   final t0 = chunks.first.tsMs;
-  final parser = PacketParser();
+  final parser = (connector ?? mockConnector).createParser();
   // Per-bin accumulators, grown on demand.
   final matched = <int>[];
   final unmatched = <int>[];
@@ -170,11 +172,12 @@ List<ChannelBin> buildChannelProfile(
     ensure(bin);
     parser.feed(chunk.payload, timestampMs: chunk.tsMs);
     matched[bin] += parser.matchedBytes - prevMatched;
-    unmatched[bin] += parser.unmatchedBytes - prevUnmatched;
+    unmatched[bin] +=
+        (parser.garbageBytes + parser.crcErrorBytes) - prevUnmatched;
     packets[bin] += parser.matchedPackets - prevPackets;
     crcs[bin] += parser.crcErrorCount - prevCrcs;
     prevMatched = parser.matchedBytes;
-    prevUnmatched = parser.unmatchedBytes;
+    prevUnmatched = parser.garbageBytes + parser.crcErrorBytes;
     prevPackets = parser.matchedPackets;
     prevCrcs = parser.crcErrorCount;
   }

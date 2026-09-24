@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vector_math/vector_math_64.dart';
 
 import '../../state/replay_controller.dart';
+import '../../state/telemetry_provider.dart';
 import '../../state/telemetry_store.dart';
 import '../components/waiting_for_data.dart';
 import './shared/trackpad_zoom.dart' show scrollZoomFactor;
@@ -71,11 +72,15 @@ class _Rocket3dWidgetState extends ConsumerState<Rocket3dTile> {
       return Center(child: WaitingForData());
     }
 
-    // Airframe configuration comes straight from the FSM state: the cone
-    // pops at apogee, the canopy renders under parachute only (landed
-    // keeps the nose-cone tile UNLOCKED but hides the collapsed chute).
-    final showNoseCone = latest.fsmState.hasNosecone;
-    final showParachute = latest.fsmState.showsParachute;
+    // Airframe configuration comes straight from the connector's FSM
+    // state: the cone pops at apogee, the canopy renders under parachute
+    // only (landed keeps the nose-cone tile UNLOCKED but hides the
+    // collapsed chute).
+    final airframe = ref
+        .watch(activeConnectorProvider)
+        .stateForId(latest.fsmStateId);
+    final showNoseCone = airframe.hasNosecone;
+    final showParachute = airframe.showsParachute;
 
     // Replay smoothing also steadies the rotation: same trailing-average
     // attitude the flight views use, so the orientation viewer stops

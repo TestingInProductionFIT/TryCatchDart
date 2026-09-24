@@ -19,7 +19,7 @@ Cross-area changes require explicit coordination (see §1.4).
 
 | Area | Canonical paths | Pinning tests |
 |---|---|---|
-| **Wire / codec** | `packages/serial/lib/telemetry/`, `packages/serial/lib/io/` | `frame_codec_test`, `packet_parser_test`, `recorder_test`, `recording_header_test`, `file_parser_test` |
+| **Connectors** | `packages/serial/lib/connectors/`, `packages/serial/lib/telemetry/`, `packages/serial/lib/io/` | `connector_test`, `frame_codec_test`, `packet_parser_test`, `recorder_test`, `recording_header_test`, `file_parser_test` |
 | **Dead reckoning** | `packages/dead_reckoning/`, `lib/state/dead_reckoning_tune_store.dart`, `lib/ui/screens/dead_reckoning_lab_tab.dart` | package `dead_reckoning_test` (50), `dead_reckoning_tune_store_test`, `dead_reckoning_lab_tab_test`, `elevation_service_test` |
 | **Core logic** | `lib/core/` | `ring_buffer_test`, `packet_rate_tracker_test`, `flight_events_test`, `highlights_test` |
 | **State / providers** | `lib/state/` | `workspace_test`, `workspace_reorder_test`, `replay_seek_test`, `display_smoothing_test`, `replay_launch_site_test`, `launch_site_flow_test` |
@@ -33,10 +33,10 @@ Cross-area changes require explicit coordination (see §1.4).
 
 **Shared / dangerous files — coordinate before touching:**
 - `pubspec.yaml` / `pubspec.lock` — dep changes affect everyone; agree first.
-- `lib/state/telemetry_store.dart` — touched by Wire, Core, State, and Replay agents.
+- `lib/state/telemetry_store.dart` — touched by Connectors, Core, State, and Replay agents.
 - `packages/dead_reckoning/` — estimator/tune/eval/geo API; renames ripple into every tile + test that touches positions.
 - `lib/ui/tiles/shared/flight_3d_scene.dart` — used by both 3D tile and rocket mesh work.
-- `packages/serial/lib/telemetry/frame_codec.dart` — single wire format; any change invalidates recordings.
+- `packages/serial/lib/connectors/registry.dart` — connector list; adding one re-resolves states/commands/events/capabilities across the UI. `packages/serial/lib/telemetry/frame_codec.dart` — MOCK wire format; any change invalidates mock recordings.
 - `analysis_options.yaml` — changing lint rules can fail the whole tree for other agents.
 
 ### 1.2 Before you start a task
@@ -106,7 +106,7 @@ If your task genuinely requires touching another agent's area:
 - Flutter SDK ^3.13, installed at `C:\Users\wwwho\flutter`. Desktop shells for Windows, Linux, macOS.
 - Always run with `--release` for evaluation — debug builds are janky and misrepresent performance.
 - `flutter analyze` + `flutter test` are the only CI gates. Both must be green before any handoff.
-- Current passing test count: **400** (350 root `flutter test` + 50 `packages/dead_reckoning` `dart test` — update this when you finish).
+- Current passing test count: **446** (396 root `flutter test` + 50 `packages/dead_reckoning` `dart test` — update this when you finish).
 
 ### 2.2 Dependencies (key constraints)
 
@@ -158,13 +158,37 @@ Windows desktop semantics are always on. Display-only readouts that repaint at t
 
 ---
 
-## Part 3 — Wire Format & Serial Package
+## Part 3 — Connectors & Serial Package
 
-`packages/serial/` — single wire format, no versioning. Changing it invalidates all existing recordings and must be coordinated across Wire, State, and Replay agents.
+`packages/serial/` — plug-n-play telemetry connectors. The shared internal
+`TelemetryFrame` (SI units, `telemetry/telemetry_frame.dart`) is the only
+thing that leaves the package: the worker parses the bytestream with the
+selected connector and emits frames; the UI never sees raw bytes. Changing
+a connector's framing invalidates that connector's recordings and must be
+coordinated across Connectors, State, and Replay agents.
 
-### 3.1 Frame format
+### 3.1 Connector interface
 
-Framing: sync `0xAA55` + payload 52 bytes (incl. trailing CRC16). `telemetry/frame_codec.dart` `TelemetryLayout`, big-endian:
+`connectors/connector.dart` (`TelemetryConnector`): stable `id` (stamped
+into recordings) + `displayName`/`description` + `createParser()`
+(bytestream → frames, owns framing/counters) + `states`/`stateForId`
+(label, ARGB color, `hasNosecone`/`hasParachute`/`showsParachute`,
+`pipeline` flag) + `commands`/`bytesForState`/`describeCommand` +
+`events` (from/to state-id pairs) + `capabilities`
+(`FieldCapabilities` over `TelemetryField` — which internal fields the
+connector populates, so tiles render "not provided by this connector"
+instead of waiting forever). `connectors/registry.dart`: `allConnectors`
+(one class + one entry to add a connector), `connectorById`,
+`defaultConnectorId == 'mock'`. Active connector persists as
+`trycatch.connector_id`; the settings CONNECTOR card toggles it (locked
+during replay), the worker follows via `ConnectCommand(connectorId)` /
+`SetConnectorCommand`, `Recorder`/`StartRecordingCommand` stamp it.
+
+### 3.2 MOCK connector (original format)
+
+`connectors/mock_connector.dart` (`id == 'mock'`): sync `0xAA55` + payload
+52 bytes (incl. trailing CRC16). `telemetry/frame_codec.dart`
+`TelemetryLayout`, big-endian:
 
 ```
 0  flags u8 (bit0 gpsFix, bit1 gpsFix3d)
@@ -176,34 +200,65 @@ Framing: sync `0xAA55` + payload 52 bytes (incl. trailing CRC16). `telemetry/fra
 49 fsmState u8          50 crc16-ccitt (init 0xFFFF, poly 0x1021)
 ```
 
-Units: WGS84 deg, metres, NED velocity (Down+), body-frame specific force (+9.81 at rest), gyro deg/s, rocket-oriented attitude (pitch = tilt from vertical, yaw = compass heading, roll = spin). CRC check vector `"123456789"` → `0x29B1`. `PacketParser` has fixed framing.
-
-### 3.2 FSM states & airframe flags
-
-`FsmState` ids: idle 0, armed 1, ascent 2, apogee 3, parachute 4, landed 5, debug-unlocked 6, debug-locked 7, unknown 255.
-
-Airframe flags (derived from FSM state):
-- `hasNosecone`: true on idle/armed/ascent/debug-locked (nose-cone tile LOCKED green), false on apogee/parachute/landed/debug-unlocked (UNLOCKED red).
-- `hasParachute`: deployed on parachute + landed (retained from the previous parachute state).
-- `showsParachute`: renders the canopy on parachute only.
+Units: WGS84 deg, metres, NED velocity (Down+), body-frame specific force
+(+9.81 at rest), gyro deg/s, rocket-oriented attitude (pitch = tilt from
+vertical, yaw = compass heading, roll = spin). CRC check vector
+`"123456789"` → `0x29B1`. Populates the whole internal frame. FSM ids:
+idle 0, armed 1, ascent 2, apogee 3, parachute 4, landed 5,
+debug-unlocked 6, debug-locked 7, unknown 255 (pipeline = 0–5;
+`hasNosecone` on idle/armed/ascent/debug-locked; canopy on parachute
+only). Uplink `54 43 cmd arg` (arm/disarm/fire/beep/reset + `07`+id
+set-state). Events: launch/armed→ascent, apogee, parachute, touchdown.
+`FsmState` enum stays as the MOCK vocabulary + internal id fallback;
+connector-driven surfaces use `stateForId` instead.
 
 ### 3.3 Recording file format
 
-`io/recording_file.dart`: 136-byte v2 header + telemetry chunk stream + command log. Header (big-endian): magic `TCR2` u32, payloadLength u16 (=52), flags u16, start/end micros i64, packetCount u64, max baro/speed/accel f32, launch lat/lon i32 1e-7deg, launch MSL f32, launch name 48 B UTF-8 NUL-padded, CRC16 over bytes 0..103, reserved, then a section directory (headerLength=136, version=2, telemetryByteLen u64, commandsOffset u64, commandCount u32, directory CRC over bytes 108..131). Command log: fixed 16-byte records (i64 tsUs + 4 raw uplink bytes + status + source). v1 `TCRC` files are rejected — convert with `dart run tool/migrate_recordings.dart`.
+`io/recording_file.dart`: 168-byte v3 header + telemetry chunk stream +
+command log. Header (big-endian): magic `TCR3` u32, payloadLength u16
+(=52, mock), flags u16, start/end micros i64, packetCount u64, max
+baro/speed/accel f32, launch lat/lon i32 1e-7deg, launch MSL f32, launch
+name 48 B UTF-8 NUL-padded, CRC16 over bytes 0..103, reserved, then a
+section directory (headerLength=168, version=3, telemetryByteLen u64,
+commandsOffset u64, commandCount u32, directory CRC over 108..131 +
+134..167, reserved) + connector id 32 B UTF-8 NUL-padded. The chunk stream
+is the recording connector's raw bytestream — playback resolves the
+connector from the stamp and auto-selects it (in-memory override,
+restored on stop). Command log: fixed 16-byte records (i64 tsUs + 4 raw
+uplink bytes + status + source). v1 `TCRC` and v2 `TCR2` files are
+rejected — convert v2 with `dart run tool/migrate_recordings_v3.dart`
+(stamps `mock`, keeps `.v2.bak`).
 
-**Launch site is mandatory.** `start()` requires a site (provisional header already carries it, so even crash-interrupted files are valid). `stop()` finalizes via `finalizeRecordingFile` (never throws; idempotent). No first-GPS-fix fallback — siteless files are rejected everywhere. Magic-less files are rejected. Chunks carry a 12-byte header (i64 µs + u32 len).
+**Launch site is mandatory.** `start()` requires a site + connector id
+(provisional header already carries both, so even crash-interrupted files
+are valid). `stop()` finalizes via `finalizeRecordingFile` (never throws;
+idempotent). No first-GPS-fix fallback — siteless files are rejected
+everywhere. Magic-less files are rejected. Chunks carry a 12-byte header
+(i64 µs + u32 len).
 
 > ⚠️ `crc_real_flight.bin` on disk is stale (pre-dates de-versioning). Re-convert from `flight_data.js` before use.
 
 ### 3.4 Mock simulator
 
-`FlightSimulator` (seeded): coldStart 2 s → pad 6 s (armed after 2 s) → boost 2.8 s @55 m/s² → coast (drag 4e-4) → apogee ~1058 m + hall break → drogue (~40 m/s) → main @150 m (~6 m/s) → landed (pitch 85°). GPS random-walk, eastward wind drift, battery 8.4 V −2.5 mV/s. Prague pad.
+`FlightSimulator` (seeded): coldStart 2 s → pad 6 s (armed after 2 s) →
+boost 2.8 s @55 m/s² → coast (drag 4e-4) → apogee ~1058 m + hall break →
+drogue (~40 m/s) → main @150 m (~6 m/s) → landed (pitch 85°). GPS
+random-walk, eastward wind drift, battery 8.4 V −2.5 mV/s. Prague pad.
 
-`MockSerialPort` (`MOCK`): 10 Hz + 20 s interference cycle (12 s clean / 4 s light / 4 s heavy + bit-flipped clones) — sweeps all channel-health verdicts.
+`MockSerialPort` (`MOCK`): 10 Hz + 20 s interference cycle (12 s clean /
+4 s light / 4 s heavy + bit-flipped clones) — sweeps all channel-health
+verdicts.
 
-`MockBqSerialPort` (`MOCK-BQ`): same flight + interference, drops link completely for ~5 s every ~15 s — exercises dead reckoning gap filling and stale-link UI.
+`MockBqSerialPort` (`MOCK-BQ`): same flight + interference, drops link
+completely for ~5 s every ~15 s — exercises dead reckoning gap filling
+and stale-link UI.
 
-Worker isolate: typed commands (Connect/Disconnect/ListPorts/StartRecording/StopRecording/SendBytes) and events (Packet/PortList/Status/Error) over `SendPort`.
+Worker isolate: typed commands
+(Connect[+connectorId]/SetConnector/Disconnect/ListPorts/StartRecording[+connectorId]/StopRecording/SendBytes)
+and events (Packet[frame]/PortList/Status[+connectorId]/Error) over
+`SendPort`. `TelemetryStore.ingest/ingestFrames` take frames directly;
+`ReplayController` ticks/seeks frames; `detectFlightEvents` takes the
+connector's event table; `buildChannelProfile` takes the connector.
 
 ---
 
@@ -225,6 +280,7 @@ lib/
                      rocket mesh, orbit camera, map/satellite tile I/O
   state/             telemetry_store (ingestion point),
                      telemetry_provider (streams + serial config),
+                     connector_provider (active connector id + resolve),
                      replay_controller, layout_tree,
                      workspace_models, workspace_controller,
                      launch_site_store, router, orbit camera,
@@ -237,16 +293,17 @@ lib/
                       packet_rate_tracker, format, flight_events,
                       flight_stats, elevation_math, path_utils
    theme/             app_colors (palette + AppThemeMode + tokens), app_theme
-packages/serial/     framing, codec, worker isolate, mock simulator
+packages/serial/     connectors/ (interface + registry + mock),
+                     framing, codec, worker isolate, mock simulator
 packages/dead_reckoning/  estimator + position + tune + eval + geo
                      (pure Dart; app maps frames via dead_reckoning_adapter)
 ```
 
 ### 4.1 TelemetryStore
 
-Decode, dead reckoning estimator (`packages/dead_reckoning`), ring buffers (9000 ≈ 15 min @10 Hz), auto-reset on port change, skips live ingestion while replaying, 80 ms throttle. `history`/`deadReckoningHistory` are zero-copy live views. Dead reckoning is a live-only gap filler: points enter history while GPS is silent ≥1 s; a 100 ms timer extrapolates through total link loss (live only). `deadReckoningStaleMs` (1000) is the shared stale threshold. Tuning arrives via `setDeadReckoningTune()` (in-memory; lab + persistence are a follow-up).
+Ingest pre-decoded connector frames, dead reckoning estimator (`packages/dead_reckoning`), ring buffers (9000 ≈ 15 min @10 Hz), auto-reset on port change + connector change, skips live ingestion while replaying, 80 ms throttle. `history`/`deadReckoningHistory` are zero-copy live views. Dead reckoning is a live-only gap filler: points enter history while GPS is silent ≥1 s; a 100 ms timer extrapolates through total link loss (live only). `deadReckoningStaleMs` (1000) is the shared stale threshold. Tuning arrives via `setDeadReckoningTune()` (in-memory; lab + persistence are a follow-up).
 
-Persisted keys (`services/prefs_keys.dart`, no version suffixes): `trycatch.workspaces`, `trycatch.launch_sites`, `trycatch.dark_mode`.
+Persisted keys (`services/prefs_keys.dart`, no version suffixes): `trycatch.workspaces`, `trycatch.launch_sites`, `trycatch.dark_mode`, `trycatch.connector_id`, `trycatch.dead_reckoning_tune`.
 
 ### 4.2 Known weak points (out of scope — do not fix without a dedicated task)
 
@@ -291,14 +348,14 @@ Thin wrappers over `TimeSeriesChart`: altitude, velocity (horiz/vert-dashed/tota
 
 ### 6.3 Non-chart info tiles
 
-- **FSM**: big state + time-in-state (1 s ticker; replay uses playhead). Progress bar + pipeline/debug chip grids. Two-click send mirrors the control panel.
+- **FSM**: big state + time-in-state (1 s ticker; replay uses playhead). Progress bar + pipeline/off-pipeline chip grids from the active connector's states. Two-click send mirrors the control panel. `NotProvidedByConnector` when the connector has no FSM.
 - **Max alt**: peak + NOW.
 - **Nose cone** (`nosecone`): padlock icon + LOCKED (green) / UNLOCKED (red) from `hasNosecone`.
 - **GPS position** (`stats`): large coordinates, one `·`-joined line (altitude + drift), fix-status footer, copy + QR-code actions.
 - **Dead reckoning** (`dead_reckoning`, live only): link-healthy placeholder while packets flow; shows extrapolated coordinates on packet loss. Disabled during replay. Both share `PositionReadout`.
 - **Highlights** (`highlights`): session extremes — max ascent/descent velocity, top speed (Mach), max acceleration (G). Replay-only third row: total drift + max altitude. Pinned by `highlights_test.dart`.
 - **Events** (`events`): newest-first log. Live rows read "Launch — 12 s ago" (1 s ticker). Replay rows read "Launch — at 1:23" and tap to seek; future events dimmed.
-- **Control panel**: `RocketCommands` catalog — bytes are **MADE-UP and must be aligned with real firmware before flight**. Two-click confirm (3 s). Disabled while disconnected or replaying.
+- **Control panel**: active connector's command catalog (MOCK = `RocketCommands` — bytes are **MADE-UP and must be aligned with real firmware before flight**). Two-click confirm (3 s). Disabled while disconnected or replaying. "No commands on this connector" when the catalog is empty.
 
 ### 6.4 Map tile
 
@@ -336,7 +393,7 @@ Minimal overview home state: a centered Dead reckoning headline, one tune line w
 
 ### 6.9 Replay timeline events
 
-`FlightEventType` carries label + matching `from`/`to` states + `transitionLabel`. Detection in `core/flight_events.dart`. Icon + palette color in `ui/components/flight_event_style.dart` + shared `FlightEventDot`. Events: launch, apogee, parachute, touchdown. Dots dim until playhead reaches them; tapping seeks. Markers that would overlap spread into lanes (`placeFlightEvents`, greedy, 16 px targets). Slider theme pinned (4 px track, r10 thumb, r24 overlay — M3 defaults), fixing thumb travel to 24..width-24.
+`FlightEventType` is the nominal style vocabulary (launch/apogee/parachute/touchdown); detection in `core/flight_events.dart` runs the active connector's event table (`TelemetryConnector.events`) and `FlightEvent` carries its own label/transitionLabel with a nullable style type (fallback flag style for connector-specific transitions). Icon + palette color in `ui/components/flight_event_style.dart` + shared `FlightEventDot`. Dots dim until playhead reaches them; tapping seeks. Markers that would overlap spread into lanes (`placeFlightEvents`, greedy, 16 px targets). Slider theme pinned (4 px track, r10 thumb, r24 overlay — M3 defaults), fixing thumb travel to 24..width-24.
 
 ---
 
@@ -344,13 +401,13 @@ Minimal overview home state: a centered Dead reckoning headline, one tune line w
 
 ### 7.1 Replay
 
-`replayProvider.play(path)`: parses (valid header required), stores header site. Whole flight pre-decoded once for fixed chart axes. 50 ms ticker × speed (MAX = dump). `seek()` is binary search + forward-delta bulk ingest (`TelemetryStore.ingestPackets`, one state rebuild). Auto-pauses at end unless `loopEnabled` (repeat toggle in the playback bar) wraps to the start carrying the overshoot. Space toggles pause/play via an `AppShell`-level `CallbackShortcuts` binding (focused buttons/switches win via `ActivateIntent`; text input guarded). No dead reckoning during replay.
+`replayProvider.play(path)`: parses with the header-stamped connector (valid v3 header + known connector + site required), auto-selects that connector for the session (restored on stop), stores header site. Whole flight pre-decoded once for fixed chart axes. 50 ms ticker × speed (MAX = dump). `seek()` is binary search + forward-delta bulk ingest (`TelemetryStore.ingestFrames`, one state rebuild). Auto-pauses at end unless `loopEnabled` (repeat toggle in the playback bar) wraps to the start carrying the overshoot. Space toggles pause/play via an `AppShell`-level `CallbackShortcuts` binding (focused buttons/switches win via `ActivateIntent`; text input guarded). No dead reckoning during replay.
 
 Display smoothing (replay-only, toggle in playback bar, default on): 3D trail uses centered ±25-packet moving average; attitude from averaged specific-force vector. File, charts, map stay raw. `buildReplayScene` over full pre-decoded frames (smooth-then-decimate with ±25 lookahead). Pinned by `display_smoothing_test.dart` + `replay_seek_test.dart`.
 
 ### 7.2 Recordings screen
 
-Stat-first scan (108-byte header) + per-card concurrent preview decode (session cache by path+size+mtime). Video-style cards: whole 200 px preview is the tap target, pink center play button, primary border while loaded, header `…` menu for trim/extract-site/delete, extent 284. `TrimChart` renders `FlightEventDot`s on the altitude curve (x from flight-clock fraction, y from nearest decimated profile value, downward de-collision, dimming for cut markers).
+Stat-first scan (fixed v3 header: site/stats/connector) + per-card concurrent preview decode with the file's own connector (session cache by path+size+mtime). Video-style cards: whole 200 px preview is the tap target, pink center play button, primary border while loaded, header `…` menu for trim/extract-site/delete, extent 284. `TrimChart` renders `FlightEventDot`s on the altitude curve (x from flight-clock fraction, y from nearest decimated profile value, downward de-collision, dimming for cut markers).
 
 ### 7.3 Factory workspaces
 
@@ -412,12 +469,13 @@ Stat-first scan (108-byte header) + per-card concurrent preview decode (session 
 - Multi-length outages + weighted tuning (user: keep Dart, tweak precision, preview longer/shorter): masks cycle 5/15/45 s tiers over the period grid (longs fall back to 15/5 s when they'd swallow the next slot or overrun the flight; 15 s phase top-up; one 45 s window in the longest scorable phase when the flight ≥120 s fits it); tuning objective is the duration-weighted rotation-invariant mean (`deadReckoningGapWeight`: 15 s weighs 1, 5 s weighs 3, 45 s weighs 1/3) with weighted vertical RMSE in the comparison rows; optimizer sweeps velocityScale in 0.05 steps incl. 1.25/1.4 plus an accelerationTracking on/off sweep; preview labels carry the window length and previews run with the same terrain as tuning.
 - Overview + zero-knob lab (user: state-first home, always synthetic, drop Landed): page opens on the current tune + manual form + Generate new tune; wizard rail is Flight → Outages → Results (Tune node deleted); all outage settings deleted (segmented control, three sliders, real-gap mode, fallback note, `_FieldSlider`, stale machinery) — one adaptive synthetic scheme (period = duration/6 clamped 15–60 s, 10 s windows, phase top-up, cap 12); Landed/Idle/Armed/Unknown excluded from uniform masks, top-ups, facts and phase rows (`_scorablePhase`); applying returns home with an applied confirmation; scenario rows skip Landed defensively. Measured on `crc26_cleanedup_trim.bin`: 7 automatic masks, within-phase mean ~1 m. Tests rewritten (6: overview, guided flow, landed exclusion via mixed-phase debug flight, discard, manual ×2). `flutter analyze` clean, **348 green root + 50 green package = 398 total**.
 - Stepper rebuild (user: long page tried and disliked — make it visual, state-reflecting, hierarchical): the page is now a left step rail (Flight → Outages → Results → Tune) with live node states (numbered ring current, filled check done, warning stale, faint locked/upcoming) plus one-line statuses, hairline connectors, tap-to-jump on unlocked steps; the right pane shows one step with headline + Back/Continue flow. Running auto-advances to Results, applying lands on Tune; config-signature stale detection disables Apply (replaced by Run again) with rail + body warnings; loading a new flight clears results; vertical errors now scored on within-phase masks only. Tests caught a real 4.5 px dropdown overflow (fixed by shortening items + label line below) and now assert rail mirroring (6 tests: rail states, guided flow, stale gate, discard, manual ×2). `flutter analyze` clean, **348 green root + 50 green package = 398 total**.
+- Connector refactor (user: split internal representation from parsing; plug-n-play connectors in the shared package; per-connector FSM/commands/events; connector toggle in settings; recordings stamp the connector; migrate old files, drop old support): current 52 B packet shape is now the internal `TelemetryFrame` (SI units) emitted by `packages/serial` and consumed by the UI — raw bytes never leave the package. New `packages/serial/lib/connectors/`: `connector.dart` (`TelemetryConnector`: id/displayName/description, `createParser()` bytestream→frames, states with label/ARGB color/airframe flags/pipeline flag, commands + state-request bytes + describe, event defs, `FieldCapabilities`), `registry.dart` (`allConnectors`, `connectorById`, `defaultConnectorId='mock'`), `mock_connector.dart` (the old format as `mock`: full frame, 9 states, 5 commands + set-state, 4 nominal events). Worker emits `TelemetryFrame` (`PacketReceivedEvent.frame`, `frameStream`); `ConnectCommand`/`StartRecordingCommand` carry `connectorId`, new `SetConnectorCommand`; `SerialWorkerStatus.connectorId`. Recordings are v3 (`TCR3`, 168 B, connector id 32 B @136, directory CRC over 108..131+134..167): `Recorder.start`/`finalizeRecordingFile` require `connectorId`; `FileParser.parseFile` takes a connector; `RecordingRepository.loadReplay` resolves the stamp (unknown → null); replay auto-selects the recording's connector in-memory and restores on stop (`ReplayState.connectorId`); trim preserves the stamp; `buildChannelProfile` takes the connector. App: `connector_provider.dart` (`activeConnectorIdProvider` persisted `trycatch.connector_id` + `activeConnectorProvider`), settings CONNECTOR card (RadioGroup, locked during replay), `SerialConfigNotifier.setConnector` (persist + worker switch; store resets itself on id change), `TelemetryStore.ingest/ingestFrames` take frames, `detectFlightEvents` takes the connector's event table (`FlightEvent` carries label/transitionLabel + nullable style type with flag fallback), FSM tile/control panel/commands tile/3D/nosecone resolve via the active connector, capability gates (`ConnectorGate.unsupportedPlaceholder` → `NotProvidedByConnector`) on altitude/velocity/accel/battery/hall/stats/highlights/max-alt/FSM/nosecone/events/dead-reckoning tiles (map/3D degrade gracefully via site/pad fallback, ungated). `tool/migrate_recordings_v3.dart` replaced the v1→v2 tool; all 8 on-disk recordings migrated (verified: 4138/26214/… frames match header counts, 13-command log intact, `.v2.bak` backups). Tests: new `connector_test` (6), connector-events cases, v3 header cases (v2 rejection, corrupt connector id), all suites updated to frames/connector params. `flutter analyze` clean, **396 green root + 50 green package = 446 total**. Known follow-up: dead-reckoning lab phase names (`dead_reckoning_lab_masks.dart`) still assume the MOCK flight profile.
 
 ---
 
 ## Part 9 — Design Decisions
 
-- Wire format is a placeholder; CRC keeps it honest. Single format, no versioning — when real firmware lands, replace the layout wholesale.
+- Wire formats live behind connectors; each connector's framing is a placeholder until its real firmware lands — CRC keeps it honest. Add a connector = one class + one registry entry.
 - Tiling only: everything fits the viewport, no page scroll, no holes.
 - Charts show raw data, one shared code path. Modular/data-driven tiles.
 - Debug builds are janky — evaluate with `flutter run -d <os> --release`.

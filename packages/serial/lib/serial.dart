@@ -1,6 +1,9 @@
 /// Library for communicating over serial ports.
 library;
 
+export 'connectors/connector.dart';
+export 'connectors/mock_connector.dart';
+export 'connectors/registry.dart';
 export 'constants.dart';
 export 'hardware/mock.dart';
 export 'hardware/mock_bq.dart';

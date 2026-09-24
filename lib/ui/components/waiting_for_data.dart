@@ -52,3 +52,64 @@ class WaitingForData extends StatelessWidget {
     );
   }
 }
+
+/// Shared "this connector never provides this" placeholder, sibling of
+/// [WaitingForData].
+///
+/// Tiles show this (instead of waiting forever) when the active
+/// connector's [FieldCapabilities] exclude the field they render — e.g. a
+/// baro-only connector in the GPS map tile. Same layout language as
+/// [WaitingForData] so the two states read as kin.
+class NotProvidedByConnector extends StatelessWidget {
+  /// Human field name, e.g. `'GPS position'`.
+  final String field;
+
+  /// Connector display name, e.g. `'MOCK'`.
+  final String connectorName;
+
+  final bool compact;
+
+  const NotProvidedByConnector({
+    super.key,
+    required this.field,
+    required this.connectorName,
+    this.compact = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return FittedBox(
+      fit: BoxFit.scaleDown,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.block_outlined,
+            size: compact ? 24 : 28,
+            color: AppColors.strongBorder,
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'NOT PROVIDED',
+            style: AppText.microLabel.copyWith(
+              fontSize: 9.5,
+              color: AppColors.faint,
+            ),
+          ),
+          if (!compact) ...[
+            const SizedBox(height: 3),
+            Text(
+              '$field · $connectorName connector',
+              textAlign: TextAlign.center,
+              style: AppText.microLabel.copyWith(
+                fontSize: 8,
+                letterSpacing: 0.6,
+                color: AppColors.faint,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}

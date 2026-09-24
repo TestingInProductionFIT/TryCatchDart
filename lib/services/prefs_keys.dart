@@ -12,4 +12,8 @@ abstract final class PrefsKeys {
 
   /// JSON-encoded [DeadReckoningTune] (portable dead reckoning tuning).
   static const String deadReckoningTune = 'trycatch.dead_reckoning_tune';
+
+  /// Stable id of the selected telemetry connector (see `connectors/` in
+  /// the serial package, e.g. `'mock'`).
+  static const String connectorId = 'trycatch.connector_id';
 }

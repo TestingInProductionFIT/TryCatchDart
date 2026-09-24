@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../state/replay_controller.dart';
+import '../../state/telemetry_provider.dart';
 import '../../state/telemetry_store.dart';
 import '../components/waiting_for_data.dart';
 import './shared/flight_3d_common.dart';
@@ -42,7 +43,13 @@ class _Flight3dWidgetState extends ConsumerState<Flight3dTile>
       return Center(child: WaitingForData());
     }
 
-    final scene = resolveFlightScene(state: state, site: site, replay: replay);
+    final connector = ref.watch(activeConnectorProvider);
+    final scene = resolveFlightScene(
+      state: state,
+      site: site,
+      replay: replay,
+      connector: connector,
+    );
     if (scene == null) {
       // Frames are arriving but no position anchor (no fix, no site) yet.
       return Center(child: WaitingForData());

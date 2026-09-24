@@ -1,16 +1,18 @@
-/// One-time migration of v1 (`TCRC`, 108-byte header) recordings to the
-/// v2 format (`TCR2`, 136-byte header + section directory + command log).
+/// One-time migration of v2 (`TCR2`, 136-byte header) recordings to the
+/// v3 format (`TCR3`, 168-byte header + connector stamp).
 ///
-/// v1 files carry no command log, so migrated files get an empty command
-/// section (`commandCount == 0`); the telemetry chunk stream is copied
-/// byte-identically and all header stats/launch-site fields are preserved.
+/// Every pre-connector recording used the single hard-coded wire format,
+/// which is now the `mock` connector — so migrated files are stamped with
+/// `connectorId == 'mock'` and the telemetry chunk stream + command log
+/// are copied byte-identically. All header stats/launch-site fields are
+/// preserved.
 ///
 /// Usage:
 /// ```sh
-/// dart run tool/migrate_recordings.dart [recordings-dir]
+/// dart run tool/migrate_recordings_v3.dart [recordings-dir]
 /// ```
 /// Without an argument the default `Documents/TryCatch/recordings`
-/// directory is used. Each migrated file keeps a `<name>.v1.bak` backup
+/// directory is used. Each migrated file keeps a `<name>.v2.bak` backup
 /// (existing backups are left untouched); already-migrated, empty and
 /// non-recording files are skipped with a report line.
 library;
@@ -21,11 +23,11 @@ import 'dart:typed_data';
 
 import 'package:serial/serial.dart';
 
-/// Magic word of the legacy v1 format ('TCRC').
-const int _v1Magic = 0x54435243;
+/// Legacy v2 header size in bytes.
+const int _v2HeaderLength = 136;
 
-/// Legacy v1 header size in bytes.
-const int _v1HeaderLength = 108;
+/// Legacy v2 format version.
+const int _v2FormatVersion = 2;
 
 Future<void> main(List<String> args) async {
   final dirPath = args.isNotEmpty ? args.first : _defaultRecordingsDir();
@@ -67,22 +69,31 @@ Future<_Outcome> _migrateFile(String path) async {
     stdout.writeln('FAIL  $name: cannot read ($e).');
     return _Outcome.failed;
   }
-  if (bytes.length < _v1HeaderLength) {
+  if (bytes.length < _v2HeaderLength) {
     stdout.writeln('SKIP  $name: too small to hold a header.');
     return _Outcome.skipped;
   }
-  final view = ByteData.sublistView(bytes, 0, _v1HeaderLength);
+  final view = ByteData.sublistView(bytes, 0, _v2HeaderLength);
   final magic = view.getUint32(0, Endian.big);
   if (magic == recordingMagic) {
-    stdout.writeln('SKIP  $name: already v2.');
+    stdout.writeln('SKIP  $name: already v3.');
     return _Outcome.skipped;
   }
-  if (magic != _v1Magic) {
+  if (magic != recordingMagicV2) {
     stdout.writeln('SKIP  $name: not a recording (bad magic).');
     return _Outcome.skipped;
   }
   if (view.getUint16(104, Endian.big) != crc16CCITT(bytes, 0, 104)) {
-    stdout.writeln('FAIL  $name: v1 header CRC mismatch.');
+    stdout.writeln('FAIL  $name: v2 header CRC mismatch.');
+    return _Outcome.failed;
+  }
+  if (view.getUint16(108, Endian.big) != _v2HeaderLength ||
+      view.getUint16(110, Endian.big) != _v2FormatVersion) {
+    stdout.writeln('FAIL  $name: not a v2 directory.');
+    return _Outcome.failed;
+  }
+  if (view.getUint16(132, Endian.big) != crc16CCITT(bytes, 108, 132)) {
+    stdout.writeln('FAIL  $name: v2 directory CRC mismatch.');
     return _Outcome.failed;
   }
   final payloadLength = view.getUint16(4, Endian.big);
@@ -110,13 +121,29 @@ Future<_Outcome> _migrateFile(String path) async {
     launchMslM: view.getFloat32(52, Endian.big),
     launchName:
         utf8.decode(nameBytes.sublist(0, nameEnd), allowMalformed: true),
+    // Pre-connector files are all the original wire format.
+    connectorId: mockConnector.id,
   );
 
-  final body = bytes.sublist(_v1HeaderLength);
+  // The body (telemetry chunk stream + command log) is copied verbatim;
+  // only the header is replaced. v2 commandsOffset was absolute from a
+  // 136-byte header, so v3 shifts it by +32.
+  final body = bytes.sublist(_v2HeaderLength);
+  final v2TeleLen = view.getUint64(112, Endian.big);
+  final v2CommandsOffset = view.getUint64(120, Endian.big);
+  final commandCount = view.getUint32(128, Endian.big);
+  final teleLen = v2TeleLen.clamp(0, body.length);
+  if (commandCount > 0) {
+    if (v2CommandsOffset != _v2HeaderLength + v2TeleLen ||
+        teleLen + commandCount * 16 > body.length) {
+      stdout.writeln('FAIL  $name: v2 command section is truncated.');
+      return _Outcome.failed;
+    }
+  }
   final directory = header.withDirectory(
-    telemetryByteLen: body.length,
-    commandsOffset: recordingHeaderLength + body.length,
-    commandCount: 0,
+    telemetryByteLen: teleLen,
+    commandsOffset: recordingHeaderLength + teleLen,
+    commandCount: commandCount,
   );
   final tmpPath = '$path.migrated.tmp';
   try {
@@ -131,22 +158,24 @@ Future<_Outcome> _migrateFile(String path) async {
     // Sanity-check the converted file before replacing the original.
     final check = await tryReadRecordingHeader(tmpPath);
     if (check == null ||
-        check.telemetryByteLen != body.length ||
-        check.commandCount != 0 ||
-        check.packetCount != header.packetCount) {
+        check.telemetryByteLen != teleLen ||
+        check.commandsOffset != recordingHeaderLength + teleLen ||
+        check.commandCount != commandCount ||
+        check.packetCount != header.packetCount ||
+        check.connectorId != mockConnector.id) {
       stdout.writeln('FAIL  $name: converted file did not validate.');
       try {
         await tmp.delete();
       } catch (_) {}
       return _Outcome.failed;
     }
-    final backupPath = '$path.v1.bak';
+    final backupPath = '$path.v2.bak';
     if (!await File(backupPath).exists()) {
       await File(path).rename(backupPath);
     }
     await tmp.rename(path);
     stdout.writeln(
-        'OK    $name: v1 → v2 (${body.length} telemetry bytes, launch site ${header.hasLaunchSite ? 'kept' : 'absent'}).');
+        'OK    $name: v2 → v3 (${body.length} telemetry bytes, connector ${mockConnector.id}, launch site ${header.hasLaunchSite ? 'kept' : 'absent'}).');
     return _Outcome.migrated;
   } catch (e) {
     stdout.writeln('FAIL  $name: $e.');

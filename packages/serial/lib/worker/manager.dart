@@ -25,7 +25,7 @@ class SerialWorker {
 
   // Broadcast stream controllers: allow multiple UI widgets to listen simultaneously
   final _statusController = StreamController<SerialWorkerStatus>.broadcast();
-  final _packetController = StreamController<TelemetryPacket>.broadcast();
+  final _frameController = StreamController<TelemetryFrame>.broadcast();
   final _portsController = StreamController<List<String>>.broadcast();
   final _linkStatsController = StreamController<LinkStats>.broadcast();
   final _commandController = StreamController<CommandResultEvent>.broadcast();
@@ -45,8 +45,10 @@ class SerialWorker {
   /// Stream of connection and recording status transitions.
   Stream<SerialWorkerStatus> get statusStream => _statusController.stream;
 
-  /// Stream of successfully framed and parsed [TelemetryPacket]s.
-  Stream<TelemetryPacket> get packetStream => _packetController.stream;
+  /// Stream of [TelemetryFrame]s decoded by the active connector.
+  ///
+  /// Raw bytes never leave the worker — the UI only deals in internal frames.
+  Stream<TelemetryFrame> get frameStream => _frameController.stream;
 
   /// Stream of scanned serial/COM port list updates.
   Stream<List<String>> get portsStream => _portsController.stream;
@@ -82,8 +84,8 @@ class SerialWorker {
     // ── Event Dispatching ─────────────────────────────────────────────────────
     // Route domain events to their respective broadcast stream controllers
     switch (message) {
-      case PacketReceivedEvent(:final packet):
-        _packetController.add(packet);
+      case PacketReceivedEvent(:final frame):
+        _frameController.add(frame);
 
       case StatusChangedEvent(:final status):
         _status = status;
@@ -139,7 +141,7 @@ class SerialWorker {
   /// Terminates the background isolate and releases all stream controllers.
   void dispose() {
     _statusController.close();
-    _packetController.close();
+    _frameController.close();
     _portsController.close();
     _linkStatsController.close();
     _commandController.close();

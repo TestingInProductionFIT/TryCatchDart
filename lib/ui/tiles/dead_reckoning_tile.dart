@@ -1,11 +1,13 @@
 import 'package:dead_reckoning/dead_reckoning.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:serial/serial.dart' show TelemetryFrame;
+import 'package:serial/serial.dart' show TelemetryField, TelemetryFrame;
 
 import '../../core/format.dart';
 import '../../state/replay_controller.dart';
+import '../../state/telemetry_provider.dart';
 import '../../state/telemetry_store.dart';
+import '../components/connector_gate.dart';
 import '../../theme/app_colors.dart';
 import '../components/position_readout.dart';
 import '../components/waiting_for_data.dart';
@@ -55,6 +57,13 @@ class DeadReckoningTile extends ConsumerWidget {
         ),
       );
     }
+
+    // Dead reckoning extrapolates from GPS fixes — a connector without
+    // GPS can never produce an estimate.
+    final unsupported = ref
+        .watch(activeConnectorProvider)
+        .unsupportedPlaceholder(TelemetryField.gpsPosition);
+    if (unsupported != null) return unsupported;
 
     final state = ref.watch(telemetryStoreProvider);
     final latest = state.latest;

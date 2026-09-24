@@ -12,9 +12,9 @@ import 'recording_file.dart';
 /// noise, fragmented frames, and corrupted bytes) prepended with a 12-byte framing header
 /// (64-bit microsecond timestamp + 32-bit payload length) for complete diagnostic fidelity.
 ///
-/// Every file opens with a fixed v2 [RecordingHeader]: [start] writes a
-/// provisional one carrying the launch site (stats filled in on [stop]),
-/// and [stop] replaces it with the computed stats via
+/// Every file opens with a fixed v3 [RecordingHeader]: [start] writes a
+/// provisional one carrying the launch site + connector id (stats filled
+/// in on [stop]), and [stop] replaces it with the computed stats via
 /// [finalizeRecordingFile]. The finalize pass never throws: on any failure
 /// the provisional header is left untouched. Files without the magic are
 /// rejected by every reader.
@@ -28,6 +28,7 @@ class Recorder {
   IOSink? _sink;
   String? _filePath;
   LaunchRef? _launch;
+  String _connectorId = 'mock';
   int _bytesWritten = 0;
   int _chunksWritten = 0;
   final List<SentCommand> _commands = [];
@@ -46,11 +47,16 @@ class Recorder {
   ///
   /// [launch] stamps the launch site into the file header — required, so
   /// even a crash-interrupted file carries its site (stats are filled in
-  /// on [stop]).
+  /// on [stop]). [connectorId] stamps the connector the bytestream belongs
+  /// to so playback can auto-select it.
   /// Automatically creates parent directories if they don't exist and opens
   /// an unbuffered asynchronous write stream. A provisional header is
   /// written first so the file is a valid recording from the start.
-  Future<void> start(String filePath, {required LaunchRef launch}) async {
+  Future<void> start(
+    String filePath, {
+    required LaunchRef launch,
+    required String connectorId,
+  }) async {
     await stop();
 
     final file = File(filePath);
@@ -59,6 +65,7 @@ class Recorder {
     _sink = file.openWrite();
     _filePath = filePath;
     _launch = launch;
+    _connectorId = connectorId;
     _bytesWritten = 0;
     _chunksWritten = 0;
     _commands.clear();
@@ -69,6 +76,7 @@ class Recorder {
       launchLongitude: launch.longitude,
       launchMslM: launch.mslM,
       launchName: launch.name,
+      connectorId: connectorId,
     ).encode());
   }
 
@@ -80,11 +88,13 @@ class Recorder {
       final sink = _sink;
       final path = _filePath;
       final launch = _launch;
+      final connectorId = _connectorId;
       final chunks = _chunksWritten;
       final commands = List<SentCommand>.unmodifiable(_commands);
       _sink = null;
       _filePath = null;
       _launch = null;
+      _connectorId = 'mock';
       _chunksWritten = 0;
       _commands.clear();
       await sink?.flush();
@@ -95,7 +105,7 @@ class Recorder {
       if (path != null) {
         if (chunks > 0 && launch != null) {
           await finalizeRecordingFile(path,
-              launch: launch, commands: commands);
+              launch: launch, connectorId: connectorId, commands: commands);
         } else {
           try {
             await File(path).writeAsBytes(const []);

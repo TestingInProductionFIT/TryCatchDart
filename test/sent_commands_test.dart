@@ -100,10 +100,25 @@ void main() {
       expect(describeUplink([0x54, 0x43, 0x07, 0x42]).label,
           'Unknown command');
     });
+
+    test('mock connector resolves its catalog the same way', () {
+      expect(
+        mockConnector.describeCommand([0x54, 0x43, 0x01, 0x00]).label,
+        'Arm',
+      );
+      expect(
+        mockConnector.describeCommand(mockConnector.bytesForState(2)!).label,
+        'Set Ascent',
+      );
+      expect(
+        mockConnector.describeCommand([0x54, 0x43, 0x09, 0x00]).label,
+        'Unknown command',
+      );
+    });
   });
 
-  group('v2 header section directory', () {
-    test('round-trips the directory', () {
+  group('v3 header section directory', () {
+    test('round-trips the directory + connector id', () {
       const header = RecordingHeader(
         payloadLength: TelemetryFraming.payloadLength,
         hasLaunchSite: true,
@@ -112,16 +127,18 @@ void main() {
         telemetryByteLen: 1234,
         commandsOffset: 1370,
         commandCount: 3,
+        connectorId: 'mock',
       );
       final back = RecordingHeader.decode(header.encode())!;
       expect(back.telemetryByteLen, 1234);
       expect(back.commandsOffset, 1370);
       expect(back.commandCount, 3);
       expect(back.packetCount, 12);
+      expect(back.connectorId, 'mock');
     });
 
-    test('rejects v1 magic and corrupt directory CRCs', () {
-      // v1-style header: old magic, valid body CRC, padded to v2 length.
+    test('rejects v1/v2 magic and corrupt CRCs', () {
+      // v1-style header: old magic, valid body CRC, padded to v3 length.
       final v1 = ByteData(recordingHeaderLength);
       v1.setUint32(0, 0x54435243, Endian.big); // 'TCRC'
       v1.setUint16(4, TelemetryFraming.payloadLength, Endian.big);
@@ -130,11 +147,21 @@ void main() {
       expect(
           RecordingHeader.decode(v1.buffer.asUint8List()), isNull);
 
-      final v2 = const RecordingHeader(
-          payloadLength: TelemetryFraming.payloadLength).encode();
-      final corruptDir = Uint8List.fromList(v2)..[115] ^= 0xFF;
+      // v2 magic is equally rejected (migrate with the v3 tool).
+      final v2magic = ByteData(recordingHeaderLength);
+      v2magic.setUint32(0, recordingMagicV2, Endian.big); // 'TCR2'
+      expect(
+          RecordingHeader.decode(v2magic.buffer.asUint8List()), isNull);
+
+      final v3 = const RecordingHeader(
+        payloadLength: TelemetryFraming.payloadLength,
+        connectorId: 'mock',
+      ).encode();
+      final corruptDir = Uint8List.fromList(v3)..[115] ^= 0xFF;
       expect(RecordingHeader.decode(corruptDir), isNull);
-      final corruptBody = Uint8List.fromList(v2)..[30] ^= 0xFF;
+      final corruptConnector = Uint8List.fromList(v3)..[140] ^= 0xFF;
+      expect(RecordingHeader.decode(corruptConnector), isNull);
+      final corruptBody = Uint8List.fromList(v3)..[30] ^= 0xFF;
       expect(RecordingHeader.decode(corruptBody), isNull);
     });
   });
@@ -165,7 +192,9 @@ void main() {
         await writeRecordingFile(
           path,
           const RecordingHeader(
-              payloadLength: TelemetryFraming.payloadLength),
+            payloadLength: TelemetryFraming.payloadLength,
+            connectorId: 'mock',
+          ),
           chunks,
           commands: commands,
         );
@@ -187,12 +216,10 @@ void main() {
         expect(backCommands[1].status, CommandStatus.failed);
 
         // The telemetry parser never sees command bytes.
-        final packets = await FileParser().parseFile(path).toList();
+        final frames =
+            await FileParser().parseFile(path, connector: mockConnector).toList();
         expect(
-          [
-            for (final p in packets)
-              FrameCodec.decode(p.rawData, receivedAtMs: 0)!.sequence
-          ],
+          [for (final f in frames) f.sequence],
           [1, 2],
         );
       } finally {
@@ -205,7 +232,7 @@ void main() {
       final recorder = Recorder();
       try {
         final path = _path(dir, 'flight.bin');
-        await recorder.start(path, launch: _launch);
+        await recorder.start(path, launch: _launch, connectorId: 'mock');
         recorder.recordBytes(_packet(seq: 1, baro: 100));
         recorder.recordCommand(const SentCommand(
           tsUs: 1700000000000000,
@@ -239,7 +266,9 @@ void main() {
         await writeRecordingFile(
           path,
           const RecordingHeader(
-              payloadLength: TelemetryFraming.payloadLength),
+            payloadLength: TelemetryFraming.payloadLength,
+            connectorId: 'mock',
+          ),
           [RecordingChunk(tsUs: 1000000, payload: _packet(seq: 9, baro: 42))],
           commands: const [
             SentCommand(
@@ -248,20 +277,21 @@ void main() {
             ),
           ],
         );
-        final first =
-            (await finalizeRecordingFile(path, launch: _launch))!;
+        final first = (await finalizeRecordingFile(path,
+            launch: _launch, connectorId: 'mock'))!;
         expect(first.packetCount, 1);
         expect(first.commandCount, 1);
+        expect(first.connectorId, 'mock');
 
         // Re-finalizing without an explicit list keeps the filed commands.
-        final second =
-            (await finalizeRecordingFile(path, launch: _launch))!;
+        final second = (await finalizeRecordingFile(path,
+            launch: _launch, connectorId: 'mock'))!;
         expect(second.commandCount, 1);
         expect(await readRecordingCommands(path), hasLength(1));
 
         // An explicit list replaces the section.
         final third = (await finalizeRecordingFile(path,
-            launch: _launch, commands: const []))!;
+            launch: _launch, connectorId: 'mock', commands: const []))!;
         expect(third.commandCount, 0);
         expect(await readRecordingCommands(path), isEmpty);
       } finally {
@@ -276,7 +306,9 @@ void main() {
         await writeRecordingFile(
           src,
           const RecordingHeader(
-              payloadLength: TelemetryFraming.payloadLength),
+            payloadLength: TelemetryFraming.payloadLength,
+            connectorId: 'mock',
+          ),
           [
             for (var i = 0; i < 10; i++)
               RecordingChunk(
@@ -294,7 +326,7 @@ void main() {
             SentCommand(tsUs: 1008000000, bytes: [0x54, 0x43, 0x02, 0x00]),
           ],
         );
-        await finalizeRecordingFile(src, launch: _launch);
+        await finalizeRecordingFile(src, launch: _launch, connectorId: 'mock');
 
         final dst = _path(dir, 'clip.bin');
         final kept = await trimRecording(

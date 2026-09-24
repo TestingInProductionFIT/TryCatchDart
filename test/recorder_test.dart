@@ -34,6 +34,7 @@ void main() {
           mslM: 300,
           name: 'Test pad',
         ),
+        connectorId: mockConnector.id,
       );
       expect(recorder.isRecording, isTrue);
 
@@ -56,9 +57,9 @@ void main() {
       recorder.recordBytes(chunk3);
 
       // 3 chunks * 12-byte header + (4 + 4 + 2) payload bytes = 46 bytes
-      // of body; the file opens with the provisional v2 header (garbage
+      // of body; the file opens with the provisional v3 header (garbage
       // chunks decode to nothing, so finalize leaves it in place with
-      // zero stats — but it already carries the launch site).
+      // zero stats — but it already carries the launch site + connector).
       expect(recorder.bytesWritten, 46);
 
       await recorder.stop();
@@ -81,6 +82,7 @@ void main() {
       expect(fileHeader.packetCount, 0);
       expect(fileHeader.payloadLength, TelemetryFraming.payloadLength);
       expect(fileHeader.commandCount, 0);
+      expect(fileHeader.connectorId, 'mock');
 
       // Verify Frame 1 (body starts past the file header).
       var offset = recordingHeaderLength;
@@ -122,6 +124,7 @@ void main() {
           mslM: 300,
           name: 'Test pad',
         ),
+        connectorId: mockConnector.id,
       );
       recorder.recordBytes(Uint8List(0));
       expect(recorder.bytesWritten, 0);

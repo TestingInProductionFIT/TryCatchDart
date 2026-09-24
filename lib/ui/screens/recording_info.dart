@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:dead_reckoning/dead_reckoning.dart' show haversineDistanceM;
+import 'package:serial/serial.dart' show defaultConnectorId;
 
 import '../../core/flight_events.dart';
 import '../../core/path_utils.dart';
@@ -43,6 +44,11 @@ class RecordingInfo {
   /// Launch pad position stamped into the file header (`null` for legacy
   /// siteless or unreadable files — nothing to extract then).
   LaunchSite? launchSite;
+
+  /// Stable id of the connector the file was recorded with (from the
+  /// header stamp; defaults to the MOCK connector when unknown/unreadable
+  /// so previews still decode with something).
+  String connectorId = defaultConnectorId;
 
   /// Decimated barometric altitude series (≤160 pts) for thumbnails.
   List<double> altProfile = const [];

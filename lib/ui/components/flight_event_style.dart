@@ -22,7 +22,10 @@ class FlightEventStyle {
 }
 
 /// The single style table for flight events.
-FlightEventStyle flightEventStyleOf(FlightEventType type) => switch (type) {
+///
+/// A `null` type (connector-specific event outside the nominal profile)
+/// falls back to a neutral flag style so unknown transitions still render.
+FlightEventStyle flightEventStyleOf(FlightEventType? type) => switch (type) {
   FlightEventType.launch => FlightEventStyle(
     icon: Icons.rocket_launch,
     color: () => AppColors.warning,
@@ -39,6 +42,10 @@ FlightEventStyle flightEventStyleOf(FlightEventType type) => switch (type) {
     icon: Icons.flight_land,
     color: () => AppColors.success,
   ),
+  null => FlightEventStyle(
+    icon: Icons.flag_outlined,
+    color: () => AppColors.mutedForeground,
+  ),
 };
 
 /// Marker dot for one flight event: type-colored circle with a card-colored
@@ -47,7 +54,7 @@ FlightEventStyle flightEventStyleOf(FlightEventType type) => switch (type) {
 /// Purely visual — dimming included. Callers own playhead subscriptions so
 /// only this dot rebuilds while tooltips/buttons around it stay stable.
 class FlightEventDot extends StatelessWidget {
-  final FlightEventType type;
+  final FlightEventType? type;
 
   /// Diameter in logical pixels.
   final double size;

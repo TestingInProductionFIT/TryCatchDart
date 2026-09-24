@@ -3,16 +3,21 @@ library;
 
 import 'dart:math' as math;
 
-/// Flight software finite state machine states reported by the rocket.
+/// Flight software finite state machine states reported by the MOCK rocket.
 ///
 /// Wire values are the `id` of each state; ordering of the enum must not be
-/// relied upon when serializing — always use [id].
+/// relied upon when serializing — always use [id]. This enum is the MOCK
+/// connector's state vocabulary (see `connectors/mock_connector.dart`,
+/// which publishes the same ids with labels/colors/airframe flags for the
+/// UI); the shared internal frame carries only the raw `fsmStateId` int so
+/// other connectors can use their own id space.
 ///
 /// Each state carries the physical configuration it implies: whether the
 /// nosecone is on, whether the parachute is deployed, and whether the 3D
 /// views render the open canopy. The nose-cone tile reports
 /// [FsmState.hasNosecone] as LOCKED/UNLOCKED; the 3D views render the canopy
-/// from [FsmState.showsParachute].
+/// from [FsmState.showsParachute]. Connector-driven surfaces resolve these
+/// via `TelemetryConnector.stateForId` instead of touching this enum.
 enum FsmState {
   /// Sitting on the pad, pre-flight checks, GPS acquiring. Assembled.
   idle(0, 'Idle'),
@@ -91,10 +96,15 @@ abstract final class FrameFlags {
   static const int gpsFix3d = 1 << 1;
 }
 
-/// A single fully decoded telemetry frame in SI units.
+/// A single internal telemetry frame in SI units.
 ///
-/// Produced by decoding a [TelemetryPacket]'s raw payload via [FrameCodec].
+/// The shared representation every connector produces from its own
+/// bytestream (e.g. the MOCK connector decodes its 52-byte payloads via
+/// `FrameCodec`) and the only thing that leaves the serial package: the
+/// worker emits these, the UI consumes them, recordings stamp which
+/// connector made them.
 ///
+
 /// Conventions:
 /// - Position: WGS84 degrees; altitudes in metres.
 /// - Velocity: NED frame (North, East, Down) in m/s — [velocityDown] is

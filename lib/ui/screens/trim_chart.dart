@@ -64,7 +64,7 @@ class TrimChart extends StatelessWidget {
                 height: dotSize,
                 child: Tooltip(
                   message:
-                      '${dot.event.type.label} at ${formatMinSec(dot.event.positionMs)}'
+                      '${dot.event.label} at ${formatMinSec(dot.event.positionMs)}'
                       '${dot.kept ? '' : ' — outside kept slice'}',
                   child: FlightEventDot(
                     type: dot.event.type,

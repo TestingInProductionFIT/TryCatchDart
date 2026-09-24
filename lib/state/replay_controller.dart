@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:serial/serial.dart';
 
+import './connector_provider.dart';
 import './launch_site_store.dart';
 import '../core/app_config.dart';
 import '../core/channel_health.dart';
@@ -74,6 +75,11 @@ class ReplayState {
   /// Empty outside a replay or for command-free files.
   final List<SentCommand> commands;
 
+  /// Stable id of the connector the recording was made with. Playback
+  /// auto-selects it so states/commands/events/capabilities resolve with
+  /// the recording's own vocabulary.
+  final String connectorId;
+
   /// Display-only smoothing for the 3D views (smoothed trail + stabilized
   /// rotation). The recording bytes and charts are always raw; this only
   /// affects how the 3D tiles paint. Defaults off so replays show the
@@ -97,6 +103,7 @@ class ReplayState {
     this.launchSite,
     this.channelProfile = const [],
     this.commands = const [],
+    this.connectorId = defaultConnectorId,
     this.smoothingEnabled = false,
     this.loopEnabled = false,
   });
@@ -115,6 +122,7 @@ class ReplayState {
     LaunchSite? launchSite,
     List<ChannelBin>? channelProfile,
     List<SentCommand>? commands,
+    String? connectorId,
     bool? smoothingEnabled,
     bool? loopEnabled,
   }) => ReplayState(
@@ -129,6 +137,7 @@ class ReplayState {
     launchSite: launchSite ?? this.launchSite,
     channelProfile: channelProfile ?? this.channelProfile,
     commands: commands ?? this.commands,
+    connectorId: connectorId ?? this.connectorId,
     smoothingEnabled: smoothingEnabled ?? this.smoothingEnabled,
     loopEnabled: loopEnabled ?? this.loopEnabled,
   );
@@ -138,21 +147,22 @@ class ReplayState {
 /// so the whole dashboard works identically on recorded flights.
 ///
 /// The recording's own timestamps drive the clock: a 50 ms ticker ingests all
-/// packets whose original arrival time falls under a virtual clock advancing
+/// frames whose original arrival time falls under a virtual clock advancing
 /// at [ReplayState.speed]× real time.
 final replayProvider = NotifierProvider<ReplayController, ReplayState>(
   ReplayController.new,
 );
 
-/// Flight milestones (launch / apogee / parachute / touchdown) detected from
-/// the loaded replay's FSM transitions, in frame order.
+/// Flight milestones detected from the loaded replay's FSM transitions
+/// with the recording connector's own event table, in frame order.
 ///
 /// Derived from the pre-decoded frames list identity, so it computes once per
 /// loaded recording — not on every playhead tick. Empty outside a replay or
-/// when the flight never made the nominal transitions.
+/// when the flight never made the connector's transitions.
 final replayFlightEventsProvider = Provider<List<FlightEvent>>((ref) {
   final frames = ref.watch(replayProvider.select((s) => s.frames));
-  return detectFlightEvents(frames);
+  final connector = ref.watch(activeConnectorProvider);
+  return detectFlightEvents(frames, eventDefs: connector.events);
 });
 
 /// One filed uplink attempt with its flight-clock position.
@@ -188,10 +198,14 @@ class ReplayController extends Notifier<ReplayState> {
   /// Speed presets offered in the UI.
   static const List<double> speeds = AppConfig.replaySpeeds;
 
-  List<TelemetryPacket> _packets = const [];
+  List<TelemetryFrame> _frames = const [];
   int _index = 0;
   Timer? _ticker;
   int _lastTickMs = 0;
+
+  /// Connector id selected before playback started (in-memory override is
+  /// restored on stop so the live choice survives replays).
+  String? _savedConnectorId;
 
   /// Monotonic load generation: each play()/stop() bumps it, and a pending
   /// play() abandons its result when it notices a newer generation. This
@@ -211,14 +225,18 @@ class ReplayController extends Notifier<ReplayState> {
 
   TelemetryStore get _store => ref.read(telemetryStoreProvider.notifier);
 
-  /// Loads [path], decodes every packet up front and starts playback at 1×.
+  /// Loads [path], decodes every frame up front and starts playback at 1×.
+  ///
+  /// The recording header's connector is auto-selected (in-memory override,
+  /// restored on [stop]) so states/commands/events resolve with the
+  /// recording's own vocabulary.
   Future<void> play(String path) async {
     final initialSmoothing = state.smoothingEnabled;
     final initialLoop = state.loopEnabled;
     final generation = ++_loadGeneration;
     _ticker?.cancel();
     _ticker = null;
-    _packets = const [];
+    _frames = const [];
     _index = 0;
     _store.setReplaying(false);
     // Publish a loading state immediately so the UI can show a spinner
@@ -236,7 +254,8 @@ class ReplayController extends Notifier<ReplayState> {
       state = ReplayState(
         filePath: path,
         durationMs: 0,
-        errorMsg: 'Unsupported recording — expected a recording with a header.',
+        errorMsg:
+            'Unsupported recording — expected a v3 recording with a header, launch site and known connector.',
         // Keep any toggles made mid-load instead of the entry values.
         smoothingEnabled: state.smoothingEnabled,
         loopEnabled: state.loopEnabled,
@@ -244,9 +263,17 @@ class ReplayController extends Notifier<ReplayState> {
       return;
     }
 
-    _packets = loaded.packets;
+    _frames = loaded.frames;
     _index = 0;
     final frames = loaded.frames;
+
+    // Auto-select the recording's connector for the session (first play
+    // remembers the live choice so stop() can restore it; reloads keep the
+    // already-saved one).
+    _savedConnectorId ??= ref.read(activeConnectorIdProvider).value;
+    await ref
+        .read(activeConnectorIdProvider.notifier)
+        .set(loaded.connector.id, persist: false);
 
     _store.setReplaying(true);
     final site = launchSiteFromHeader(loaded.header);
@@ -276,11 +303,12 @@ class ReplayController extends Notifier<ReplayState> {
       playing: true,
       speed: 1,
       positionMs: 0,
-      durationMs: _packets.last.receivedAtMs - _packets.first.receivedAtMs,
+      durationMs: _frames.last.receivedAtMs - _frames.first.receivedAtMs,
       frames: frames,
       launchSite: site,
       channelProfile: channelProfile,
       commands: loaded.commands,
+      connectorId: loaded.connector.id,
       smoothingEnabled: state.smoothingEnabled,
       loopEnabled: state.loopEnabled,
     );
@@ -295,11 +323,11 @@ class ReplayController extends Notifier<ReplayState> {
   /// the start (carrying the overshoot into the next loop so high speeds
   /// don't lose time) and keeps ticking instead of pausing.
   void _tick() {
-    if (_packets.isEmpty) {
+    if (_frames.isEmpty) {
       pause();
       return;
     }
-    if (_index >= _packets.length) {
+    if (_index >= _frames.length) {
       if (state.loopEnabled) {
         _restartLoop();
       } else {
@@ -313,24 +341,24 @@ class ReplayController extends Notifier<ReplayState> {
     _lastTickMs = now;
 
     final speed = state.speed;
-    final t0 = _packets.first.receivedAtMs;
+    final t0 = _frames.first.receivedAtMs;
     final clock = state.positionMs + (realDt * speed).round();
 
-    // Batch the due packets into one store rebuild — per-packet ingestion
+    // Batch the due frames into one store rebuild — per-frame ingestion
     // notifies every watching tile.
-    final due = <TelemetryPacket>[];
-    while (_index < _packets.length) {
-      final packet = _packets[_index];
-      final rel = packet.receivedAtMs - t0;
+    final due = <TelemetryFrame>[];
+    while (_index < _frames.length) {
+      final frame = _frames[_index];
+      final rel = frame.receivedAtMs - t0;
       if (rel > clock) break;
-      due.add(packet);
+      due.add(frame);
       _index++;
     }
 
-    if (due.isNotEmpty) _store.ingestPackets(due, sourceName: _fileName());
+    if (due.isNotEmpty) _store.ingestFrames(due, sourceName: _fileName());
 
-    if (_index >= _packets.length && state.loopEnabled) {
-      final duration = state.durationMs ?? (_packets.last.receivedAtMs - t0);
+    if (_index >= _frames.length && state.loopEnabled) {
+      final duration = state.durationMs ?? (_frames.last.receivedAtMs - t0);
       if (duration <= 0) {
         _restartLoop();
         return;
@@ -342,11 +370,11 @@ class ReplayController extends Notifier<ReplayState> {
       return;
     }
 
-    final duration = state.durationMs ?? (_packets.last.receivedAtMs - t0);
+    final duration = state.durationMs ?? (_frames.last.receivedAtMs - t0);
     final clampedClock = duration > 0 ? clock.clamp(0, duration) : 0;
     state = state.copyWith(positionMs: clampedClock);
 
-    if (_index >= _packets.length) pause();
+    if (_index >= _frames.length) pause();
   }
 
   void pause() {
@@ -359,7 +387,7 @@ class ReplayController extends Notifier<ReplayState> {
 
   void resume() {
     if (!state.isActive || state.isLoading) return;
-    if (_index >= _packets.length) {
+    if (_index >= _frames.length) {
       // Restart from the beginning when replaying a finished recording.
       seek(0);
     }
@@ -394,7 +422,7 @@ class ReplayController extends Notifier<ReplayState> {
     state = state.copyWith(speed: speed);
   }
 
-  /// Current ingestion cursor (packets already in the store). Exposed for
+  /// Current ingestion cursor (frames already in the store). Exposed for
   /// tests pinning the incremental-seek behaviour.
   int get debugIndex => _index;
 
@@ -413,16 +441,16 @@ class ReplayController extends Notifier<ReplayState> {
   /// the backward-jump path in [seek] but keeping the ticker alive and
   /// `playing` true.
   void _restartLoop({int atPositionMs = 0}) {
-    if (_packets.isEmpty) {
+    if (_frames.isEmpty) {
       pause();
       return;
     }
-    final t0 = _packets.first.receivedAtMs;
+    final t0 = _frames.first.receivedAtMs;
     var lo = 0;
-    var hi = _packets.length;
+    var hi = _frames.length;
     while (lo < hi) {
       final mid = (lo + hi) >> 1;
-      if (_packets[mid].receivedAtMs - t0 > atPositionMs) {
+      if (_frames[mid].receivedAtMs - t0 > atPositionMs) {
         hi = mid;
       } else {
         lo = mid + 1;
@@ -430,8 +458,8 @@ class ReplayController extends Notifier<ReplayState> {
     }
     _store.reset(sourceName: _fileName());
     if (lo > 0) {
-      _store.ingestPackets(
-        _packets.sublist(0, lo),
+      _store.ingestFrames(
+        _frames.sublist(0, lo),
         sourceName: _fileName(),
       );
     }
@@ -449,17 +477,17 @@ class ReplayController extends Notifier<ReplayState> {
   /// Forward jumps ingest only the delta (the store already holds everything
   /// before [_index]); backward jumps reset and replay from the start so the
   /// store's history stays consistent. The target is found by binary search
-  /// and ingestion is a single bulk rebuild — scrubbing a 26k-packet flight
-  /// no longer replays per-packet state churn from zero on every slider tick.
+  /// and ingestion is a single bulk rebuild — scrubbing a 26k-frame flight
+  /// no longer replays per-frame state churn from zero on every slider tick.
   void seek(int positionMs) {
-    if (state.isLoading || _packets.isEmpty) return;
+    if (state.isLoading || _frames.isEmpty) return;
 
-    final t0 = _packets.first.receivedAtMs;
+    final t0 = _frames.first.receivedAtMs;
     var lo = 0;
-    var hi = _packets.length;
+    var hi = _frames.length;
     while (lo < hi) {
       final mid = (lo + hi) >> 1;
-      if (_packets[mid].receivedAtMs - t0 > positionMs) {
+      if (_frames[mid].receivedAtMs - t0 > positionMs) {
         hi = mid;
       } else {
         lo = mid + 1;
@@ -469,13 +497,13 @@ class ReplayController extends Notifier<ReplayState> {
 
     if (index > _index) {
       if (_index == 0) _store.reset(sourceName: _fileName());
-      _store.ingestPackets(
-        _packets.sublist(_index, index),
+      _store.ingestFrames(
+        _frames.sublist(_index, index),
         sourceName: _fileName(),
       );
     } else if (index < _index) {
       _store.reset(sourceName: _fileName());
-      _store.ingestPackets(_packets.sublist(0, index), sourceName: _fileName());
+      _store.ingestFrames(_frames.sublist(0, index), sourceName: _fileName());
     }
 
     _index = index;
@@ -489,9 +517,15 @@ class ReplayController extends Notifier<ReplayState> {
     _loadGeneration++;
     _ticker?.cancel();
     _ticker = null;
-    _packets = const [];
+    _frames = const [];
     _index = 0;
     _store.setReplaying(false);
+    // Restore the live connector choice the replay overrode in play().
+    final saved = _savedConnectorId;
+    _savedConnectorId = null;
+    if (saved != null && isKnownConnectorId(saved)) {
+      ref.read(activeConnectorIdProvider.notifier).set(saved, persist: false);
+    }
     state = const ReplayState();
   }
 

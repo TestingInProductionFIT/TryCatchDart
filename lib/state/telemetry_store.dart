@@ -30,10 +30,12 @@ class TelemetryState {
   /// Capped flight history (chronological, bounded).
   final RingBuffer<TelemetryFrame> history;
 
-  /// Total packets ingested this session (including dropped/corrupt).
+  /// Total frames ingested this session (pre-decoded by the connector;
+  /// corrupt wire frames never reach the store).
   final int packetCount;
 
-  /// Packets whose CRC failed or that could not be decoded.
+  /// Reserved: decode failures counted here before connectors owned parsing
+  /// (kept so persisted/test-constructed states keep compiling).
   final int errorCount;
 
   /// Human-readable data source ('COM3', 'MOCK', recording file name...).
@@ -131,10 +133,23 @@ class TelemetryStore extends Notifier<TelemetryState> {
     });
 
     // Auto-ingest the live serial stream for the lifetime of the provider.
+    // Frames arrive pre-decoded by the worker's active connector — raw
+    // bytes never leave the serial package.
     ref.listen(telemetryStreamProvider, (previous, next) {
       // During a replay the live stream must not mix into the recording.
       if (state.replaying) return;
-      next.whenData((packet) => ingest(packet, sourceName: _liveSourceName()));
+      next.whenData((frame) => ingest(frame, sourceName: _liveSourceName()));
+    });
+
+    // Clear the live flight when the connector changes: framings are
+    // connector-specific, so stale frames must not mix with the new ones.
+    // Replays override the connector in memory and own the store contents,
+    // so they are exempt.
+    ref.listen(activeConnectorIdProvider, (previous, next) {
+      if (state.replaying) return;
+      final prevId = previous?.value ?? defaultConnectorId;
+      final nextId = next.value ?? defaultConnectorId;
+      if (prevId != nextId) reset();
     });
 
     // Clear the flight when the connection drops or the port changes.
@@ -161,15 +176,9 @@ class TelemetryStore extends Notifier<TelemetryState> {
     return status?.connectedPort ?? 'unknown';
   }
 
-  /// Ingests a raw packet (live or replay). Decoding failures count as errors.
-  void ingest(TelemetryPacket packet, {String? sourceName}) {
-    final frame =
-        FrameCodec.decode(packet.rawData, receivedAtMs: packet.receivedAtMs);
-    if (frame == null) {
-      state = _copyWithCurrent(errorCount: state.errorCount + 1);
-      return;
-    }
-
+  /// Ingests one internal frame (live or replay). Frames arrive pre-decoded
+  /// by the active connector.
+  void ingest(TelemetryFrame frame, {String? sourceName}) {
     _history.push(frame);
     // Dead reckoning is a live-only gap filler — replays show the recorded
     // GPS track as-is (no synthetic estimates).
@@ -213,40 +222,30 @@ class TelemetryStore extends Notifier<TelemetryState> {
     }
   }
 
-  /// Bulk-ingests packets with a single state rebuild.
+  /// Bulk-ingests frames with a single state rebuild.
   ///
-  /// Replay clocks and seeks push hundreds-to-thousands of packets at once;
-  /// ingesting them one by one would notify every watching tile per packet
+  /// Replay clocks and seeks push hundreds-to-thousands of frames at once;
+  /// ingesting them one by one would notify every watching tile per frame
   /// (26k rebuilds per scrub on a full flight log). Dead reckoning is a
   /// live-only gap filler, so in replay mode it is skipped exactly like in
   /// [ingest]; callers outside replay mode fall back to [ingest] to preserve
   /// the dead reckoning + ticker behaviour.
-  void ingestPackets(List<TelemetryPacket> packets, {String? sourceName}) {
-    if (packets.isEmpty) return;
+  void ingestFrames(List<TelemetryFrame> frames, {String? sourceName}) {
+    if (frames.isEmpty) return;
     if (!state.replaying) {
-      for (final packet in packets) {
-        ingest(packet, sourceName: sourceName);
+      for (final frame in frames) {
+        ingest(frame, sourceName: sourceName);
       }
       return;
     }
     TelemetryFrame? last;
-    var errors = 0;
-    for (final packet in packets) {
-      final frame = FrameCodec.decode(
-        packet.rawData,
-        receivedAtMs: packet.receivedAtMs,
-      );
-      if (frame == null) {
-        errors++;
-        continue;
-      }
+    for (final frame in frames) {
       _history.push(frame);
       last = frame;
     }
     state = _copyWithCurrent(
       latest: last ?? state.latest,
-      packetCount: state.packetCount + packets.length - errors,
-      errorCount: state.errorCount + errors,
+      packetCount: state.packetCount + frames.length,
       sourceName: sourceName ?? state.sourceName,
       clearDeadReckoning: true,
     );

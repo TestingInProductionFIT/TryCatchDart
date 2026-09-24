@@ -229,19 +229,18 @@ abstract final class AppColors {
   static Color get seriesGpsTrack => _p.seriesGpsTrack;
   static Color get seriesDeadReckoning => _p.seriesDeadReckoning;
 
-  /// Semantic color per rocket FSM state.
-  static Color fsmColor(FsmState state) => switch (state) {
-        FsmState.idle => mutedForeground,
-        FsmState.armed => warning,
-        FsmState.ascent => destructive,
-        FsmState.apogee => seriesDeadReckoning, // violet
-        FsmState.parachute => _p.fsmParachute,
-        FsmState.landed => _p.fsmLanded,
-        // Bench states: unlocked (open airframe) amber, locked blue.
-        FsmState.debugUnlocked => warning,
-        FsmState.debugLocked => info,
-        FsmState.unknown => faint,
-      };
+  /// Semantic color per rocket FSM state (MOCK connector vocabulary).
+  ///
+  /// Connector-driven surfaces read
+  /// `activeConnector.stateForId(id).colorArgb` instead — this stays for
+  /// shared/legacy call sites and resolves to the same ARGB values the
+  /// MOCK connector publishes.
+  static Color fsmColor(FsmState state) =>
+      Color(mockConnector.stateForId(state.id).colorArgb);
+
+  /// Semantic color for a connector state id on [connector].
+  static Color connectorStateColor(TelemetryConnector connector, int id) =>
+      Color(connector.stateForId(id).colorArgb);
 }
 
 /// Shared layout metrics so cards, grid and chrome stay visually consistent.
