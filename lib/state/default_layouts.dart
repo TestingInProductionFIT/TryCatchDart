@@ -41,7 +41,7 @@ abstract final class DefaultLayouts {
             a: SplitNode(
               vertical: false,
               ratio: 0.5,
-              a: LeafNode(tileId: GridIds.next(), tileType: 'highlights'),
+              a: LeafNode(tileId: GridIds.next(), tileType: 'commands'),
               b: LeafNode(tileId: GridIds.next(), tileType: 'events'),
             ),
             b: SplitNode(

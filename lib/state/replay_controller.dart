@@ -70,6 +70,10 @@ class ReplayState {
   /// shows the same picture the live view did. Empty outside a replay.
   final List<ChannelBin> channelProfile;
 
+  /// Operator uplink attempts filed in the recording, oldest first.
+  /// Empty outside a replay or for command-free files.
+  final List<SentCommand> commands;
+
   /// Display-only smoothing for the 3D views (smoothed trail + stabilized
   /// rotation). The recording bytes and charts are always raw; this only
   /// affects how the 3D tiles paint. Defaults off so replays show the
@@ -92,6 +96,7 @@ class ReplayState {
     this.frames = const [],
     this.launchSite,
     this.channelProfile = const [],
+    this.commands = const [],
     this.smoothingEnabled = false,
     this.loopEnabled = false,
   });
@@ -109,6 +114,7 @@ class ReplayState {
     List<TelemetryFrame>? frames,
     LaunchSite? launchSite,
     List<ChannelBin>? channelProfile,
+    List<SentCommand>? commands,
     bool? smoothingEnabled,
     bool? loopEnabled,
   }) => ReplayState(
@@ -122,6 +128,7 @@ class ReplayState {
     frames: frames ?? this.frames,
     launchSite: launchSite ?? this.launchSite,
     channelProfile: channelProfile ?? this.channelProfile,
+    commands: commands ?? this.commands,
     smoothingEnabled: smoothingEnabled ?? this.smoothingEnabled,
     loopEnabled: loopEnabled ?? this.loopEnabled,
   );
@@ -146,6 +153,35 @@ final replayProvider = NotifierProvider<ReplayController, ReplayState>(
 final replayFlightEventsProvider = Provider<List<FlightEvent>>((ref) {
   final frames = ref.watch(replayProvider.select((s) => s.frames));
   return detectFlightEvents(frames);
+});
+
+/// One filed uplink attempt with its flight-clock position.
+class ReplayCommand {
+  /// The filed attempt (absolute timestamps).
+  final SentCommand command;
+
+  /// Flight-clock position relative to the first frame (ms), clamped at
+  /// zero — attempts pre-dating the first decoded frame sit at the start.
+  final int positionMs;
+
+  const ReplayCommand({required this.command, required this.positionMs});
+}
+
+/// Operator uplink attempts filed in the loaded replay, oldest first, with
+/// flight-clock positions resolved against the first frame (mirroring
+/// [detectFlightEvents]). Empty outside a replay or for command-free files.
+final replayCommandsProvider = Provider<List<ReplayCommand>>((ref) {
+  final replay = ref.watch(replayProvider);
+  final commands = replay.commands;
+  if (commands.isEmpty || replay.frames.isEmpty) return const [];
+  final t0 = replay.frames.first.receivedAtMs;
+  return [
+    for (final command in commands)
+      ReplayCommand(
+        command: command,
+        positionMs: (command.tsMs - t0).clamp(0, 1 << 62),
+      ),
+  ];
 });
 
 class ReplayController extends Notifier<ReplayState> {
@@ -244,6 +280,7 @@ class ReplayController extends Notifier<ReplayState> {
       frames: frames,
       launchSite: site,
       channelProfile: channelProfile,
+      commands: loaded.commands,
       smoothingEnabled: state.smoothingEnabled,
       loopEnabled: state.loopEnabled,
     );

@@ -132,8 +132,25 @@ void workerMain(SendPort mainSendPort) async {
       case ListPortsCommand():
         mainSendPort.send(PortListEvent(SerialService.availablePorts));
 
-      case SendBytesCommand(:final bytes):
-        if (!service.sendBytes(bytes)) {
+      case SendBytesCommand(:final bytes, :final source):
+        final ok = service.sendBytes(bytes);
+        final now = DateTime.now();
+        // File every attempt (sent or failed) in the recording's command
+        // section and report it to the UI for the live command log.
+        recorder.recordCommand(SentCommand(
+          tsUs: now.microsecondsSinceEpoch,
+          bytes: Uint8List.fromList(bytes),
+          status:
+              ok ? CommandStatus.sent : CommandStatus.failed,
+          source: CommandSource.fromValue(source),
+        ));
+        mainSendPort.send(CommandResultEvent(
+          bytes: Uint8List.fromList(bytes),
+          timestampMs: now.millisecondsSinceEpoch,
+          ok: ok,
+          source: source,
+        ));
+        if (!ok) {
           mainSendPort.send(ErrorEvent(
             'Not connected — failed to send ${bytes.length} byte(s)',
           ));

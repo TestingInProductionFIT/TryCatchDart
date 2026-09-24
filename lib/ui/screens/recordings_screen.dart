@@ -47,7 +47,7 @@ class _RecordingsScreenState extends ConsumerState<RecordingsScreen> {
   /// Fully parsing every file up front would hold the whole list hostage to
   /// the slowest file. Decoded previews are cached for the session (keyed by
   /// path + size + mtime) so refreshes don't re-parse unchanged files.
-  /// Headers yield duration/packets/max-alt straight from 108 bytes.
+  /// Headers yield duration/packets/max-alt straight from 136 bytes.
   final _infoCache = <String, RecordingInfo>{};
 
   Future<List<RecordingInfo>> _scanRecordings() async {

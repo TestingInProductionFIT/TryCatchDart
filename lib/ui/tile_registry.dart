@@ -4,6 +4,7 @@ import './tiles/acceleration_chart_tile.dart';
 import './tiles/altitude_chart_tile.dart';
 import './tiles/battery_chart_tile.dart';
 import './tiles/channel_health_tile.dart';
+import './tiles/commands_tile.dart';
 import './tiles/control_panel_tile.dart';
 import './tiles/flight_3d_satellite_tile.dart';
 import './tiles/flight_3d_tile.dart';
@@ -210,6 +211,15 @@ abstract final class TileRegistry {
       minSize: const Size(140, 90),
       category: TileCategory.views,
       builder: (context) => EventsTile(),
+    ),
+    TileDescriptor(
+      id: 'commands',
+      title: 'Commands',
+      description: 'Uplink commands sent to the rocket, sent and failed',
+      icon: Icons.outbox_outlined,
+      minSize: const Size(140, 90),
+      category: TileCategory.views,
+      builder: (context) => CommandsTile(),
     ),
     TileDescriptor(
       id: 'nosecone',

@@ -77,6 +77,64 @@ abstract final class RocketCommands {
   ];
 }
 
+/// Human-readable description of 4 raw uplink bytes, resolved against the
+/// command catalog at display time (so catalog renames never invalidate
+/// old recordings or log entries).
+class UplinkDescription {
+  final String label;
+  final String subtitle;
+  final bool danger;
+
+  const UplinkDescription({
+    required this.label,
+    required this.subtitle,
+    this.danger = false,
+  });
+}
+
+/// Resolves [bytes] (the `54 43 cmd arg` uplink frame) to a display
+/// description: catalog match first, then the FSM set-state command
+/// (`0x07` + state id → `Set <state>`), else an unknown-command fallback
+/// carrying the hex bytes.
+UplinkDescription describeUplink(List<int> bytes) {
+  for (final cmd in RocketCommands.all) {
+    if (_bytesEqual(cmd.bytes, bytes)) {
+      return UplinkDescription(
+        label: cmd.label,
+        subtitle: cmd.description,
+        danger: cmd.danger,
+      );
+    }
+  }
+  if (bytes.length == 4 &&
+      bytes[0] == rocketMagicT &&
+      bytes[1] == rocketMagicC &&
+      bytes[2] == FsmStateCommands.setStateCmd) {
+    final state = FsmState.fromId(bytes[3]);
+    if (state != FsmState.unknown) {
+      return UplinkDescription(
+        label: 'Set ${state.label}',
+        subtitle: 'Flight-computer state request → ${state.label}',
+      );
+    }
+  }
+  final hex = [
+    for (final b in bytes.take(4)) b.toRadixString(16).padLeft(2, '0'),
+  ].join(' ');
+  return UplinkDescription(
+    label: 'Unknown command',
+    subtitle: 'Unrecognized uplink frame ($hex)',
+  );
+}
+
+bool _bytesEqual(List<int> a, List<int> b) {
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) return false;
+  }
+  return true;
+}
+
 // ── FSM state commands ───────────────────────────────────────────────────────
 
 /// Wire bytes for requesting an FSM state change from the rocket.

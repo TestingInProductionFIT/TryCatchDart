@@ -29,11 +29,16 @@ class ListPortsCommand extends SerialCommand {
 /// Transmit raw [bytes] to the rocket over the active connection.
 ///
 /// Used by the control panel for arming / deployment commands defined entirely
-/// on the UI side as data.
+/// on the UI side as data. [source] is the [CommandSource] wire value
+/// (see `telemetry/sent_command.dart`) so the worker can file the attempt
+/// in the recording's command log with its origin.
 class SendBytesCommand extends SerialCommand {
   final Uint8List bytes;
 
-  const SendBytesCommand(this.bytes);
+  /// Origin of the attempt, as a [CommandSource] index (0 = unknown).
+  final int source;
+
+  const SendBytesCommand(this.bytes, {this.source = 0});
 }
 
 /// Start recording parsed telemetry packets to the given file path.
@@ -117,6 +122,27 @@ class StatusChangedEvent extends SerialEvent {
 class ErrorEvent extends SerialEvent {
   final String message;
   ErrorEvent(this.message);
+}
+
+/// Emitted for every uplink attempt handled by the worker (one per
+/// [SendBytesCommand]): the exact [bytes], the worker-side [timestampMs]
+/// and whether the transmit succeeded. The UI appends these to the live
+/// command log; the worker additionally files them in the active
+/// recording's command section.
+class CommandResultEvent extends SerialEvent {
+  final Uint8List bytes;
+  final int timestampMs;
+  final bool ok;
+
+  /// Origin of the attempt, as a [CommandSource] index (0 = unknown).
+  final int source;
+
+  CommandResultEvent({
+    required this.bytes,
+    required this.timestampMs,
+    required this.ok,
+    this.source = 0,
+  });
 }
 
 // ─── Data Models ─────────────────────────────────────────────────────────────

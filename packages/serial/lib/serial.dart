@@ -12,6 +12,7 @@ export 'io/recording_file.dart';
 export 'telemetry/frame_codec.dart';
 export 'telemetry/flight_simulator.dart';
 export 'telemetry/rocket_commands.dart';
+export 'telemetry/sent_command.dart';
 export 'telemetry/telemetry_frame.dart';
 export 'worker/manager.dart';
 export 'worker/protocol.dart';

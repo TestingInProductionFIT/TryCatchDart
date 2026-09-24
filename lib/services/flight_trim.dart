@@ -4,15 +4,17 @@ import 'package:serial/serial.dart';
 
 /// Raw recording chunk I/O + trimming ("save part of a flight").
 ///
-/// Recording files open with a fixed [RecordingHeader] followed by a flat
-/// stream of chunks: a 12-byte header
-/// (i64 microseconds big-endian + u32 payload length big-endian) + payload.
+/// Recording files open with a fixed v2 [RecordingHeader] (with a section
+/// directory) followed by a flat stream of chunks: a 12-byte header
+/// (i64 microseconds big-endian + u32 payload length big-endian) + payload,
+/// then the trailing command log.
 /// The recorder stores *raw stream fragments* (whatever bytes arrived in one
 /// serial read), NOT one packet per chunk — so chunk payloads must be
 /// reassembled with [PacketParser] before [FrameCodec] can decode them.
 /// Trimming copies a time slice verbatim, so the result replays like any
 /// recording (replay clocks are relative to the first chunk), and writes a
-/// fresh header carrying the source's launch site over the kept stats.
+/// fresh header carrying the source's launch site over the kept stats plus
+/// the sliced command log.
 ///
 /// Chunk I/O itself ([RecordingChunk], [readRecordingChunks],
 /// [writeRecordingChunks]) lives in the serial package next to the header
@@ -24,7 +26,8 @@ import 'package:serial/serial.dart';
 ///
 /// The destination gets a fresh header: stats recomputed over the kept
 /// slice, launch site propagated from the source header (required — a
-/// siteless source is a legacy file and cannot be trimmed).
+/// siteless source is a legacy file and cannot be trimmed), and the filed
+/// command log sliced to the same window.
 Future<int> trimRecording({
   required String srcPath,
   required String dstPath,
@@ -44,13 +47,19 @@ Future<int> trimRecording({
       if (c.tsMs - t0 >= startMs && c.tsMs - t0 <= endMs) c,
   ];
   if (kept.isEmpty) return 0;
+  final commands = [
+    for (final cmd in await readRecordingCommands(srcPath))
+      if (cmd.tsMs - t0 >= startMs && cmd.tsMs - t0 <= endMs) cmd,
+  ];
   try {
     await writeRecordingFile(
       dstPath,
       const RecordingHeader(payloadLength: TelemetryFraming.payloadLength),
       kept,
+      commands: commands,
     );
-    await finalizeRecordingFile(dstPath, launch: srcLaunch);
+    await finalizeRecordingFile(dstPath,
+        launch: srcLaunch, commands: commands);
   } catch (_) {
     try {
       await File(dstPath).delete();

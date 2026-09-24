@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import '../constants.dart';
+import '../telemetry/sent_command.dart';
 import '../worker/protocol.dart';
 import 'recording_file.dart';
 
@@ -11,18 +12,25 @@ import 'recording_file.dart';
 /// noise, fragmented frames, and corrupted bytes) prepended with a 12-byte framing header
 /// (64-bit microsecond timestamp + 32-bit payload length) for complete diagnostic fidelity.
 ///
-/// Every file opens with a fixed [RecordingHeader]: [start] writes a
+/// Every file opens with a fixed v2 [RecordingHeader]: [start] writes a
 /// provisional one carrying the launch site (stats filled in on [stop]),
 /// and [stop] replaces it with the computed stats via
 /// [finalizeRecordingFile]. The finalize pass never throws: on any failure
 /// the provisional header is left untouched. Files without the magic are
 /// rejected by every reader.
+///
+/// Operator uplink attempts buffered via [recordCommand] are appended as
+/// the file's trailing command section on [stop] (the live telemetry
+/// stream cannot be interleaved with a trailing section, so commands are
+/// held in memory for the session — a crash loses buffered commands but
+/// never telemetry).
 class Recorder {
   IOSink? _sink;
   String? _filePath;
   LaunchRef? _launch;
   int _bytesWritten = 0;
   int _chunksWritten = 0;
+  final List<SentCommand> _commands = [];
 
   /// Whether a recording session is currently active.
   bool get isRecording => _sink != null;
@@ -53,6 +61,7 @@ class Recorder {
     _launch = launch;
     _bytesWritten = 0;
     _chunksWritten = 0;
+    _commands.clear();
     _sink!.add(RecordingHeader(
       payloadLength: TelemetryFraming.payloadLength,
       hasLaunchSite: true,
@@ -64,18 +73,20 @@ class Recorder {
   }
 
   /// Stops the active recording session, flushes all buffered bytes to disk,
-  /// replaces the provisional header with the computed stats, and closes
-  /// the underlying file handle.
+  /// replaces the provisional header with the computed stats, appends the
+  /// buffered command log, and closes the underlying file handle.
   Future<void> stop() async {
     if (_sink != null) {
       final sink = _sink;
       final path = _filePath;
       final launch = _launch;
       final chunks = _chunksWritten;
+      final commands = List<SentCommand>.unmodifiable(_commands);
       _sink = null;
       _filePath = null;
       _launch = null;
       _chunksWritten = 0;
+      _commands.clear();
       await sink?.flush();
       await sink?.close();
       // Header finalize is best-effort: stats pass + rewrite. Empty
@@ -83,7 +94,8 @@ class Recorder {
       // always set — start() requires it.
       if (path != null) {
         if (chunks > 0 && launch != null) {
-          await finalizeRecordingFile(path, launch: launch);
+          await finalizeRecordingFile(path,
+              launch: launch, commands: commands);
         } else {
           try {
             await File(path).writeAsBytes(const []);
@@ -110,5 +122,12 @@ class Recorder {
     _sink!.add(bytes);
     _bytesWritten += 12 + bytes.length;
     _chunksWritten++;
+  }
+
+  /// Buffers one operator uplink attempt for the file's trailing command
+  /// section (flushed on [stop]). No-op outside a session.
+  void recordCommand(SentCommand command) {
+    if (_sink == null) return;
+    _commands.add(command);
   }
 }

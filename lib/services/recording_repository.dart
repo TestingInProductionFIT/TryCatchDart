@@ -11,7 +11,8 @@ import './flight_trim.dart';
 /// framing, header validation and decode stay in one place.
 abstract final class RecordingRepository {
   /// Loads a recording in a single pass: header + chunks are read once,
-  /// then packets/frames/profile are derived in memory.
+  /// then packets/frames/profile are derived in memory. The trailing
+  /// command log is loaded alongside (empty for command-free files).
   static Future<LoadedRecording?> loadReplay(String path) async {
     final header = await tryReadRecordingHeader(path);
     if (header == null ||
@@ -37,11 +38,13 @@ abstract final class RecordingRepository {
       }
     }
     if (packets.isEmpty) return null;
+    final commands = await readRecordingCommands(path);
     return LoadedRecording(
       header: header,
       packets: packets,
       frames: frames,
       channelProfile: buildChannelProfile(chunks),
+      commands: commands,
     );
   }
 
@@ -51,17 +54,23 @@ abstract final class RecordingRepository {
 }
 
 /// Fully decoded recording for replay (packets drive the ticker, frames fix
-/// chart axes, profile drives the channel-health view).
+/// chart axes, profile drives the channel-health view, commands drive the
+/// commands tile).
 class LoadedRecording {
   final RecordingHeader header;
   final List<TelemetryPacket> packets;
   final List<TelemetryFrame> frames;
   final List<ChannelBin> channelProfile;
 
+  /// Operator uplink attempts filed during the recording, oldest first.
+  /// Empty for command-free files.
+  final List<SentCommand> commands;
+
   const LoadedRecording({
     required this.header,
     required this.packets,
     required this.frames,
     required this.channelProfile,
+    this.commands = const [],
   });
 }

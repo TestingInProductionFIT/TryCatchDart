@@ -71,8 +71,10 @@ class _FsmWidgetState extends ConsumerState<FsmTile> {
     }
 
     _confirmTimer?.cancel();
-    final ok =
-        ref.read(serialConfigProvider.notifier).sendBytes(FsmStateCommands.bytesFor(state));
+    final ok = ref.read(serialConfigProvider.notifier).sendBytes(
+          FsmStateCommands.bytesFor(state),
+          source: CommandSource.fsm,
+        );
     setState(() {
       _pendingState = null;
       _sentState = ok ? state : null;

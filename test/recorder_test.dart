@@ -56,9 +56,9 @@ void main() {
       recorder.recordBytes(chunk3);
 
       // 3 chunks * 12-byte header + (4 + 4 + 2) payload bytes = 46 bytes
-      // of body; the file opens with the 108-byte provisional header
-      // (garbage chunks decode to nothing, so finalize leaves it in place
-      // with zero stats — but it already carries the launch site).
+      // of body; the file opens with the provisional v2 header (garbage
+      // chunks decode to nothing, so finalize leaves it in place with
+      // zero stats — but it already carries the launch site).
       expect(recorder.bytesWritten, 46);
 
       await recorder.stop();
@@ -70,19 +70,20 @@ void main() {
       expect(await file.exists(), isTrue);
 
       final savedBytes = await file.readAsBytes();
-      expect(savedBytes.length, 108 + 46);
+      expect(savedBytes.length, recordingHeaderLength + 46);
 
       // Verify file header.
-      final fileHeader =
-          RecordingHeader.decode(savedBytes.sublist(0, 108))!;
+      final fileHeader = RecordingHeader.decode(
+          savedBytes.sublist(0, recordingHeaderLength))!;
       expect(fileHeader.hasStats, isFalse);
       expect(fileHeader.hasLaunchSite, isTrue);
       expect(fileHeader.launchRef!.name, 'Test pad');
       expect(fileHeader.packetCount, 0);
       expect(fileHeader.payloadLength, TelemetryFraming.payloadLength);
+      expect(fileHeader.commandCount, 0);
 
-      // Verify Frame 1 (body starts past the 108-byte file header).
-      var offset = 108;
+      // Verify Frame 1 (body starts past the file header).
+      var offset = recordingHeaderLength;
       var header1 = ByteData.sublistView(savedBytes, offset, offset + 12);
       var ts1 = header1.getInt64(0, Endian.big);
       var len1 = header1.getUint32(8, Endian.big);

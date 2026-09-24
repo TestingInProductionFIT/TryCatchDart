@@ -53,6 +53,61 @@ final availablePortsProvider = StreamProvider<List<String>>((ref) async* {
   yield* worker.portsStream;
 });
 
+/// Stream of uplink attempt reports from the serial worker (one per
+/// handled [SendBytesCommand], sent or failed).
+final commandEventsProvider = StreamProvider<CommandResultEvent>((ref) {
+  final worker = ref.watch(serialWorkerProvider);
+  return worker.commandStream;
+});
+
+// ─── Live command log ────────────────────────────────────────────────────────
+
+/// Operator uplink attempts this session (sent and failed), oldest first.
+///
+/// The worker reports every dispatched attempt via [commandEventsProvider];
+/// attempts blocked before dispatch (not connected) are filed by
+/// [SerialConfigNotifier.sendBytes] directly, so the log — and the
+/// Commands tile reading it — sees *all* attempts. Bounded to the newest
+/// [CommandLog.maxEntries] entries; the recording's command section is the
+/// durable copy.
+final commandLogProvider =
+    NotifierProvider<CommandLog, List<SentCommand>>(CommandLog.new);
+
+class CommandLog extends Notifier<List<SentCommand>> {
+  /// Ring cap for the in-memory log (the file keeps everything).
+  static const int maxEntries = 2000;
+
+  @override
+  List<SentCommand> build() {
+    // Worker-side outcomes (dispatched attempts, sent or failed).
+    ref.listen(commandEventsProvider, (previous, next) {
+      next.whenData((event) {
+        add(
+          SentCommand(
+            tsUs: event.timestampMs * 1000,
+            bytes: event.bytes,
+            status: event.ok ? CommandStatus.sent : CommandStatus.failed,
+            source: CommandSource.fromValue(event.source),
+          ),
+        );
+      });
+    });
+    return const [];
+  }
+
+  /// Appends [command], dropping the oldest entries past [maxEntries].
+  void add(SentCommand command) {
+    final next = [...state, command];
+    if (next.length > maxEntries) {
+      next.removeRange(0, next.length - maxEntries);
+    }
+    state = next;
+  }
+
+  /// Clears the session log (new connection, test reset...).
+  void clear() => state = const [];
+}
+
 
 // ─── UI-side connection config ─────────────────────────────────────────────────
 
@@ -108,14 +163,28 @@ class SerialConfigNotifier extends Notifier<SerialConfig> {
 
   /// Transmits raw [bytes] to the rocket over the active connection.
   ///
-  /// Used by the data-driven control panel; returns whether the command was
-  /// dispatched at all (connection state is checked by the worker).
-  bool sendBytes(List<int> bytes) {
+  /// Used by the data-driven control panel and the FSM state chips;
+  /// [source] files the attempt's origin in the command log. Returns
+  /// whether the command was dispatched at all. Blocked attempts (not
+  /// connected) are filed as failed immediately; dispatched attempts are
+  /// filed by the worker's [CommandResultEvent] with their true outcome.
+  bool sendBytes(
+    List<int> bytes, {
+    CommandSource source = CommandSource.unknown,
+  }) {
     final status = ref.read(serialStatusProvider).value;
-    if (status?.isConnected != true) return false;
-    ref
-        .read(serialWorkerProvider)
-        .send(SendBytesCommand(Uint8List.fromList(bytes)));
+    if (status?.isConnected != true) {
+      ref.read(commandLogProvider.notifier).add(SentCommand(
+            tsUs: DateTime.now().microsecondsSinceEpoch,
+            bytes: Uint8List.fromList(bytes),
+            status: CommandStatus.failed,
+            source: source,
+          ));
+      return false;
+    }
+    ref.read(serialWorkerProvider).send(
+          SendBytesCommand(Uint8List.fromList(bytes), source: source.index),
+        );
     return true;
   }
 

@@ -28,6 +28,7 @@ class SerialWorker {
   final _packetController = StreamController<TelemetryPacket>.broadcast();
   final _portsController = StreamController<List<String>>.broadcast();
   final _linkStatsController = StreamController<LinkStats>.broadcast();
+  final _commandController = StreamController<CommandResultEvent>.broadcast();
 
   // Cached state snapshots: allow UI widgets to perform immediate synchronous reads
   // without waiting for the next stream event (avoids UI loading flashes).
@@ -55,6 +56,9 @@ class SerialWorker {
 
   /// Stream of cumulative [LinkStats] snapshots (~2 Hz while connected).
   Stream<LinkStats> get linkStatsStream => _linkStatsController.stream;
+
+  /// Stream of uplink attempt reports (one per handled [SendBytesCommand]).
+  Stream<CommandResultEvent> get commandStream => _commandController.stream;
 
   SerialWorker._(this._isolate, ReceivePort receivePort) {
     // Listen for incoming events emitted by the background worker isolate
@@ -97,6 +101,9 @@ class SerialWorker {
       case ErrorEvent(:final message):
         // ignore: avoid_print
         print('[SerialWorker Error] $message');
+
+      case final CommandResultEvent commandEvent:
+        _commandController.add(commandEvent);
     }
   }
 
@@ -135,6 +142,7 @@ class SerialWorker {
     _packetController.close();
     _portsController.close();
     _linkStatsController.close();
+    _commandController.close();
     _isolate.kill(priority: Isolate.beforeNextEvent);
   }
 }

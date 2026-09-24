@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/app_config.dart';
 import '../../state/replay_controller.dart';
+import '../../state/telemetry_provider.dart';
 import '../../state/telemetry_store.dart';
 import '../../theme/app_colors.dart';
 import './brand_mark.dart';
@@ -277,8 +278,8 @@ class _NavMenu extends ConsumerWidget {
   }
 
   /// Clears the flight buffers: history buffer, dead reckoning, max altitude,
-  /// max speed/accel and the battery discharge average (all derived from the
-  /// history, so one reset covers everything).
+  /// max speed/accel, the battery discharge average (all derived from the
+  /// history, so one reset covers everything) and the operator command log.
   Future<void> _confirmReset(BuildContext context, WidgetRef ref) {
     return showDialog(
       context: context,
@@ -302,6 +303,7 @@ class _NavMenu extends ConsumerWidget {
               // error) when every tile flips to "waiting" at once.
               FocusManager.instance.primaryFocus?.unfocus();
               ref.read(telemetryStoreProvider.notifier).reset();
+              ref.read(commandLogProvider.notifier).clear();
               Navigator.of(dialogContext).pop();
             },
             child: const Text('Clear'),

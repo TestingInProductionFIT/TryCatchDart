@@ -189,7 +189,7 @@ Airframe flags (derived from FSM state):
 
 ### 3.3 Recording file format
 
-`io/recording_file.dart`: 108-byte header + chunk stream. Header (big-endian): magic `TCRC` u32, payloadLength u16 (=52), flags u16, start/end micros i64, packetCount u64, max baro/speed/accel f32, launch lat/lon i32 1e-7deg, launch MSL f32, launch name 48 B UTF-8 NUL-padded, CRC16 over bytes 0..103, reserved.
+`io/recording_file.dart`: 136-byte v2 header + telemetry chunk stream + command log. Header (big-endian): magic `TCR2` u32, payloadLength u16 (=52), flags u16, start/end micros i64, packetCount u64, max baro/speed/accel f32, launch lat/lon i32 1e-7deg, launch MSL f32, launch name 48 B UTF-8 NUL-padded, CRC16 over bytes 0..103, reserved, then a section directory (headerLength=136, version=2, telemetryByteLen u64, commandsOffset u64, commandCount u32, directory CRC over bytes 108..131). Command log: fixed 16-byte records (i64 tsUs + 4 raw uplink bytes + status + source). v1 `TCRC` files are rejected — convert with `dart run tool/migrate_recordings.dart`.
 
 **Launch site is mandatory.** `start()` requires a site (provisional header already carries it, so even crash-interrupted files are valid). `stop()` finalizes via `finalizeRecordingFile` (never throws; idempotent). No first-GPS-fix fallback — siteless files are rejected everywhere. Magic-less files are rejected. Chunks carry a 12-byte header (i64 µs + u32 len).
 

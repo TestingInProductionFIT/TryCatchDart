@@ -8,9 +8,11 @@ import 'recording_file.dart';
 
 /// Handles reading and decoding recording files.
 ///
-/// The file must open with a valid [RecordingHeader] whose framing matches
-/// [TelemetryFraming.payloadLength]. Files without a valid header yield no
-/// packets.
+/// The file must open with a valid v2 [RecordingHeader] whose framing
+/// matches [TelemetryFraming.payloadLength]. Files without a valid header
+/// (including v1 recordings) yield no packets. Only the header's telemetry
+/// section is decoded — the trailing command log is never fed to the
+/// telemetry parser (use [readRecordingCommands] for it).
 class FileParser {
   /// Reads framed binary data from [filePath] and yields parsed [TelemetryPacket]s.
   ///
@@ -23,15 +25,26 @@ class FileParser {
     try {
       final fileLength = await reader.length();
       if (fileLength < recordingHeaderLength) return;
-      final header =
+      final fileHeader =
           RecordingHeader.decode(await reader.read(recordingHeaderLength));
-      if (header == null ||
-          header.payloadLength != TelemetryFraming.payloadLength) {
+      if (fileHeader == null ||
+          fileHeader.payloadLength != TelemetryFraming.payloadLength) {
         return;
+      }
+      // Bound decoding to the telemetry section so the trailing command
+      // log is never mistaken for stream bytes. Provisional headers
+      // (telemetryByteLen == 0, no commands) decode to EOF as before.
+      var telemetryEnd = fileLength;
+      if (fileHeader.telemetryByteLen > 0) {
+        telemetryEnd = (recordingHeaderLength + fileHeader.telemetryByteLen)
+            .clamp(recordingHeaderLength, fileLength);
+      } else if (fileHeader.commandCount > 0) {
+        telemetryEnd = fileHeader.commandsOffset
+            .clamp(recordingHeaderLength, fileLength);
       }
       final parser = PacketParser();
 
-      while (await reader.position() < fileLength) {
+      while (await reader.position() < telemetryEnd) {
         // Read 12-byte header: Int64 timestamp (bytes 0-7), Uint32 length (bytes 8-11)
         final headerBytes = await reader.read(12);
         if (headerBytes.length < 12) break;

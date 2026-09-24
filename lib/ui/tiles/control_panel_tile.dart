@@ -61,7 +61,10 @@ class _ControlPanelWidgetState extends ConsumerState<ControlPanelTile> {
     }
 
     _timer?.cancel();
-    final ok = notifier.sendBytes(command.bytes);
+    final ok = notifier.sendBytes(
+      command.bytes,
+      source: CommandSource.controlPanel,
+    );
     setState(() {
       _armedCommandId = null;
       _sentCommandId = ok ? command.id : null;
