@@ -3,7 +3,9 @@ import 'dart:typed_data';
 
 import 'package:dead_reckoning/dead_reckoning.dart' show metresPerDegreeLat;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:trycatch/core/elevation_math.dart' show terrariumHeight;
 import 'package:trycatch/ui/tiles/shared/satellite_ground.dart';
+import 'package:trycatch/ui/tiles/shared/slippy_math.dart';
 import 'package:vector_math/vector_math_64.dart';
 
 void main() {

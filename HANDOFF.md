@@ -287,7 +287,7 @@ lib/
                      theme_mode_provider
   ui/tile_registry.dart  tile descriptors (UI composition, was state/)
   services/          flight_trim, prefs_keys, recording_repository,
-                     elevation_service (was state/), tile_fetch_service
+                     elevation_service (was state/)
    core/              pure logic (no Flutter/Riverpod):
                       dead_reckoning_adapter, ring_buffer, channel_health,
                       packet_rate_tracker, format, flight_events,

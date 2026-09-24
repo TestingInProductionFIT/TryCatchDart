@@ -50,22 +50,8 @@ abstract final class AppConfig {
   static const double tileMaxZoom = 19;
   static const int tileMaxNativeZoom = 19;
 
-  /// Minimum zoom level clamped for satellite patch fetches.
-  static const int satMinZoom = 10;
-
-  // ── Satellite 3D ground ──────────────────────────────────────────────────────
-
-  /// Target pixel resolution for the satellite patch at default zoom
-  /// (much denser than the screen — close-up chase cameras need sharp ground).
-  static const int satTargetPixels = 4096;
-
   // ── Layout tree ──────────────────────────────────────────────────────────────
-
-  /// Visual and hit-test thickness of split dividers (logical pixels).
-  static const double dividerWidth = 8;
-
-  /// Snap grab radius for divider drag (logical pixels).
-  static const double snapRadiusPx = 8;
+  // Divider thickness lives in `state/layout_tree.dart` (`dividerWidth`).
 
   // ── Window ───────────────────────────────────────────────────────────────────
 

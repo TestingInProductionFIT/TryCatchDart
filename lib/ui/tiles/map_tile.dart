@@ -9,6 +9,8 @@ import '../../state/telemetry_store.dart';
 import '../../theme/app_colors.dart';
 import '../components/tool_button.dart';
 import './shared/map_tiles.dart';
+import './shared/tile_io.dart'
+    show satelliteAttribution, streetAttribution;
 
 /// Flight map: launch site, GPS track + live fix, dead-reckoning track + live
 /// estimate. Tiles are fetched from Esri (internet required).

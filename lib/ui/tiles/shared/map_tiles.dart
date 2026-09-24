@@ -6,7 +6,9 @@ import 'package:flutter_map/flutter_map.dart';
 import '../../../core/app_config.dart';
 import '../../../state/launch_site_store.dart';
 import './offline_fallback_tiles.dart';
-import './satellite_ground.dart';
+import './satellite_ground.dart' show satTerrainTileUrls;
+import './slippy_math.dart'
+    show satMetresPerPixel, satTileX, satTileY;
 import './tile_io.dart'
     show
         esriTileUrlTemplate,
@@ -29,14 +31,6 @@ import './tile_io.dart'
 /// same cache around saved sites so the field map works offline.
 
 // ── URL builders (must match flutter_map's own template expansion) ──────────
-
-// Re-exported from tile_io for existing importers (map_widget, tests).
-export './tile_io.dart'
-    show
-        satelliteAttribution,
-        satelliteTileUrl,
-        streetAttribution,
-        streetTileUrl;
 
 // ── Layers ───────────────────────────────────────────────────────────────────
 

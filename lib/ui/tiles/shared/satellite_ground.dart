@@ -8,10 +8,11 @@ import 'package:flutter_map/flutter_map.dart'
     show BuiltInMapCachingProvider;
 import 'package:vector_math/vector_math_64.dart';
 
+import '../../../core/elevation_math.dart'
+    show demTileUrl, terrariumHeight;
 import '../../../theme/app_colors.dart';
 import './tile_io.dart';
 import './slippy_math.dart';
-export './slippy_math.dart';
 
 /// Bridges theme colors into `dart:ui` paint code.
 ui.Color _uiColor(ui.Color c) => ui.Color(c.toARGB32());
@@ -625,15 +626,8 @@ Future<SatelliteTerrain?> fetchSatelliteTerrain({
 }
 
 // ── Elevation (Terrarium DEM relief) ─────────────────────────────────────────
-
-/// AWS Terrain Tiles in Terrarium encoding, no key required. Same slippy
-/// tiling as the imagery, so [satTileX]/[satTileY] apply.
-String demTileUrl(int x, int y, int z) =>
-    'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/$z/$x/$y.png';
-
-/// Decodes one Terrarium pixel to metres above sea level. Pure.
-double terrariumHeight(int r, int g, int b) =>
-    r * 256.0 + g + b / 256.0 - 32768.0;
+// [demTileUrl]/[terrariumHeight] live in `core/elevation_math.dart` (single
+// source) alongside `elevation_service`.
 
 /// DEM zoom: z12 tiles are ~6.3 km wide at 50° latitude, so a 5×5 window
 /// covers the whole 20 km terrain with margin.

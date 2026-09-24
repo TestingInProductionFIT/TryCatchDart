@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:trycatch/ui/tiles/flight_3d_satellite_tile.dart';
 import 'package:trycatch/ui/tiles/shared/flight_3d_common.dart';
 import 'package:trycatch/ui/tiles/shared/satellite_ground.dart';
+import 'package:trycatch/ui/tiles/shared/slippy_math.dart';
 import 'package:vector_math/vector_math_64.dart' hide Colors;
 
 /// Headless render tests for the 3D satellite drape: synthetic imagery +

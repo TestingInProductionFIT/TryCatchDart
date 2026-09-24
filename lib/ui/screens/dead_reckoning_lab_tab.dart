@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:serial/serial.dart' show TelemetryFrame;
 
 import '../../core/dead_reckoning_adapter.dart';
+import '../../core/elevation_math.dart';
 import '../../core/format.dart';
 import '../../core/path_utils.dart';
 import '../../services/flight_trim.dart';

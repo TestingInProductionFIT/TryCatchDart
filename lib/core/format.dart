@@ -55,10 +55,6 @@ String formatDistanceM(double metres) => metres >= 1000
     ? '${(metres / 1000).toStringAsFixed(2)} km'
     : '${metres.toStringAsFixed(0)} m';
 
-/// Metres → `850 m from launch site` / `1.24 km from launch site`.
-String formatDistanceFrom(double metres, String place) =>
-    '${formatDistanceM(metres)} from $place';
-
 /// WGS84 pair with degree marks (`50.07550°, 14.43780°`).
 String formatLatLon(double lat, double lon) =>
     '${lat.toStringAsFixed(5)}°, ${lon.toStringAsFixed(5)}°';

@@ -15,6 +15,8 @@ import './shared/flight_3d_shell.dart';
 import './shared/orbit_camera.dart';
 import './shared/rocket_mesh.dart';
 import './shared/satellite_ground.dart';
+import './shared/slippy_math.dart'
+    show ClipVert, clipTriangleNear, drapeClipEps;
 import './shared/tile_io.dart';
 
 /// 3D flight path over satellite imagery: the same scene, cameras and rocket

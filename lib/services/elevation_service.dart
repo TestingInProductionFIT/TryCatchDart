@@ -16,9 +16,6 @@ import '../core/elevation_math.dart'
         elevationTileY,
         terrariumHeight;
 
-export '../core/elevation_math.dart'
-    show elevationTileKey, elevationTileCenter;
-
 /// Lightweight MSL elevation look-up using the same AWS Terrarium tiles as
 /// the 3D satellite view (zoom 12, ≈24 m/px at 50° lat — well within the
 /// precision needed for a dead-reckoning ground-collision clamp).
@@ -35,21 +32,6 @@ export '../core/elevation_math.dart'
 ///
 /// Returns `null` on any failure; the caller falls back to the GPS-minimum
 /// heuristic.
-
-// ── Tile URL + slippy math live in core/elevation_math.dart (single source) ─
-
-int _tileX(double lon, int zoom) => elevationTileX(lon, zoom);
-
-int _tileY(double lat, int zoom) => elevationTileY(lat, zoom);
-
-/// Returns the sub-tile pixel column [0, 255] for [lon] within tile [tx].
-int _pixelX(double lon, int zoom, int tx) => elevationPixelX(lon, zoom, tx);
-
-/// Returns the sub-tile pixel row [0, 255] for [lat] within tile [ty].
-int _pixelY(double lat, int zoom, int ty) => elevationPixelY(lat, zoom, ty);
-
-/// Decodes one Terrarium pixel to metres above sea level.
-double _terrariumHeight(int r, int g, int b) => terrariumHeight(r, g, b);
 
 // ── In-memory tile cache ─────────────────────────────────────────────────────
 
@@ -144,8 +126,8 @@ Future<Uint8List?> _loadTilePixels(int tx, int ty) async {
 /// resolve.
 Future<double?> elevationMsl(double lat, double lon) async {
   const zoom = 12;
-  final tx = _tileX(lon, zoom);
-  final ty = _tileY(lat, zoom);
+  final tx = elevationTileX(lon, zoom);
+  final ty = elevationTileY(lat, zoom);
   final key = '$zoom/$tx/$ty';
 
   var future = _pixelCache[key];
@@ -163,11 +145,11 @@ Future<double?> elevationMsl(double lat, double lon) async {
   final pixels = await future;
   if (pixels == null) return null;
 
-  final px = _pixelX(lon, zoom, tx);
-  final py = _pixelY(lat, zoom, ty);
+  final px = elevationPixelX(lon, zoom, tx);
+  final py = elevationPixelY(lat, zoom, ty);
 
   final i = (py * 256 + px) * 4;
   if (i + 2 >= pixels.length) return null;
 
-  return _terrariumHeight(pixels[i], pixels[i + 1], pixels[i + 2]);
+  return terrariumHeight(pixels[i], pixels[i + 1], pixels[i + 2]);
 }

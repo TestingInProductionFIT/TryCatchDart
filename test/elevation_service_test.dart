@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:trycatch/services/elevation_service.dart';
+import 'package:trycatch/core/elevation_math.dart';
 
 void main() {
   test('tile center round-trips through its own key', () {

@@ -7,6 +7,7 @@ import 'package:dead_reckoning/dead_reckoning.dart';
 
 import '../core/app_config.dart';
 import '../core/dead_reckoning_adapter.dart';
+import '../core/elevation_math.dart';
 import '../core/flight_stats.dart' as stats;
 import '../core/ring_buffer.dart';
 import '../services/elevation_service.dart';
