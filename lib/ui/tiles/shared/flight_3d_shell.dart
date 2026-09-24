@@ -16,18 +16,19 @@ import './trackpad_zoom.dart' show scrollZoomFactor;
 /// ticker for the orbit-field camera (shared angles, so both views follow).
 ///
 /// The onboard view is the exception to the shared look direction: its lens
-/// is strapped to the airframe (side view, nose up, following pitch/yaw/
-/// roll) at a fixed zoom, and dragging only spins the gaze around the
-/// rocket's long axis via [onboardAzimuthDeg] — no tilt, no zoom. Neither
-/// shared orbiting moves the onboard lens nor onboard dragging rotates the
-/// other views.
+/// is strapped to the airframe (side view, nose up, fixed slight down-tilt,
+/// following pitch/yaw/roll) at a fixed zoom, and dragging only spins the
+/// gaze around the rocket's long axis via [onboardAzimuthDeg] — no user
+/// tilt, no zoom. Neither shared orbiting moves the onboard lens nor
+/// onboard dragging rotates the other views.
 mixin Flight3dShellState<T extends ConsumerStatefulWidget> on ConsumerState<T> {
   FlightCameraMode mode = FlightCameraMode.chase;
   double zoom = 1.0;
 
   /// Onboard spin (degrees) around the rocket's long axis from the pure
-  /// side view, per tile. Zero means exactly sideways, level with the
-  /// airframe. The lens never tilts, so there is no elevation counterpart.
+  /// side view, per tile. Zero means exactly sideways, tilted down by
+  /// [onboardDownTiltDeg]. The lens has a fixed down-tilt, so there is no
+  /// user elevation counterpart.
   double onboardAzimuthDeg = 0.0;
 
   /// Per-tile easing for the strap-down onboard attitude (jitter melts,
@@ -83,9 +84,9 @@ mixin Flight3dShellState<T extends ConsumerStatefulWidget> on ConsumerState<T> {
 
   void orbitBy(Offset delta) {
     // Onboard only spins around the rocket's long axis (see above): the
-    // vertical drag component is dropped, so the gaze can never tilt off
-    // the airframe plane. Every other mode orbits the shared angles so all
-    // views rotate together.
+    // vertical drag component is dropped, so the user can never tilt off
+    // the fixed down-tilt plane. Every other mode orbits the shared angles
+    // so all views rotate together.
     if (mode == FlightCameraMode.onboard) {
       setState(() {
         onboardAzimuthDeg = (onboardAzimuthDeg - delta.dx * 0.4) % 360;

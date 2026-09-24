@@ -25,6 +25,10 @@ import './flight_scene_builder.dart';
 /// Vertical field of view (radians) shared by the flight cameras.
 const double flightFovY = 50 * math.pi / 180;
 
+/// Fixed downward tilt (degrees) of the onboard strap-down lens: the gaze
+/// sits slightly below the airframe plane so a touch more ground shows.
+const double onboardDownTiltDeg = 8.0;
+
 /// Computed camera for one frame.
 class FlightCamera {
   final Matrix4 view;
@@ -70,16 +74,18 @@ FlightCamera computeFlightCamera({
 
   if (mode == FlightCameraMode.onboard) {
     // Strap-down side camera: the lens rides at the rocket, looks out the
-    // airframe's right side and keeps the nose as "up", so the view follows
-    // the full attitude — yaw swings the horizon, pitch tilts it, roll
-    // spins it. Both vectors come from the same orientation matrix the
-    // mesh paints with, so lens and airframe can never disagree.
+    // airframe's right side (tilted down by [onboardDownTiltDeg]) and keeps
+    // the nose as "up", so the view follows the full attitude — yaw swings
+    // the horizon, pitch tilts it, roll spins it. Both vectors come from
+    // the same orientation matrix the mesh paints with, so lens and
+    // airframe can never disagree.
     // [azimuthDeg] carries the tile-local spin around the nose axis
-    // (0 = exactly sideways, level with the airframe); [elevationDeg] is
-    // pinned at 0 by the shell, so the gaze never tilts off the airframe
-    // plane. The shared orbit angles are deliberately ignored here, so
-    // other views rotating never moves this lens — and the zoom is fixed
-    // (a strap-down camera has no lens to zoom).
+    // (0 = exactly sideways, tilted down off the airframe plane);
+    // [elevationDeg] is pinned at 0 by the shell, so only the fixed
+    // down-tilt takes the gaze off the airframe plane. The shared orbit
+    // angles are deliberately ignored here, so other views rotating never
+    // moves this lens — and the zoom is fixed (a strap-down camera has no
+    // lens to zoom).
     var eye = scene.rocketPos;
     if (eye.y < 2.0) eye = Vector3(eye.x, 2.0, eye.z);
     final orientation = RocketMesh.orientationMatrix(
@@ -96,12 +102,15 @@ FlightCamera computeFlightCamera({
     var upVec = column(1);
     final lookDir = column(0);
     // Spin around the nose axis only — the shell pins the elevation at 0,
-    // so the gaze stays in the airframe plane (the tilt path below only
-    // runs for direct callers passing a nonzero elevation).
+    // so the gaze keeps its fixed down-tilt off the airframe plane (the
+    // tilt path below only runs further for direct callers passing a
+    // nonzero elevation).
     lookDir.applyAxisAngle(upVec, -radians(azimuthDeg));
-    // Capped like the orbit cameras so the gaze stays off the up axis and
-    // the view matrix stays well-conditioned.
-    final lookEl = radians(elevationDeg.clamp(-15.0, 80.0));
+    // Fixed down-tilt plus any caller elevation, capped like the orbit
+    // cameras so the gaze stays off the up axis and the view matrix stays
+    // well-conditioned.
+    final lookEl =
+        radians((elevationDeg - onboardDownTiltDeg).clamp(-15.0, 80.0));
     final elAxis = lookDir.cross(upVec);
     if (elAxis.length > 1e-6) {
       lookDir.applyAxisAngle(elAxis.normalized(), lookEl);
@@ -334,7 +343,7 @@ class OnboardAttitudeSmoother {
 /// the frame periphery, painted last so it reads as glass in front of the
 /// scene. (The gradient radius is a fraction of the shortest side, so stop
 /// 1.0 lands past the corners and they always reach full [strength].)
-void paintVignette(Canvas canvas, Size size, {double strength = 0.65}) {
+void paintVignette(Canvas canvas, Size size, {double strength = 0.85}) {
   canvas.drawRect(
     Offset.zero & size,
     Paint()

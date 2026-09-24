@@ -608,16 +608,19 @@ void main() {
         (cam.target - cam.eye).normalized();
 
     test('level flight looks out the side, yaw swings it', () {
+      final tilt = onboardDownTiltDeg * math.pi / 180;
+      final ch = math.cos(tilt);
+      final sh = math.sin(tilt);
       final east = gaze(onboard(sceneWith(pos: Vector3(0, 100, 0))));
-      expect(east.x, closeTo(1, 1e-9));
-      expect(east.y, closeTo(0, 1e-9));
+      expect(east.x, closeTo(ch, 1e-9));
+      expect(east.y, closeTo(-sh, 1e-9));
       expect(east.z, closeTo(0, 1e-9));
 
       final south = gaze(onboard(
           sceneWith(pos: Vector3(0, 100, 0), yawDeg: 90)));
       expect(south.x, closeTo(0, 1e-9));
-      expect(south.y, closeTo(0, 1e-9));
-      expect(south.z, closeTo(1, 1e-9));
+      expect(south.y, closeTo(-sh, 1e-9));
+      expect(south.z, closeTo(ch, 1e-9));
     });
 
     test('lens rides at the rocket, zoom drives the lens not the distance',
@@ -634,12 +637,14 @@ void main() {
     test('roll spins the gaze around the nose', () {
       // Vertical rocket, rolled 90°: the side gaze swings from east onto
       // the nose axis plane (here north) while the nose itself stays up.
+      // The fixed down-tilt rides along, dipping the gaze below level.
+      final tilt = onboardDownTiltDeg * math.pi / 180;
       final cam = onboard(
           sceneWith(pos: Vector3(0, 100, 0), rollDeg: 90));
       final look = gaze(cam);
       expect(look.x, closeTo(0, 1e-6));
-      expect(look.y, closeTo(0, 1e-6));
-      expect(look.z, closeTo(-1, 1e-6));
+      expect(look.y, closeTo(-math.sin(tilt), 1e-6));
+      expect(look.z, closeTo(-math.cos(tilt), 1e-6));
     });
 
     test('pitched-over rocket tilts the horizon (nose stays up)', () {
@@ -668,13 +673,18 @@ void main() {
     test('local look-around matches the old yaw-relative law in level flight',
         () {
       // Level flight keeps world-up as the strapped up, so an azimuth
-      // offset must equal the compass yaw (yaw + 90 + offset) exactly.
+      // offset must equal the compass yaw (yaw + 90 + offset) exactly,
+      // scaled by the fixed down-tilt (horizontal ring shrinks by cos,
+      // vertical dips by -sin).
+      final tilt = onboardDownTiltDeg * math.pi / 180;
+      final ch = math.cos(tilt);
+      final sh = math.sin(tilt);
       final cam = onboard(sceneWith(pos: Vector3(0, 100, 0)), az: 20);
       final look = gaze(cam);
       final yawRad = (90 + 20) * math.pi / 180;
-      expect(look.x, closeTo(math.sin(yawRad), 1e-9));
-      expect(look.y, closeTo(0, 1e-9));
-      expect(look.z, closeTo(-math.cos(yawRad), 1e-9));
+      expect(look.x, closeTo(ch * math.sin(yawRad), 1e-9));
+      expect(look.y, closeTo(-sh, 1e-9));
+      expect(look.z, closeTo(-ch * math.cos(yawRad), 1e-9));
     });
   });
 

@@ -193,8 +193,8 @@ class _Flight3dSatelliteWidgetState
         scene: renderScene,
         mode: mode,
         // Onboard spins locally around the long axis (strapped to the full
-        // attitude, never the shared orbit angles, never tilting); every
-        // other mode shares one look direction.
+        // attitude, never the shared orbit angles, fixed down-tilt only);
+        // every other mode shares one look direction.
         azimuthDeg: mode == FlightCameraMode.onboard
             ? onboardAzimuthDeg
             : camera.azimuthDeg,
