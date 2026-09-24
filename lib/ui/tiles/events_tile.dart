@@ -171,19 +171,14 @@ class _EventRow extends ConsumerWidget {
               ],
             ),
           ),
-          // Display-only clock — excluded from semantics so the ticking
-          // live ages don't churn the Windows accessibility bridge. (The
-          // replay row itself stays a button with the event name.)
-          ExcludeSemantics(
-            child: Text(
-              time,
-              maxLines: 1,
-              style: AppText.mono.copyWith(
-                fontSize: 11.5,
-                fontWeight: FontWeight.w600,
-                fontFeatures: const [FontFeature.tabularFigures()],
-                color: AppColors.mutedForeground,
-              ),
+          Text(
+            time,
+            maxLines: 1,
+            style: AppText.mono.copyWith(
+              fontSize: 11.5,
+              fontWeight: FontWeight.w600,
+              fontFeatures: const [FontFeature.tabularFigures()],
+              color: AppColors.mutedForeground,
             ),
           ),
         ],
@@ -206,8 +201,8 @@ class _EventRow extends ConsumerWidget {
 }
 
 /// Marker dot for a log row. Static live; during a replay a leaf consumer
-/// on the playhead dims events still ahead, so the row (and its tooltip
-/// graft) never rebuilds at the ticker rate.
+/// on the playhead dims events still ahead, so the row (and its tooltip)
+/// never rebuilds at the ticker rate.
 class _TileDot extends ConsumerWidget {
   final FlightEvent event;
   final bool replaying;

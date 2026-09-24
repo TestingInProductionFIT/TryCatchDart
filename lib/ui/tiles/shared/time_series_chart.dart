@@ -481,12 +481,7 @@ class _TimeSeriesChartState extends ConsumerState<TimeSeriesChart> {
         ? ((nowMs - originMs) / 1000).clamp(minX, maxX).toDouble()
         : null;
 
-    // Display-only plot repainting on a 200 ms ticker (plus live data):
-    // excluded from semantics so axis labels don't churn the Windows
-    // accessibility bridge (see CenteredValue). The chart has no
-    // interactive elements; tile headers stay readable.
-    return ExcludeSemantics(
-      child: LayoutBuilder(
+    return LayoutBuilder(
         builder: (context, constraints) {
           // Short tiles give the plot priority: the legend collapses away
           // below ~120 px so the line keeps room to breathe.
@@ -644,8 +639,7 @@ class _TimeSeriesChartState extends ConsumerState<TimeSeriesChart> {
             ],
           );
         },
-      ),
-    );
+      );
   }
 
   /// Buckets [frames] by [bucketOf], keeping each bucket's per-series

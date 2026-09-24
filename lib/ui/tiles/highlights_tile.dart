@@ -236,20 +236,16 @@ class _Cell extends StatelessWidget {
               AppText.microLabel.copyWith(fontSize: 9, letterSpacing: 1.2),
         ),
         const SizedBox(height: 2),
-        // Display-only live readout — excluded from semantics to spare the
-        // Windows accessibility bridge.
-        ExcludeSemantics(
-          child: Text(
-            value,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            textAlign: TextAlign.center,
-            style: AppText.mono.copyWith(
-              fontSize: 15,
-              fontWeight: FontWeight.w800,
-              fontFeatures: const [FontFeature.tabularFigures()],
-              color: color,
-            ),
+        Text(
+          value,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          textAlign: TextAlign.center,
+          style: AppText.mono.copyWith(
+            fontSize: 15,
+            fontWeight: FontWeight.w800,
+            fontFeatures: const [FontFeature.tabularFigures()],
+            color: color,
           ),
         ),
         if (sub != null)

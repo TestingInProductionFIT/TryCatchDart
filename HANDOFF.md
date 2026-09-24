@@ -27,7 +27,7 @@ Cross-area changes require explicit coordination (see §1.4).
 | **Map tile** | `lib/ui/tiles/map_tile.dart`, `lib/ui/tiles/shared/tile_io.dart`, `lib/ui/tiles/shared/offline_fallback_tiles.dart` | `map_track_test`, `map_tiles_test`, `map_follow_regression_test` |
 | **3D / satellite tile** | `lib/ui/tiles/flight_3d_*.dart`, `lib/ui/tiles/shared/flight_3d_*`, `lib/ui/tiles/shared/satellite_ground.dart` | `flight_3d_scene_test`, `rocket_mesh_test`, `rocket_centering_test`, `sat_render_test`, `satellite_ground_test` |
 | **Charts / tiles** | `lib/ui/tiles/` (non-3D, non-map) | `chart_touch_test`, `time_series_decimation_test`, `scroll_zoom_test`, `dead_reckoning_tile_test`, `events_tile_test`, `trim_chart_test` |
-| **UI chrome** | `lib/ui/screens/`, `lib/ui/components/` | `top_bar_theme_test`, `brand_mark_theme_test`, `brand_navigates_home_test`, `link_stats_button_test`, `serial_controls_overflow_test`, `channel_health_test`, `channel_health_edit_mode_test`, `grid_render_test`, `tab_tooltip_semantics_test`, `flight_trim_test` |
+| **UI chrome** | `lib/ui/screens/`, `lib/ui/components/` | `top_bar_theme_test`, `brand_mark_theme_test`, `brand_navigates_home_test`, `link_stats_button_test`, `serial_controls_overflow_test`, `channel_health_test`, `channel_health_edit_mode_test`, `grid_render_test`, `flight_trim_test` |
 | **Theme** | `lib/theme/` | `top_bar_theme_test`, `brand_mark_theme_test` |
 | **Linux native shell** | `linux/runner/`, `linux/CMakeLists.txt`, `packaging/linux/` | (manual) |
 
@@ -106,7 +106,7 @@ If your task genuinely requires touching another agent's area:
 - Flutter SDK ^3.13, installed at `C:\Users\wwwho\flutter`. Desktop shells for Windows, Linux, macOS.
 - Always run with `--release` for evaluation — debug builds are janky and misrepresent performance.
 - `flutter analyze` + `flutter test` are the only CI gates. Both must be green before any handoff.
-- Current passing test count: **446** (396 root `flutter test` + 50 `packages/dead_reckoning` `dart test` — update this when you finish).
+- Current passing test count: **445** (395 root `flutter test` + 50 `packages/dead_reckoning` `dart test` — update this when you finish).
 
 ### 2.2 Dependencies (key constraints)
 
@@ -143,10 +143,16 @@ Map zooms with the wheel velocity, cursor-anchored via `focusedZoomCenter`, skip
 
 ### 2.6 Accessibility / AXTree
 
-Windows desktop semantics are always on. Display-only readouts that repaint at telemetry rate must carry `ExcludeSemantics` to prevent AXTree spam. Policy:
-- **ExcludeSemantics**: live text readouts inside `CenteredValue`, `ChartValueHeader`, `TimeSeriesChart`, channel charts, 3D readout, packet-rate + rec-timer + playhead clocks, battery discharge line, map legend/attribution.
-- **Full semantics**: all interactive controls (buttons, chips, sliders, dropdowns, menus, fields, copy buttons).
-- Adjacent bare tooltip anchors in one scrollable item merge in the AXTree (flutter/flutter#182444). Fix: `Semantics(container: true)` per anchor. Already applied to FSM/control grids. Every other list tooltip is button/InkWell-backed (own node) or single-per-item.
+Global opt-out (user decision: the app doesn't need to be screen-reader
+accessible). `MaterialApp.builder` in `lib/main.dart` wraps everything in a
+root `ExcludeSemantics`, so the Windows embedder (semantics always on,
+no reader running) gets an empty AXTree and the
+`accessibility_bridge.cc(114) Failed to update ui::AXTree` spam stops at
+the source. Visual `Tooltip` hover is unaffected. All former per-widget
+`ExcludeSemantics` / `Semantics(container: true)` mitigations were deleted
+as obsolete; do not reintroduce them. Leaf-consumer provider splits in
+`playback_bar.dart` remain as pure rebuild-avoidance (perf), not AXTree
+mitigations.
 
 ### 2.7 Theme
 
@@ -471,6 +477,8 @@ Stat-first scan (fixed v3 header: site/stats/connector) + per-card concurrent pr
 - Stepper rebuild (user: long page tried and disliked — make it visual, state-reflecting, hierarchical): the page is now a left step rail (Flight → Outages → Results → Tune) with live node states (numbered ring current, filled check done, warning stale, faint locked/upcoming) plus one-line statuses, hairline connectors, tap-to-jump on unlocked steps; the right pane shows one step with headline + Back/Continue flow. Running auto-advances to Results, applying lands on Tune; config-signature stale detection disables Apply (replaced by Run again) with rail + body warnings; loading a new flight clears results; vertical errors now scored on within-phase masks only. Tests caught a real 4.5 px dropdown overflow (fixed by shortening items + label line below) and now assert rail mirroring (6 tests: rail states, guided flow, stale gate, discard, manual ×2). `flutter analyze` clean, **348 green root + 50 green package = 398 total**.
 - Connector refactor (user: split internal representation from parsing; plug-n-play connectors in the shared package; per-connector FSM/commands/events; connector toggle in settings; recordings stamp the connector; migrate old files, drop old support): current 52 B packet shape is now the internal `TelemetryFrame` (SI units) emitted by `packages/serial` and consumed by the UI — raw bytes never leave the package. New `packages/serial/lib/connectors/`: `connector.dart` (`TelemetryConnector`: id/displayName/description, `createParser()` bytestream→frames, states with label/ARGB color/airframe flags/pipeline flag, commands + state-request bytes + describe, event defs, `FieldCapabilities`), `registry.dart` (`allConnectors`, `connectorById`, `defaultConnectorId='mock'`), `mock_connector.dart` (the old format as `mock`: full frame, 9 states, 5 commands + set-state, 4 nominal events). Worker emits `TelemetryFrame` (`PacketReceivedEvent.frame`, `frameStream`); `ConnectCommand`/`StartRecordingCommand` carry `connectorId`, new `SetConnectorCommand`; `SerialWorkerStatus.connectorId`. Recordings are v3 (`TCR3`, 168 B, connector id 32 B @136, directory CRC over 108..131+134..167): `Recorder.start`/`finalizeRecordingFile` require `connectorId`; `FileParser.parseFile` takes a connector; `RecordingRepository.loadReplay` resolves the stamp (unknown → null); replay auto-selects the recording's connector in-memory and restores on stop (`ReplayState.connectorId`); trim preserves the stamp; `buildChannelProfile` takes the connector. App: `connector_provider.dart` (`activeConnectorIdProvider` persisted `trycatch.connector_id` + `activeConnectorProvider`), settings CONNECTOR card (RadioGroup, locked during replay), `SerialConfigNotifier.setConnector` (persist + worker switch; store resets itself on id change), `TelemetryStore.ingest/ingestFrames` take frames, `detectFlightEvents` takes the connector's event table (`FlightEvent` carries label/transitionLabel + nullable style type with flag fallback), FSM tile/control panel/commands tile/3D/nosecone resolve via the active connector, capability gates (`ConnectorGate.unsupportedPlaceholder` → `NotProvidedByConnector`) on altitude/velocity/accel/battery/hall/stats/highlights/max-alt/FSM/nosecone/events/dead-reckoning tiles (map/3D degrade gracefully via site/pad fallback, ungated). `tool/migrate_recordings_v3.dart` replaced the v1→v2 tool; all 8 on-disk recordings migrated (verified: 4138/26214/… frames match header counts, 13-command log intact, `.v2.bak` backups). Tests: new `connector_test` (6), connector-events cases, v3 header cases (v2 rejection, corrupt connector id), all suites updated to frames/connector params. `flutter analyze` clean, **396 green root + 50 green package = 446 total**. Known follow-up: dead-reckoning lab phase names (`dead_reckoning_lab_masks.dart`) still assume the MOCK flight profile.
 
+- AXTree global opt-out (user: console spam, no screen reader needed, drop per-component overrides if obsolete): root `ExcludeSemantics` in `MaterialApp.builder` (`lib/main.dart`) publishes an empty AXTree, silencing `accessibility_bridge.cc(114)` at the source; visual tooltips unaffected. Deleted all per-widget `ExcludeSemantics` (CenteredValue, ChartValueHeader, TimeSeriesChart, channel charts, packet-rate, link-stats, rec-timer, playhead clock, battery discharge, map attribution/legend, PositionReadout, highlights, events/commands clocks, FSM compact label, lab preview) + all `Semantics(container:true)` (playback buttons, FSM/control grids) + `test/tab_tooltip_semantics_test.dart`; scrubbed stale AXTree/182444 comments (kept leaf-consumer splits as perf, kept reset unfocus). `flutter analyze` clean, **395 green root + 50 green package = 445 total**.
+
 ---
 
 ## Part 9 — Design Decisions
@@ -481,4 +489,4 @@ Stat-first scan (fixed v3 header: site/stats/connector) + per-card concurrent pr
 - Debug builds are janky — evaluate with `flutter run -d <os> --release`.
 - **Do not start the app yourself.** Ask the user for screenshots/descriptions.
 - FS-backed screen widget tests are impossible: `initState` always runs in the fake-async zone where `path_provider` + `Directory.list` stall permanently.
-- AXTree quirk: on mass tree churn (e.g. RESET), the Windows accessibility bridge can spam even with `ExcludeSemantics`. Suspect hover+rebuild overlay dynamics or teardown races; check whether Narrator/a screen reader is running.
+- AXTree spam (Windows `accessibility_bridge.cc(114) Failed to update ui::AXTree`): fixed by global opt-out — root `ExcludeSemantics` in `MaterialApp.builder` (`lib/main.dart`), per-widget mitigations deleted. No Narrator/screen reader in use; app intentionally exposes no semantics.

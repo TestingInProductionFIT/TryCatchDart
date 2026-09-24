@@ -299,8 +299,7 @@ class _NavMenu extends ConsumerWidget {
                 backgroundColor: AppColors.destructive),
             onPressed: () {
               // Drop focus first: yanking a focused subtree out from under
-              // the engine trips the Windows accessibility bridge (AXTree
-              // error) when every tile flips to "waiting" at once.
+              // the engine while every tile flips to "waiting" at once.
               FocusManager.instance.primaryFocus?.unfocus();
               ref.read(telemetryStoreProvider.notifier).reset();
               ref.read(commandLogProvider.notifier).clear();

@@ -62,51 +62,42 @@ class PositionReadout extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        // Display-only live readout — excluded from semantics to spare the
-        // Windows accessibility bridge.
-        ExcludeSemantics(
-          child: Text(
-            coords,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            textAlign: TextAlign.center,
-            style: AppText.mono.copyWith(
-              fontSize: 18,
-              fontWeight: FontWeight.w800,
-              fontFeatures: const [FontFeature.tabularFigures()],
-              color: AppColors.foreground,
-            ),
+        Text(
+          coords,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          textAlign: TextAlign.center,
+          style: AppText.mono.copyWith(
+            fontSize: 18,
+            fontWeight: FontWeight.w800,
+            fontFeatures: const [FontFeature.tabularFigures()],
+            color: AppColors.foreground,
           ),
         ),
         if (line.isNotEmpty) ...[
           const SizedBox(height: 4),
-          // Display-only live readout (10 Hz) — no semantics traffic.
-          ExcludeSemantics(
-            child: _detailLine(line, lineTip),
-          ),
+          _detailLine(line, lineTip),
         ],
         if (footer != null) ...[
           const SizedBox(height: 2),
-          ExcludeSemantics(
-            child: footer!.tooltip == null
-                ? Text(
+          footer!.tooltip == null
+              ? Text(
+                  footer!.text,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: _lineStyle,
+                )
+              : Tooltip(
+                  message: footer!.tooltip!,
+                  child: Text(
                     footer!.text,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     textAlign: TextAlign.center,
                     style: _lineStyle,
-                  )
-                : Tooltip(
-                    message: footer!.tooltip!,
-                    child: Text(
-                      footer!.text,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.center,
-                      style: _lineStyle,
-                    ),
                   ),
-          ),
+                ),
         ],
       ],
     );

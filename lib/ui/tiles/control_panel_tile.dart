@@ -249,18 +249,10 @@ class _CommandTile extends StatelessWidget {
     final withOpacity =
         enabled ? content : Opacity(opacity: 0.45, child: content);
 
-    // Own semantics container per tile: adjacent Tooltips inside this
-    // GridView trip an upstream Windows AXTree defect (flutter/flutter
-    // #182444 — the overlay graft identifier gets absorbed into a
-    // neighbour's node and the engine rejects the whole update). The
-    // container keeps each anchor's config on its own node.
-    return Semantics(
-      container: true,
-      child: Tooltip(
-        message: enabled ? command.description : 'Connect first',
-        waitDuration: const Duration(milliseconds: 500),
-        child: withOpacity,
-      ),
+    return Tooltip(
+      message: enabled ? command.description : 'Connect first',
+      waitDuration: const Duration(milliseconds: 500),
+      child: withOpacity,
     );
   }
 }

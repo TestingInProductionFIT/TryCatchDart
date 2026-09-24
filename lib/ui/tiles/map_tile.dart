@@ -146,8 +146,7 @@ class _MapWidgetState extends ConsumerState<MapTile> {
                   _satellite ? _satelliteTiles : _streetTiles,
                   const _TrackPolylines(),
                   // Static site marker: hoisted out of the telemetry-driven
-                  // overlays so its Tooltip/semantics node doesn't churn at
-                  // telemetry rate.
+                  // overlays so its Tooltip isn't rebuilt at telemetry rate.
                   if (site != null)
                     MarkerLayer(
                       markers: [
@@ -201,18 +200,14 @@ class _MapWidgetState extends ConsumerState<MapTile> {
             Positioned(
               right: 4,
               bottom: 2,
-              child: ExcludeSemantics(
-                child: Text(
-                  _satellite ? satelliteAttribution : streetAttribution,
-                  style: TextStyle(
-                    fontSize: 9,
-                    color: Colors.black.withValues(alpha: 0.45),
-                  ),
+              child: Text(
+                _satellite ? satelliteAttribution : streetAttribution,
+                style: TextStyle(
+                  fontSize: 9,
+                  color: Colors.black.withValues(alpha: 0.45),
                 ),
               ),
             ),
-            // Track legend (static key — excluded from semantics; the tile
-            // rebuilds ~10 Hz and the bridge doesn't need the churn).
             if (constraints.maxHeight >= 170 && constraints.maxWidth >= 220)
               const _Legend(),
           ],
@@ -457,14 +452,13 @@ class _Legend extends ConsumerWidget {
     return Positioned(
       left: 8,
       bottom: 8,
-      child: ExcludeSemantics(
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-          decoration: BoxDecoration(
-            color: AppColors.card.withValues(alpha: 0.92),
-            borderRadius: BorderRadius.circular(AppDimens.radiusSmall),
-            border: Border.all(color: AppColors.border),
-          ),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+        decoration: BoxDecoration(
+          color: AppColors.card.withValues(alpha: 0.92),
+          borderRadius: BorderRadius.circular(AppDimens.radiusSmall),
+          border: Border.all(color: AppColors.border),
+        ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
@@ -484,7 +478,6 @@ class _Legend extends ConsumerWidget {
               ],
             ],
           ),
-        ),
       ),
     );
   }

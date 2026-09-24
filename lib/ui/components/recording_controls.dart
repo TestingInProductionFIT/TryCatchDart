@@ -80,15 +80,12 @@ class _RecordingControlsState extends ConsumerState<RecordingControls> {
             children: [
               const _RecordingDot(),
               const SizedBox(width: 6),
-              // Live timer (repaints 2 Hz) — display only.
-              ExcludeSemantics(
-                child: Text(
-                  _elapsed(),
-                  style: AppText.mono.copyWith(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w700,
-                    fontFeatures: const [FontFeature.tabularFigures()],
-                  ),
+              Text(
+                _elapsed(),
+                style: AppText.mono.copyWith(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
+                  fontFeatures: const [FontFeature.tabularFigures()],
                 ),
               ),
             ],

@@ -78,19 +78,15 @@ class _PacketRateIndicatorState extends ConsumerState<PacketRateIndicator> {
           ),
           const SizedBox(width: 7),
           Flexible(
-            // Live rate text (repaints 4 Hz) — display only, excluded from
-            // semantics to spare the Windows accessibility bridge.
-            child: ExcludeSemantics(
-              child: Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: AppText.monoValue.copyWith(
-                  fontSize: 12.5,
-                  color: timedOut
-                      ? AppColors.mutedForeground
-                      : AppColors.foreground,
-                ),
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: AppText.monoValue.copyWith(
+                fontSize: 12.5,
+                color: timedOut
+                    ? AppColors.mutedForeground
+                    : AppColors.foreground,
               ),
             ),
           ),

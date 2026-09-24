@@ -44,6 +44,13 @@ class AppPalette {
 
   final Color fsmLanded;
   final Color fsmParachute;
+  final Color fsmIdle;
+  final Color fsmArmed;
+  final Color fsmAscent;
+  final Color fsmApogee;
+  final Color fsmDebugUnlocked;
+  final Color fsmDebugLocked;
+  final Color fsmUnknown;
 
   const AppPalette({
     required this.background,
@@ -75,6 +82,13 @@ class AppPalette {
     required this.seriesDeadReckoning,
     required this.fsmLanded,
     required this.fsmParachute,
+    required this.fsmIdle,
+    required this.fsmArmed,
+    required this.fsmAscent,
+    required this.fsmApogee,
+    required this.fsmDebugUnlocked,
+    required this.fsmDebugLocked,
+    required this.fsmUnknown,
   });
 
   static const light = AppPalette(
@@ -105,8 +119,15 @@ class AppPalette {
     seriesBattery: Color(0xFF7C3AED),
     seriesGpsTrack: Color(0xFF2260DB),
     seriesDeadReckoning: Color(0xFF7C3AED),
-    fsmLanded: Color(0xFF4A4652),
-    fsmParachute: Color(0xFF0D9488),
+    fsmLanded: Color(0xFF2A4A9B),
+    fsmParachute: Color(0xFF0DA39A),
+    fsmIdle: Color(0xFF7F788D),
+    fsmArmed: Color(0xFFE03434),
+    fsmAscent: Color(0xFFF0B400),
+    fsmApogee: Color(0xFFF07D12),
+    fsmDebugUnlocked: Color(0xFF6CA62E),
+    fsmDebugLocked: Color(0xFF8B44E8),
+    fsmUnknown: Color(0xFFA29CA9),
   );
 
   static const dark = AppPalette(
@@ -137,8 +158,15 @@ class AppPalette {
     seriesBattery: Color(0xFFA78BFA),
     seriesGpsTrack: Color(0xFF6B94F5),
     seriesDeadReckoning: Color(0xFFA78BFA),
-    fsmLanded: Color(0xFF8E8898),
+    fsmLanded: Color(0xFF7AA2F7),
     fsmParachute: Color(0xFF2DD4BF),
+    fsmIdle: Color(0xFFB0A9BE),
+    fsmArmed: Color(0xFFFF6B6B),
+    fsmAscent: Color(0xFFFFD23F),
+    fsmApogee: Color(0xFFFFA63D),
+    fsmDebugUnlocked: Color(0xFFA6D854),
+    fsmDebugLocked: Color(0xFFB39DFF),
+    fsmUnknown: Color(0xFF8B8496),
   );
 }
 
@@ -229,18 +257,49 @@ abstract final class AppColors {
   static Color get seriesGpsTrack => _p.seriesGpsTrack;
   static Color get seriesDeadReckoning => _p.seriesDeadReckoning;
 
+  // ── FSM states (theme-aware) ──────────────────────────────────────────
+  /// Vivid flight hues (grey idle, red armed, yellow ascent, orange apogee,
+  /// teal parachute, navy landed) + lime/purple bench states.
+  static Color get fsmLanded => _p.fsmLanded;
+  static Color get fsmParachute => _p.fsmParachute;
+  static Color get fsmIdle => _p.fsmIdle;
+  static Color get fsmArmed => _p.fsmArmed;
+  static Color get fsmAscent => _p.fsmAscent;
+  static Color get fsmApogee => _p.fsmApogee;
+  static Color get fsmDebugUnlocked => _p.fsmDebugUnlocked;
+  static Color get fsmDebugLocked => _p.fsmDebugLocked;
+  static Color get fsmUnknown => _p.fsmUnknown;
+
   /// Semantic color per rocket FSM state (MOCK connector vocabulary).
   ///
-  /// Connector-driven surfaces read
-  /// `activeConnector.stateForId(id).colorArgb` instead — this stays for
-  /// shared/legacy call sites and resolves to the same ARGB values the
-  /// MOCK connector publishes.
-  static Color fsmColor(FsmState state) =>
-      Color(mockConnector.stateForId(state.id).colorArgb);
+  /// Theme-aware pastel: resolves the active palette, so the same state
+  /// reads on white cards (light) and dark cards (dark). The connector's
+  /// raw `colorArgb` is the light-mode reference only — UI must call this
+  /// (or [connectorStateColor]) instead of `Color(...colorArgb)` directly.
+  static Color fsmColor(FsmState state) => switch (state) {
+        FsmState.idle => _p.fsmIdle,
+        FsmState.armed => _p.fsmArmed,
+        FsmState.ascent => _p.fsmAscent,
+        FsmState.apogee => _p.fsmApogee,
+        FsmState.parachute => _p.fsmParachute,
+        FsmState.landed => _p.fsmLanded,
+        FsmState.debugUnlocked => _p.fsmDebugUnlocked,
+        FsmState.debugLocked => _p.fsmDebugLocked,
+        FsmState.unknown => _p.fsmUnknown,
+      };
 
   /// Semantic color for a connector state id on [connector].
-  static Color connectorStateColor(TelemetryConnector connector, int id) =>
-      Color(connector.stateForId(id).colorArgb);
+  ///
+  /// Known MOCK ids resolve to the theme-aware pastel palette above;
+  /// any other connector id falls back to its published `colorArgb`
+  /// so future connectors keep their own hues.
+  static Color connectorStateColor(TelemetryConnector connector, int id) {
+    const knownIds = {0, 1, 2, 3, 4, 5, 6, 7, 255};
+    if (knownIds.contains(id)) {
+      return fsmColor(FsmState.fromId(id));
+    }
+    return Color(connector.stateForId(id).colorArgb);
+  }
 }
 
 /// Shared layout metrics so cards, grid and chrome stay visually consistent.

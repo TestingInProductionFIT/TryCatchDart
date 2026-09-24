@@ -108,10 +108,7 @@ class _ChannelHealthTileState extends ConsumerState<ChannelHealthTile> {
               unmatchedBps: unmatchedBps,
             ),
             const SizedBox(height: 6),
-            Expanded(
-              // Display-only plot (axis labels repaint on every tick).
-              child: ExcludeSemantics(child: _RateChart(tracker: tracker)),
-            ),
+            Expanded(child: _RateChart(tracker: tracker)),
           ],
         );
       },
@@ -166,14 +163,12 @@ class _TileReplayBody extends StatelessWidget {
             ),
             const SizedBox(height: 6),
             Expanded(
-              child: ExcludeSemantics(
-                child: _ReplayChart(
-                  played: played,
-                  future: future,
-                  profile: profile,
-                  durationMs: null,
-                  positionMs: positionMs,
-                ),
+              child: _ReplayChart(
+                played: played,
+                future: future,
+                profile: profile,
+                durationMs: null,
+                positionMs: positionMs,
               ),
             ),
           ],
@@ -200,23 +195,22 @@ class _TileVerdictRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = _verdictColor(verdict);
-    return ExcludeSemantics(
-      child: Row(
-        children: [
-          Container(
-            width: 8,
-            height: 8,
-            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+    return Row(
+      children: [
+        Container(
+          width: 8,
+          height: 8,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 6),
+        Text(
+          _verdictLabel(verdict),
+          style: AppText.microLabel.copyWith(
+            fontSize: 10,
+            letterSpacing: 0.8,
+            color: color,
           ),
-          const SizedBox(width: 6),
-          Text(
-            _verdictLabel(verdict),
-            style: AppText.microLabel.copyWith(
-              fontSize: 10,
-              letterSpacing: 0.8,
-              color: color,
-            ),
-          ),
+        ),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
@@ -234,8 +228,7 @@ class _TileVerdictRow extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
+      );
   }
 }
 

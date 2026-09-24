@@ -198,19 +198,14 @@ class _CommandRow extends ConsumerWidget {
               ],
             ),
           ),
-          // Display-only clock — excluded from semantics so the ticking
-          // live ages don't churn the Windows accessibility bridge. (The
-          // replay row itself stays a button with the command name.)
-          ExcludeSemantics(
-            child: Text(
-              time,
-              maxLines: 1,
-              style: AppText.mono.copyWith(
-                fontSize: 11.5,
-                fontWeight: FontWeight.w600,
-                fontFeatures: const [FontFeature.tabularFigures()],
-                color: AppColors.mutedForeground,
-              ),
+          Text(
+            time,
+            maxLines: 1,
+            style: AppText.mono.copyWith(
+              fontSize: 11.5,
+              fontWeight: FontWeight.w600,
+              fontFeatures: const [FontFeature.tabularFigures()],
+              color: AppColors.mutedForeground,
             ),
           ),
         ],

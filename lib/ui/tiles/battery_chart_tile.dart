@@ -49,18 +49,15 @@ class BatteryChartTile extends ConsumerWidget {
             if (showRate)
               Padding(
                 padding: const EdgeInsets.only(bottom: 4),
-                // Display-only average — excluded from semantics.
-                child: ExcludeSemantics(
-                  child: Text(
-                    // Negative when the battery is draining.
-                    '${dischargeRate >= 0 ? '+' : '−'}'
-                    '${dischargeRate.abs().toStringAsFixed(0)} mV/min avg · last min',
-                    style: AppText.mono.copyWith(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                      fontFeatures: const [FontFeature.tabularFigures()],
-                      color: AppColors.mutedForeground,
-                    ),
+                child: Text(
+                  // Negative when the battery is draining.
+                  '${dischargeRate >= 0 ? '+' : '−'}'
+                  '${dischargeRate.abs().toStringAsFixed(0)} mV/min avg · last min',
+                  style: AppText.mono.copyWith(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                    color: AppColors.mutedForeground,
                   ),
                 ),
               ),

@@ -136,20 +136,18 @@ class _LinkStatsButtonState extends ConsumerState<LinkStatsButton> {
                     // Two equal halves keep the separator dead-center no
                     // matter how the value lengths change.
                     Expanded(
-                      child: ExcludeSemantics(
-                        child: Text(
-                          ratePart,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          textAlign: TextAlign.right,
-                          style: AppText.mono.copyWith(
-                            fontSize: 11.5,
-                            fontWeight: FontWeight.w700,
-                            color: textColor,
-                            fontFeatures: const [
-                              FontFeature.tabularFigures(),
-                            ],
-                          ),
+                      child: Text(
+                        ratePart,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.right,
+                        style: AppText.mono.copyWith(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w700,
+                          color: textColor,
+                          fontFeatures: const [
+                            FontFeature.tabularFigures(),
+                          ],
                         ),
                       ),
                     ),
@@ -162,20 +160,18 @@ class _LinkStatsButtonState extends ConsumerState<LinkStatsButton> {
                       ),
                     ),
                     Expanded(
-                      child: ExcludeSemantics(
-                        child: Text(
-                          channelPart,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          textAlign: TextAlign.left,
-                          style: AppText.mono.copyWith(
-                            fontSize: 11.5,
-                            fontWeight: FontWeight.w700,
-                            color: textColor,
-                            fontFeatures: const [
-                              FontFeature.tabularFigures(),
-                            ],
-                          ),
+                      child: Text(
+                        channelPart,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.left,
+                        style: AppText.mono.copyWith(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w700,
+                          color: textColor,
+                          fontFeatures: const [
+                            FontFeature.tabularFigures(),
+                          ],
                         ),
                       ),
                     ),

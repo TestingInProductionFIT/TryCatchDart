@@ -126,7 +126,7 @@ class _FsmWidgetState extends ConsumerState<FsmTile> {
         if (!s.pipeline) s,
     ];
     final current = connector.stateForId(latest.fsmStateId);
-    final color = Color(current.colorArgb);
+    final color = AppColors.connectorStateColor(connector, current.id);
     final timeInState = _timeInState(state);
     final currentIndex = pipeline.indexWhere((s) => s.id == current.id);
     final connected =
@@ -142,7 +142,7 @@ class _FsmWidgetState extends ConsumerState<FsmTile> {
       return 'Send ${s.label} request to rocket';
     }
 
-    Widget chipFor(ConnectorFsmState s, {required bool passed}) {
+    Widget chipFor(ConnectorFsmState s) {
       final tileState = _sentStateId == s.id
           ? _ChipState.sent
           : _pendingStateId == s.id
@@ -150,8 +150,8 @@ class _FsmWidgetState extends ConsumerState<FsmTile> {
               : _ChipState.idle;
       return _StateChip(
         state: s,
+        color: AppColors.connectorStateColor(connector, s.id),
         current: s.id == current.id,
-        passed: passed,
         tileState: tileState,
         enabled: enabled,
         replaying: replaying,
@@ -184,15 +184,13 @@ class _FsmWidgetState extends ConsumerState<FsmTile> {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                ExcludeSemantics(
-                  child: Text(
-                    current.label.toUpperCase(),
-                    style: AppText.mono.copyWith(
-                      fontSize: 22,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0.5,
-                      color: color,
-                    ),
+                Text(
+                  current.label.toUpperCase(),
+                  style: AppText.mono.copyWith(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.5,
+                    color: color,
                   ),
                 ),
                 if (timeInState.isNotEmpty) ...[
@@ -255,12 +253,8 @@ class _FsmWidgetState extends ConsumerState<FsmTile> {
             physics: const NeverScrollableScrollPhysics(),
             padding: EdgeInsets.zero,
             children: [
-              for (var i = 0; i < pipeline.length; i++)
-                chipFor(
-                  pipeline[i],
-                  passed: currentIndex >= 0 && i < currentIndex,
-                ),
-              for (final s in offPipeline) chipFor(s, passed: false),
+              for (final s in pipeline) chipFor(s),
+              for (final s in offPipeline) chipFor(s),
             ],
           ),
         ],
@@ -301,8 +295,12 @@ enum _ChipState { idle, confirm, sent }
 
 class _StateChip extends StatelessWidget {
   final ConnectorFsmState state;
+
+  /// Theme-aware pastel for [state] (resolved by the parent via
+  /// `AppColors.connectorStateColor` — never `Color(state.colorArgb)`
+  /// directly, which is the light-mode reference only).
+  final Color color;
   final bool current;
-  final bool passed;
   final _ChipState tileState;
   final bool enabled;
 
@@ -314,8 +312,8 @@ class _StateChip extends StatelessWidget {
 
   const _StateChip({
     required this.state,
+    required this.color,
     required this.current,
-    required this.passed,
     required this.tileState,
     required this.enabled,
     required this.replaying,
@@ -323,37 +321,62 @@ class _StateChip extends StatelessWidget {
     required this.onTap,
   });
 
+  /// Pastel label ink: the state hue nudged toward the foreground so
+  /// 10 px chip text stays readable on both white and dark cards
+  /// (same recipe as [StatusPill]).
+  Color _ink(double towardForeground) =>
+      Color.lerp(color, AppColors.foreground, towardForeground) ?? color;
+
+  /// Contrasting text for a solid state-color fill: white on dark hues,
+  /// near-black on light ones (resolves per active palette, so it holds
+  /// in both modes).
+  static Color _onSolid(Color bg) =>
+      ThemeData.estimateBrightnessForColor(bg) == Brightness.dark
+          ? Colors.white
+          : const Color(0xFF1B1820);
+
   @override
   Widget build(BuildContext context) {
-    final color = Color(state.colorArgb);
-
     final Color background;
     final Color foreground;
-    final Color border;
+    // Thin outline for the top/right/bottom edges…
+    final Color outline;
+    final double outlineWidth;
+    // …plus a thick solid state-hue strip on the left. Both live in one
+    // [BoxDecoration] border so the corners join cleanly instead of the
+    // outline stroking over a separate accent bar.
+    final Color leftEdge;
     final String label;
     switch (tileState) {
       case _ChipState.idle:
-        background = current
-            ? color
-            : passed
-                ? AppColors.muted
-                : AppColors.card;
-        foreground = current
-            ? AppColors.primaryForeground
-            : passed
-                ? AppColors.mutedForeground
-                : AppColors.faint;
-        border = current ? color : AppColors.border;
+        leftEdge = color;
+        if (current) {
+          background = color;
+          foreground = _onSolid(color);
+          outline = color;
+          outlineWidth = 1.3;
+        } else {
+          background = AppColors.card;
+          foreground = AppColors.mutedForeground;
+          outline = AppColors.border;
+          outlineWidth = 1;
+        }
         label = state.label.toUpperCase();
       case _ChipState.confirm:
-        background = color;
-        foreground = AppColors.primaryForeground;
-        border = color;
+        leftEdge = color;
+        background = color.withValues(alpha: 0.18);
+        foreground = _ink(0.18);
+        outline = color;
+        outlineWidth = 1.3;
         label = 'TAP AGAIN?';
       case _ChipState.sent:
-        background = AppColors.success;
-        foreground = AppColors.primaryForeground;
-        border = AppColors.success;
+        final ok = AppColors.success;
+        leftEdge = ok;
+        background = ok.withValues(alpha: 0.14);
+        foreground =
+            Color.lerp(ok, AppColors.foreground, 0.2) ?? ok;
+        outline = ok.withValues(alpha: 0.45);
+        outlineWidth = 1.3;
         label = 'SENT';
     }
 
@@ -366,31 +389,53 @@ class _StateChip extends StatelessWidget {
         // flipping to grey text.
         opacity: faded ? 0.45 : 1.0,
         child: Material(
-        color: background,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(6),
-          side: BorderSide(
-            color: tileState == _ChipState.idle ? border : Colors.transparent,
-            width: current ? 1.2 : 1,
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(6),
+        child: Ink(
+          // Uniform outline (radius-compatible) painted under the splash;
+          // the thick left strip below covers its left segment, so the
+          // two never stroke over each other at the corners.
+          decoration: BoxDecoration(
+            color: background,
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: outline, width: outlineWidth),
           ),
-        ),
-        child: InkWell(
-          onTap: enabled ? onTap : null,
-          borderRadius: BorderRadius.circular(6),
-          child: Container(
-            alignment: Alignment.center,
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-            child: FittedBox(
-              fit: BoxFit.scaleDown,
-              child: Text(
-                label,
-                style: AppText.mono.copyWith(
-                  fontSize: 10,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 0.8,
-                  color: foreground,
+          child: InkWell(
+            onTap: enabled ? onTap : null,
+            borderRadius: BorderRadius.circular(6),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Container(
+                  width: 4,
+                  decoration: BoxDecoration(
+                    color: leftEdge,
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(5),
+                      bottomLeft: Radius.circular(5),
+                    ),
+                  ),
                 ),
-              ),
+                Expanded(
+                  child: Container(
+                    alignment: Alignment.center,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 6, vertical: 4),
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        label,
+                        style: AppText.mono.copyWith(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.8,
+                          color: foreground,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ),
@@ -401,16 +446,10 @@ class _StateChip extends StatelessWidget {
     // During replay the chips are inert readouts with no tooltip at all.
     final tip = tooltip;
     if (tip == null) return content;
-    // Own semantics container per chip: like the control panel, these are
-    // adjacent Tooltips inside GridViews — without the boundary they trip
-    // the upstream Windows AXTree defect (flutter/flutter#182444).
-    return Semantics(
-      container: true,
-      child: Tooltip(
-        message: tip,
-        waitDuration: const Duration(milliseconds: 500),
-        child: content,
-      ),
+    return Tooltip(
+      message: tip,
+      waitDuration: const Duration(milliseconds: 500),
+      child: content,
     );
   }
 }

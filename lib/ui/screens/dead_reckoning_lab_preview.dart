@@ -221,31 +221,29 @@ class _OutagePreview3dState extends State<OutagePreview3d> {
 
   @override
   Widget build(BuildContext context) {
-    return ExcludeSemantics(
-      child: Container(
-        height: 230,
-        decoration: BoxDecoration(
-          color: AppColors.muted.withValues(alpha: 0.2),
-          borderRadius: BorderRadius.circular(AppDimens.radiusSmall),
-          border: Border.all(color: AppColors.border),
-        ),
-        clipBehavior: Clip.hardEdge,
-        child: GestureDetector(
-          onPanUpdate: (details) => setState(() {
-            _yaw += details.delta.dx * 0.01;
-            _pitch =
-                (_pitch + details.delta.dy * 0.01).clamp(0.05, 1.4);
-          }),
-          onDoubleTap: () => setState(_resetView),
-          child: CustomPaint(
-            painter: _OutagePreviewPainter(
-              preview: widget.preview,
-              yaw: _yaw,
-              pitch: _pitch,
-              beforeColor: previewFlownColor,
-              estimateColor: previewEstimateColor,
-              actualColor: AppColors.pink,
-            ),
+    return Container(
+      height: 230,
+      decoration: BoxDecoration(
+        color: AppColors.muted.withValues(alpha: 0.2),
+        borderRadius: BorderRadius.circular(AppDimens.radiusSmall),
+        border: Border.all(color: AppColors.border),
+      ),
+      clipBehavior: Clip.hardEdge,
+      child: GestureDetector(
+        onPanUpdate: (details) => setState(() {
+          _yaw += details.delta.dx * 0.01;
+          _pitch =
+              (_pitch + details.delta.dy * 0.01).clamp(0.05, 1.4);
+        }),
+        onDoubleTap: () => setState(_resetView),
+        child: CustomPaint(
+          painter: _OutagePreviewPainter(
+            preview: widget.preview,
+            yaw: _yaw,
+            pitch: _pitch,
+            beforeColor: previewFlownColor,
+            estimateColor: previewEstimateColor,
+            actualColor: AppColors.pink,
           ),
         ),
       ),

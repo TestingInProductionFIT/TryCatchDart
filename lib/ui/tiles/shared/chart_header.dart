@@ -32,34 +32,29 @@ class ChartValueHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Display-only live readout (repaints ~10 Hz) — excluded from semantics
-    // so it doesn't churn the Windows accessibility bridge (see
-    // CenteredValue); interactive controls keep theirs.
-    return ExcludeSemantics(
-      child: Padding(
-        padding: EdgeInsets.only(bottom: bottomPadding),
-        child: Row(
-          children: [
-            Flexible(
-              child: Text(
-                value,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: AppText.mono.copyWith(
-                  fontSize: fontSize,
-                  fontWeight: FontWeight.w800,
-                  fontFeatures: const [FontFeature.tabularFigures()],
-                  color:
-                      valueColor ??
-                      (dimmed
-                          ? AppColors.mutedForeground
-                          : AppColors.foreground),
-                ),
+    return Padding(
+      padding: EdgeInsets.only(bottom: bottomPadding),
+      child: Row(
+        children: [
+          Flexible(
+            child: Text(
+              value,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: AppText.mono.copyWith(
+                fontSize: fontSize,
+                fontWeight: FontWeight.w800,
+                fontFeatures: const [FontFeature.tabularFigures()],
+                color:
+                    valueColor ??
+                    (dimmed
+                        ? AppColors.mutedForeground
+                        : AppColors.foreground),
               ),
             ),
-            if (trailing != null) ...[const SizedBox(width: 8), trailing!],
-          ],
-        ),
+          ),
+          if (trailing != null) ...[const SizedBox(width: 8), trailing!],
+        ],
       ),
     );
   }

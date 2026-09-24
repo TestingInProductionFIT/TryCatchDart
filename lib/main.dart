@@ -52,6 +52,11 @@ void main() async {
           valueListenable: AppThemeMode.instance,
           builder: (_, isDark, _) => MaterialApp(
             debugShowCheckedModeBanner: false,
+            // Global accessibility opt-out: Windows semantics are always
+            // on and its AXTree bridge spams
+            // "Failed to update ui::AXTree" on telemetry-rate rebuilds.
+            // The app keeps visual tooltips; it publishes no semantics.
+            builder: (context, child) => ExcludeSemantics(child: child!),
             themeMode: ThemeMode.light,
             theme: buildAppTheme(dark: isDark),
             // NOTE: intentionally non-const — a const home would freeze the
@@ -145,11 +150,12 @@ class _AppLifecycleWrapperState extends State<AppLifecycleWrapper>
     });
     if (Platform.isLinux) {
       // Closest Linux equivalent of a tooltip: the indicator label.
-      await _trayGuard(
-          'setTitle', () async => trayIcon.setTitle('TryCatch'));
+      await _trayGuard('setTitle', () async => trayIcon.setTitle('TryCatch'));
     } else {
       await _trayGuard(
-          'setTooltip', () async => trayIcon.setTooltip('TryCatch'));
+        'setTooltip',
+        () async => trayIcon.setTooltip('TryCatch'),
+      );
     }
     await _trayGuard('setContextMenu', () async {
       final menu = tray.Menu.create();
@@ -181,8 +187,7 @@ class _AppLifecycleWrapperState extends State<AppLifecycleWrapper>
       trayIcon.setContextMenu(menu);
       _trayMenu = menu;
     });
-    await _trayGuard(
-        'setVisible', () async => trayIcon.setVisible(true));
+    await _trayGuard('setVisible', () async => trayIcon.setVisible(true));
   }
 
   Future<void> _showWindow() async {
@@ -212,8 +217,9 @@ class _AppLifecycleWrapperState extends State<AppLifecycleWrapper>
     try {
       final exeDir = File(Platform.resolvedExecutable).parent.path;
       final sep = Platform.pathSeparator;
-      final bundled =
-          File('$exeDir${sep}data${sep}flutter_assets${sep}assets$sep$fileName');
+      final bundled = File(
+        '$exeDir${sep}data${sep}flutter_assets${sep}assets$sep$fileName',
+      );
       if (await bundled.exists()) return bundled.path;
     } catch (_) {
       // Fall through to null.

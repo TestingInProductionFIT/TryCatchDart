@@ -23,11 +23,9 @@ class PlaybackBar extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     // Select only the fields the clock text + slider need so the outer row
-    // doesn't rebuild on every 50 ms positionMs tick. The two Tooltip-bearing
-    // buttons ([_PlayPauseButton] and [_SmoothingButton]) are leaf consumers
-    // that each subscribe to exactly the fields they render — this prevents
-    // their Tooltip overlay grafts from being re-created at ticker rate, which
-    // trips the Windows AXTree bridge (flutter/flutter#182444 family).
+    // doesn't rebuild on every 50 ms positionMs tick. The buttons are leaf
+    // consumers that each subscribe to exactly the fields they render —
+    // a pure rebuild-avoidance optimization.
     final duration = ref.watch(
       replayProvider.select((s) => s.durationMs ?? 0),
     );
@@ -46,16 +44,13 @@ class PlaybackBar extends ConsumerWidget {
         // Isolated leaf consumer: rebuilds only when playing/finished/loading
         // changes — not on every positionMs tick.
         const _PlayPauseButton(),
-        // Playhead clock (repaints ~20 Hz while playing) — display only.
-        ExcludeSemantics(
-          child: Text(
-            '${formatMinSec(position)} / ${formatMinSec(duration)}',
-            style: AppText.mono.copyWith(
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-              color: AppColors.mutedForeground,
-              fontFeatures: const [FontFeature.tabularFigures()],
-            ),
+        Text(
+          '${formatMinSec(position)} / ${formatMinSec(duration)}',
+          style: AppText.mono.copyWith(
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+            color: AppColors.mutedForeground,
+            fontFeatures: const [FontFeature.tabularFigures()],
           ),
         ),
         const SizedBox(width: 4),
@@ -85,11 +80,8 @@ class PlaybackBar extends ConsumerWidget {
 ///
 /// Leaf consumer on `{isLoading, playing, positionMs, durationMs}` — the
 /// fields that determine which icon and tooltip to show. Kept out of the
-/// outer [PlaybackBar] build so its [Tooltip] overlay graft is only
-/// re-created when those fields change, not on every 50 ms ticker tick.
-///
-/// Wrapped in [Semantics] `container: true` to isolate its overlay graft on
-/// its own AXTree node (same mitigation as control_panel_tile / fsm_tile).
+/// outer [PlaybackBar] build so its [Tooltip] is only re-created when those
+/// fields change, not on every 50 ms ticker tick.
 class _PlayPauseButton extends ConsumerWidget {
   const _PlayPauseButton();
 
@@ -105,24 +97,19 @@ class _PlayPauseButton extends ConsumerWidget {
     final finished = !playing && duration > 0 && positionMs >= duration;
     final controller = ref.read(replayProvider.notifier);
 
-    // Semantics container: keeps this Tooltip's overlay graft on its own
-    // AXTree node so adjacent grafts don't collide (flutter/flutter#182444).
-    return Semantics(
-      container: true,
-      child: IconButton(
-        tooltip: finished
-            ? 'Replay from the start (Space)'
-            : (playing ? 'Pause (Space)' : 'Play (Space)'),
-        // toggle() keys off the live ticker, not just the last-published
-        // flag, so the button can never desync from actual playback.
-        onPressed: isLoading ? null : controller.toggle,
-        icon: Icon(
-          finished
-              ? Icons.replay
-              : (playing ? Icons.pause : Icons.play_arrow),
-          size: 20,
-          color: AppColors.pinkDeep,
-        ),
+    return IconButton(
+      tooltip: finished
+          ? 'Replay from the start (Space)'
+          : (playing ? 'Pause (Space)' : 'Play (Space)'),
+      // toggle() keys off the live ticker, not just the last-published
+      // flag, so the button can never desync from actual playback.
+      onPressed: isLoading ? null : controller.toggle,
+      icon: Icon(
+        finished
+            ? Icons.replay
+            : (playing ? Icons.pause : Icons.play_arrow),
+        size: 20,
+        color: AppColors.pinkDeep,
       ),
     );
   }
@@ -144,25 +131,21 @@ class _SmoothingButton extends ConsumerWidget {
     );
     final controller = ref.read(replayProvider.notifier);
 
-    // Semantics container: same AXTree graft isolation as _PlayPauseButton.
     // The "Back to live" close action lives in the top-bar menu slot (same
     // spot/size as the hamburger button), not in this row.
-    return Semantics(
-      container: true,
-      child: IconButton(
-        tooltip: smoothingEnabled
-            ? 'Display smoothing on (3D trail + rotation) — tap for raw'
-            : 'Display smoothing off — tap to smooth the 3D display',
-        onPressed: isLoading
-            ? null
-            : () => controller.setSmoothing(!smoothingEnabled),
-        icon: Icon(
-          Icons.blur_on,
-          size: 20,
-          color: smoothingEnabled
-              ? AppColors.pinkDeep
-              : AppColors.mutedForeground,
-        ),
+    return IconButton(
+      tooltip: smoothingEnabled
+          ? 'Display smoothing on (3D trail + rotation) — tap for raw'
+          : 'Display smoothing off — tap to smooth the 3D display',
+      onPressed: isLoading
+          ? null
+          : () => controller.setSmoothing(!smoothingEnabled),
+      icon: Icon(
+        Icons.blur_on,
+        size: 20,
+        color: smoothingEnabled
+            ? AppColors.pinkDeep
+            : AppColors.mutedForeground,
       ),
     );
   }
@@ -185,21 +168,17 @@ class _LoopButton extends ConsumerWidget {
     );
     final controller = ref.read(replayProvider.notifier);
 
-    // Semantics container: same AXTree graft isolation as _PlayPauseButton.
-    return Semantics(
-      container: true,
-      child: IconButton(
-        tooltip: loopEnabled
-            ? 'Loop on — replay restarts at the end (tap for play-once)'
-            : 'Loop off — tap to replay in a loop',
-        onPressed:
-            isLoading ? null : () => controller.setLooping(!loopEnabled),
-        icon: Icon(
-          Icons.repeat,
-          size: 20,
-          color:
-              loopEnabled ? AppColors.pinkDeep : AppColors.mutedForeground,
-        ),
+    return IconButton(
+      tooltip: loopEnabled
+          ? 'Loop on — replay restarts at the end (tap for play-once)'
+          : 'Loop off — tap to replay in a loop',
+      onPressed:
+          isLoading ? null : () => controller.setLooping(!loopEnabled),
+      icon: Icon(
+        Icons.repeat,
+        size: 20,
+        color:
+            loopEnabled ? AppColors.pinkDeep : AppColors.mutedForeground,
       ),
     );
   }
@@ -212,7 +191,7 @@ class _LoopButton extends ConsumerWidget {
 /// Each marker seeks the replay to its flight-clock position when tapped.
 /// The marker buttons themselves only rebuild when the loaded flight changes;
 /// the played/upcoming dimming inside each dot is a leaf consumer on the
-/// playhead, so the tooltip grafts stay stable at the ~20 Hz repaint rate.
+/// playhead, so tooltips aren't rebuilt at the ~20 Hz repaint rate.
 ///
 /// Marker dots share the slider's exact value→pixel mapping (see
 /// [_timelineThumbTravel]), and markers that would paint on top of each
@@ -378,10 +357,8 @@ class _EventDot extends ConsumerWidget {
 
 /// Replay filename + tooltip, watching the file path only.
 ///
-/// The playhead rebuilds this bar ~20 Hz while playing; keeping the bare
-/// filename Tooltip out of those rebuilds keeps its overlay graft stable
-/// (a rebuilding graft + hover is what trips the Windows AXTree bridge —
-/// flutter/flutter#182444 family).
+/// The playhead rebuilds this bar ~20 Hz while playing; keeping the filename
+/// Tooltip out of those rebuilds avoids re-creating it at ticker rate.
 class _ReplayBadge extends ConsumerWidget {
   const _ReplayBadge();
 

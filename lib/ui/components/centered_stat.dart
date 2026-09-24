@@ -110,27 +110,21 @@ class CenteredValue extends StatelessWidget {
     // incoming box is fully bounded, pin a tight box of exactly that size
     // around an inner width-fixed column: the FittedBox then scales the
     // whole block (value + sublabel together) down to fit.
-    // ExcludeSemantics: live values repaint up to ~10 Hz, and on desktop
-    // semantics are always on, so every text change crosses the (buggy)
-    // Windows accessibility bridge (AXTree "nodes left pending" spam).
-    // These readouts are display-only — interactive controls keep semantics.
-    return ExcludeSemantics(
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final maxW = constraints.maxWidth;
-          final maxH = constraints.maxHeight;
-          if (!maxW.isFinite || !maxH.isFinite) return content;
-          return SizedBox(
-            width: maxW,
-            height: maxH,
-            child: FittedBox(
-              fit: fit,
-              alignment: Alignment.center,
-              child: SizedBox(width: maxW, child: content),
-            ),
-          );
-        },
-      ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final maxW = constraints.maxWidth;
+        final maxH = constraints.maxHeight;
+        if (!maxW.isFinite || !maxH.isFinite) return content;
+        return SizedBox(
+          width: maxW,
+          height: maxH,
+          child: FittedBox(
+            fit: fit,
+            alignment: Alignment.center,
+            child: SizedBox(width: maxW, child: content),
+          ),
+        );
+      },
     );
   }
 }

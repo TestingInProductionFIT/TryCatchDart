@@ -75,16 +75,20 @@ class MockConnector extends TelemetryConnector {
   @override
   ConnectorStreamParser createParser() => MockConnectorParser();
 
-  /// ARGB tile colors per state (match the app light palette).
+  /// ARGB tile colors per state (light-mode reference of the app `fsm*`
+  /// palette — see `AppPalette`. The UI resolves the active light/dark
+  /// variant via `AppColors.connectorStateColor`, so this stays a single
+  /// set for the wire/recordings and must NOT be used directly
+  /// for painting).
   static int _colorFor(FsmState state) => switch (state) {
-        FsmState.idle => 0xFF6C6674,
-        FsmState.armed => 0xFFC77414,
-        FsmState.ascent => 0xFFD42A2A,
-        FsmState.apogee => 0xFF7C3AED,
-        FsmState.parachute => 0xFF0D9488,
-        FsmState.landed => 0xFF4A4652,
-        FsmState.debugUnlocked => 0xFFC77414,
-        FsmState.debugLocked => 0xFF2260DB,
+        FsmState.idle => 0xFF7F788D,
+        FsmState.armed => 0xFFE03434,
+        FsmState.ascent => 0xFFF0B400,
+        FsmState.apogee => 0xFFF07D12,
+        FsmState.parachute => 0xFF0DA39A,
+        FsmState.landed => 0xFF2A4A9B,
+        FsmState.debugUnlocked => 0xFF6CA62E,
+        FsmState.debugLocked => 0xFF8B44E8,
         FsmState.unknown => 0xFFA29CA9,
       };
 
