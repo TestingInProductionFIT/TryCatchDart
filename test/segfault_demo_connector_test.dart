@@ -54,8 +54,8 @@ void main() {
 
     test('publishes chute + rate commands + state-request bytes', () {
       expect(segfaultDemoConnector.commands.map((c) => c.id), [
-        'deploy_parachute',
         'stow_parachute',
+        'deploy_parachute',
         'realtime',
         'powersaver',
       ]);
@@ -70,7 +70,7 @@ void main() {
       );
       expect(
         segfaultDemoConnector.describeCommand([0x47, 0x43, 0x55, 0x00]).label,
-        'Stow chute',
+        'Lock chute',
       );
       expect(
         segfaultDemoConnector.describeCommand([0x47, 0x43, 0x52, 0x00]).label,

@@ -28,10 +28,17 @@ jobs:
           cache: true
 
       - name: Install dependencies
-        run: flutter pub get
+        run: |
+          flutter pub get
+          flutter pub get --directory=packages/dead_reckoning
+          flutter pub get --directory=packages/serial
 
       - name: Analyze
         run: flutter analyze
 
       - name: Test
         run: flutter test
+
+      - name: Test dead_reckoning (pure Dart)
+        run: dart test
+        working-directory: packages/dead_reckoning
