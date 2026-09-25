@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 enum AppScreen {
   dashboard('Dashboard', Icons.space_dashboard_outlined),
   flights('Recorded flights', Icons.flight_outlined),
+  monitor('Channel health', Icons.monitor_heart_outlined),
   deadReckoning('Dead reckoning', Icons.explore_outlined),
   settings('Settings', Icons.settings_outlined);
 
@@ -14,7 +15,7 @@ enum AppScreen {
   final IconData icon;
 }
 
-/// Currently displayed screen. Simple switcher — the app has exactly four
+/// Currently displayed screen. Simple switcher — the app has exactly five
 /// flat screens, so a full router is not warranted.
 final appRouterProvider =
     NotifierProvider<AppRouter, AppScreen>(AppRouter.new);

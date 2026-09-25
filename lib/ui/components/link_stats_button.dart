@@ -99,7 +99,7 @@ class _LinkStatsButtonState extends ConsumerState<LinkStatsButton> {
         channel.latest == null ? '··· B/s' : formatBps(unmatched);
     const tip =
         'Packet rate and unknown traffic on this frequency (ours vs unknown) '
-        '— live even while disconnected. Open Dashboard.';
+        '— live even while disconnected. Open Channel health.';
     final textColor = hasData
         ? Color.lerp(stateColor, AppColors.foreground, 0.2)!
         : AppColors.mutedForeground;
@@ -119,7 +119,7 @@ class _LinkStatsButtonState extends ConsumerState<LinkStatsButton> {
               borderRadius: BorderRadius.circular(AppDimens.radiusSmall),
               mouseCursor: SystemMouseCursors.click,
               onTap: () =>
-                  ref.read(appRouterProvider.notifier).go(AppScreen.dashboard),
+                  ref.read(appRouterProvider.notifier).go(AppScreen.monitor),
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10),
                 decoration: BoxDecoration(

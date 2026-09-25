@@ -244,6 +244,264 @@ String _verdictLabel(ChannelVerdict verdict) => switch (verdict) {
       ChannelVerdict.interference => 'INTERFERENCE',
     };
 
+/// Channel-health monitor: shows how much radio traffic on our frequency
+/// is unknown — does NOT decode as our packets (unknown transmitters, noise).
+///
+/// Full-screen body behind the Channel health screen (and the replay view).
+/// For the dashboard tile see [ChannelHealthTile].
+///
+/// Live, rates come from cumulative [LinkStats] snapshots emitted by the
+/// serial worker (~2 Hz) and plot as a rolling 60 s window. During a replay
+/// the tile switches to whole-flight mode like the other charts: the
+/// recording's raw chunks (garbage included) were bucketed into
+/// [ChannelBin]s at load, so the full flight shows with the played segment
+/// at full opacity and the remainder dimmed. Use before launch to check the
+/// frequency is free.
+class ChannelHealthMonitor extends ConsumerStatefulWidget {
+  const ChannelHealthMonitor({super.key});
+
+  @override
+  ConsumerState<ChannelHealthMonitor> createState() =>
+      _ChannelHealthMonitorState();
+}
+
+class _ChannelHealthMonitorState extends ConsumerState<ChannelHealthMonitor> {
+  Timer? _ticker;
+
+  @override
+  void initState() {
+    super.initState();
+    // Repaint on a steady cadence so the live window scrolls even in silence.
+    _ticker = Timer.periodic(const Duration(milliseconds: 500), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _ticker?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Shared history — see the tile above.
+    ref.watch(channelHealthProvider);
+    final tracker = ref.read(channelHealthProvider.notifier).tracker;
+    final status = ref.watch(serialStatusProvider).value;
+    final connected = status?.isConnected ?? false;
+    final replay = ref.watch(replayProvider);
+    final store = ref.watch(telemetryStoreProvider);
+
+    // Whole-flight replay view, mirroring TimeSeriesChart.
+    final profile = store.replaying && replay.isActive
+        ? replay.channelProfile
+        : const <ChannelBin>[];
+    if (profile.length >= 2) {
+      return _ReplayBody(
+        profile: profile,
+        positionMs: replay.positionMs,
+        durationMs: replay.durationMs,
+      );
+    }
+
+    if (!connected) {
+      return Container(
+        color: AppColors.background,
+        padding: const EdgeInsets.all(16),
+        child: const Center(
+          child: WaitingForData(
+            hint: 'Connect a port to scan, or replay a flight',
+          ),
+        ),
+      );
+    }
+
+    final latest = tracker.latest;
+    final matchedBps = latest?.matchedBps ?? 0.0;
+    final unmatchedBps = latest?.unmatchedBps ?? 0.0;
+    final verdict = verdictFor(unmatchedBps);
+
+    return Container(
+      color: AppColors.background,
+      padding: const EdgeInsets.all(16),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 1100),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _VerdictBanner(
+                verdict: verdict,
+                matchedBps: matchedBps,
+                unmatchedBps: unmatchedBps,
+              ),
+              const SizedBox(height: 12),
+              Expanded(
+                child: AppCard(
+                  title: 'Signal on this frequency',
+                  trailing: _Legend(),
+                  fillChild: true,
+                  // Display-only plot (axis labels repaint on every tick).
+                  child: ExcludeSemantics(child: _RateChart(tracker: tracker)),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Whole-flight replay body: played segment at full opacity, remainder
+/// dimmed; verdict and totals follow the playhead.
+class _ReplayBody extends StatelessWidget {
+  final List<ChannelBin> profile;
+  final int positionMs;
+  final int? durationMs;
+
+  const _ReplayBody({
+    required this.profile,
+    required this.positionMs,
+    required this.durationMs,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final played = <ChannelBin>[];
+    final future = <ChannelBin>[];
+    for (final bin in profile) {
+      if (bin.startMs <= positionMs) {
+        played.add(bin);
+      } else {
+        if (future.isEmpty && played.isNotEmpty) future.add(played.last);
+        future.add(bin);
+      }
+    }
+    final cursor = played.isEmpty ? null : played.last;
+    final verdict = verdictFor(cursor?.unmatchedBps ?? 0.0);
+
+    return Container(
+      color: AppColors.background,
+      padding: const EdgeInsets.all(16),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 1100),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _VerdictBanner(
+                verdict: verdict,
+                matchedBps: cursor?.matchedBps ?? 0.0,
+                unmatchedBps: cursor?.unmatchedBps ?? 0.0,
+              ),
+              const SizedBox(height: 12),
+              Expanded(
+                child: AppCard(
+                  title: 'Signal on this frequency',
+                  trailing: _Legend(),
+                  fillChild: true,
+                  // Display-only plot (axis labels repaint on every tick).
+                  child: ExcludeSemantics(
+                    child: _ReplayChart(
+                      played: played,
+                      future: future,
+                      profile: profile,
+                      durationMs: durationMs,
+                      positionMs: positionMs,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _VerdictBanner extends StatelessWidget {
+  final ChannelVerdict verdict;
+  final double matchedBps;
+  final double unmatchedBps;
+
+  const _VerdictBanner({
+    required this.verdict,
+    required this.matchedBps,
+    required this.unmatchedBps,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color = _verdictColor(verdict);
+    // The whole box carries the verdict color; just the two numbers inside.
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(AppDimens.radius),
+        border: Border.all(color: color.withValues(alpha: 0.5)),
+      ),
+      child: Center(
+        child: ExcludeSemantics(
+          child: Text(
+            '${matchedBps.round()} B/s ours vs '
+            '${unmatchedBps.round()} B/s unknown',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: AppText.monoValue.copyWith(
+              fontSize: 16,
+              color: Color.lerp(color, AppColors.foreground, 0.2),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _Legend extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _swatch(AppColors.success, 'OURS'),
+        const SizedBox(width: 10),
+        _swatch(AppColors.destructive, 'UNKNOWN'),
+      ],
+    );
+  }
+
+  Widget _swatch(Color color, String label) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 12,
+          height: 2.5,
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(2),
+          ),
+        ),
+        const SizedBox(width: 5),
+        Text(
+          label,
+          style: AppText.microLabel.copyWith(
+            fontSize: 9,
+            letterSpacing: 0.8,
+            color: AppColors.mutedForeground,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _RateChart extends StatelessWidget {
   final ChannelHealthTracker tracker;
 
