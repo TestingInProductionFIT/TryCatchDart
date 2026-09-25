@@ -39,6 +39,15 @@ Future<void> main(List<String> args) async {
     stdout.writeln('No telemetry chunks — nothing was received on the port.');
     return;
   }
+  // Chunk cadence: a healthy link delivers full packets on the rocket's
+  // tick (e.g. demo Realtime every ~400 ms with 33 B). Dribbles of a few
+  // bytes on the right cadence with no sync = garbled link (baud/config).
+  for (var i = 0; i < chunks.length; i++) {
+    final c = chunks[i];
+    final dt = i == 0 ? 0 : c.tsUs - chunks[i - 1].tsUs;
+    stdout.writeln('chunk[$i] +${dt}us len=${c.payload.length} '
+        '${_hex(c.payload, c.payload.length)}');
+  }
   final raw = <int>[];
   for (final c in chunks) {
     raw.addAll(c.payload);
