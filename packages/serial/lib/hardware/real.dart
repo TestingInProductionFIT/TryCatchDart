@@ -46,12 +46,35 @@ class RealSerialPort {
       // the port keeps whatever baud the OS/driver had (e.g. 9600 left over
       // by another tool), which garbles every frame while the air link is
       // fine. Always assign back through the setter.
-      final serialConfig = _port!.config;
-      serialConfig.baudRate = SerialHardwareConfig.baudRate;
-      serialConfig.parity = SerialHardwareConfig.parity;
-      serialConfig.stopBits = SerialHardwareConfig.stopBits;
-      serialConfig.bits = SerialHardwareConfig.dataBits;
-      _port!.config = serialConfig;
+      //
+      // The config is built fresh and applied in a single sp_set_config call.
+      // Two things matter here:
+      // 1. Flow control + modem lines are explicitly forced to off/none
+      //    (see SerialHardwareConfig): leftover OS/driver defaults assert
+      //    DTR/RTS or enable RTS/CTS on some ARM builds, which holds the
+      //    LoRa MCU in reset (or stalls TX on floating CTS) until the
+      //    adapter is physically re-enumerated (unplug/replug).
+      // 2. One atomic apply avoids a glitch per field: assigning through the
+      //    setter per field issues a full sp_set_config round-trip each,
+      //    pulsing the lines once per field on drivers that re-assert
+      //    control lines per reconfiguration.
+      final config = SerialPortConfig()
+        ..baudRate = SerialHardwareConfig.baudRate
+        ..bits = SerialHardwareConfig.dataBits
+        ..parity = SerialHardwareConfig.parity
+        ..stopBits = SerialHardwareConfig.stopBits
+        ..setFlowControl(SerialHardwareConfig.flowControl)
+        ..rts = SerialHardwareConfig.rts
+        ..cts = SerialHardwareConfig.cts
+        ..dtr = SerialHardwareConfig.dtr
+        ..dsr = SerialHardwareConfig.dsr
+        ..xonXoff = SerialHardwareConfig.xonXoff;
+      _port!.config = config;
+      // Discard any bootloader blurb / line-glitch bytes produced by the
+      // open + reconfigure sequence before the reader attaches.
+      try {
+        _port!.flush();
+      } catch (_) {}
 
       // Attach native asynchronous stream reader
       _reader = SerialPortReader(_port!);

@@ -29,6 +29,13 @@ abstract final class TelemetryFraming {
 }
 
 /// Centralized hardware serial port configuration.
+///
+/// The modem-line / flow-control policy below is load-bearing: the LoRa
+/// ground-station dongles are 3-wire (TX/RX/GND) MCU adapters. Leaving the
+/// OS/driver defaults in place asserts DTR/RTS or enables RTS/CTS flow
+/// control on some ARM builds, which holds the MCU in reset (or stalls its
+/// TX on a floating CTS) until the adapter is physically re-enumerated
+/// (unplug/replug). Keep every value at "off / ignore / none".
 abstract final class SerialHardwareConfig {
   /// Communication speed in baud.
   static const int baudRate = 115200;
@@ -44,4 +51,31 @@ abstract final class SerialHardwareConfig {
 
   /// Number of stop bits (typically 1 or 2).
   static const int stopBits = 1;
+
+  /// Flow-control preset (`SerialPortFlowControl.none` = 0).
+  ///
+  /// The firmware speaks plain 8N1 with no flow control; anything else
+  /// stalls TX on unwired CTS/DSR lines. See the class doc.
+  static const int flowControl = 0;
+
+  /// RTS pin behaviour (`SerialPortRts.off` = 0).
+  ///
+  /// Asserted RTS resets ESP32-class LoRa MCUs via the auto-reset capacitor
+  /// network. Must stay off.
+  static const int rts = 0;
+
+  /// CTS pin behaviour (`SerialPortCts.ignore` = 0).
+  static const int cts = 0;
+
+  /// DTR pin behaviour (`SerialPortDtr.off` = 0).
+  ///
+  /// Asserted DTR holds common USB-UART LoRa adapters in reset. Must stay
+  /// off.
+  static const int dtr = 0;
+
+  /// DSR pin behaviour (`SerialPortDsr.ignore` = 0).
+  static const int dsr = 0;
+
+  /// XON/XOFF software flow control (`SerialPortXonXoff.disabled` = 0).
+  static const int xonXoff = 0;
 }
