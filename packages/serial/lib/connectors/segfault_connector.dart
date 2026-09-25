@@ -81,12 +81,9 @@ abstract final class SegfaultPacketCodec {
     final packetId = b.getUint8(4);
     final stateFlags = b.getUint8(5);
 
-    final accelX =
-        b.getInt16(6, Endian.little) * accelGPerLsb * gravityMps2;
-    final accelY =
-        b.getInt16(8, Endian.little) * accelGPerLsb * gravityMps2;
-    final accelZ =
-        b.getInt16(10, Endian.little) * accelGPerLsb * gravityMps2;
+    final accelX = b.getInt16(6, Endian.little) * accelGPerLsb * gravityMps2;
+    final accelY = b.getInt16(8, Endian.little) * accelGPerLsb * gravityMps2;
+    final accelZ = b.getInt16(10, Endian.little) * accelGPerLsb * gravityMps2;
     final gyroX = b.getInt16(12, Endian.little) * gyroDpsPerLsb;
     final gyroY = b.getInt16(14, Endian.little) * gyroDpsPerLsb;
     final gyroZ = b.getInt16(16, Endian.little) * gyroDpsPerLsb;
@@ -103,8 +100,10 @@ abstract final class SegfaultPacketCodec {
     // Same gravity projection the old web client used to derive attitude
     // from the accel vector (yaw is underivable from accel alone).
     final rollRad = math.atan2(accelY, accelZ);
-    final pitchRad =
-        math.atan2(-accelX, math.sqrt(accelY * accelY + accelZ * accelZ));
+    final pitchRad = math.atan2(
+      -accelX,
+      math.sqrt(accelY * accelY + accelZ * accelZ),
+    );
     const rad2deg = 180 / math.pi;
 
     return TelemetryFrame(
@@ -165,33 +164,50 @@ abstract final class SegfaultPacketCodec {
     b.setUint16(2, timestampMs & 0xFFFF, Endian.little);
     b.setUint8(4, packetId & 0xFF);
     b.setUint8(5, stateFlags & 0xFF);
-    b.setInt16(6, _clampI16((accelXMps2 / (accelGPerLsb * gravityMps2)).round()),
-        Endian.little);
-    b.setInt16(8, _clampI16((accelYMps2 / (accelGPerLsb * gravityMps2)).round()),
-        Endian.little);
-    b.setInt16(10,
-        _clampI16((accelZMps2 / (accelGPerLsb * gravityMps2)).round()),
-        Endian.little);
     b.setInt16(
-        12, _clampI16((gyroXDps / gyroDpsPerLsb).round()), Endian.little);
+      6,
+      _clampI16((accelXMps2 / (accelGPerLsb * gravityMps2)).round()),
+      Endian.little,
+    );
     b.setInt16(
-        14, _clampI16((gyroYDps / gyroDpsPerLsb).round()), Endian.little);
+      8,
+      _clampI16((accelYMps2 / (accelGPerLsb * gravityMps2)).round()),
+      Endian.little,
+    );
     b.setInt16(
-        16, _clampI16((gyroZDps / gyroDpsPerLsb).round()), Endian.little);
+      10,
+      _clampI16((accelZMps2 / (accelGPerLsb * gravityMps2)).round()),
+      Endian.little,
+    );
+    b.setInt16(
+      12,
+      _clampI16((gyroXDps / gyroDpsPerLsb).round()),
+      Endian.little,
+    );
+    b.setInt16(
+      14,
+      _clampI16((gyroYDps / gyroDpsPerLsb).round()),
+      Endian.little,
+    );
+    b.setInt16(
+      16,
+      _clampI16((gyroZDps / gyroDpsPerLsb).round()),
+      Endian.little,
+    );
     b.setInt16(18, _clampI16((aglM * 10).round()), Endian.little);
     b.setUint16(20, rawPressure.clamp(0, 0xFFFF), Endian.little);
     b.setUint16(22, triboMv.clamp(0, 0xFFFF), Endian.little);
     b.setUint8(24, (batteryV / batteryVoltPerLsb).round().clamp(0, 0xFF));
     b.setInt16(
-        25,
-        _clampI16(
-            ((latitude - baseLatitudeDeg) / gpsOffsetScaleDeg).round()),
-        Endian.little);
+      25,
+      _clampI16(((latitude - baseLatitudeDeg) / gpsOffsetScaleDeg).round()),
+      Endian.little,
+    );
     b.setInt16(
-        27,
-        _clampI16(
-            ((longitude - baseLongitudeDeg) / gpsOffsetScaleDeg).round()),
-        Endian.little);
+      27,
+      _clampI16(((longitude - baseLongitudeDeg) / gpsOffsetScaleDeg).round()),
+      Endian.little,
+    );
     b.setInt16(29, _clampI16((verticalUpMps * 10).round()), Endian.little);
     b.setUint16(31, ky024.clamp(0, 0xFFFF), Endian.little);
     return out;
@@ -317,11 +333,10 @@ class SegfaultConnector extends TelemetryConnector {
   String get id => 'segfault';
 
   @override
-  String get displayName => 'SegFault';
+  String get displayName => 'Rocket v1';
 
   @override
-  String get description =>
-      'OG SegFault firmware (5AA5 framing, 33-byte frames).';
+  String get description => 'Connector for the flight version of the v1 rocket';
 
   @override
   ConnectorStreamParser createParser() => SegfaultConnectorParser();
@@ -394,32 +409,29 @@ class SegfaultConnector extends TelemetryConnector {
 
   @override
   List<ConnectorCommand> get commands => const [
-        ConnectorCommand(
-          id: 'deploy_parachute',
-          label: 'Deploy chute',
-          description:
-              'Deploy the parachute servo (release nose-cone latches)',
-          bytes: [segfaultMagicG, segfaultMagicC, 0xAA, 0x00],
-          danger: true,
-        ),
-        ConnectorCommand(
-          id: 'stow_parachute',
-          label: 'Stow chute',
-          description: 'Stow the parachute servo (lock nose-cone latches)',
-          bytes: [segfaultMagicG, segfaultMagicC, 0x55, 0x00],
-        ),
-        ConnectorCommand(
-          id: 'reset_baseline',
-          label: 'Reset baseline',
-          description:
-              'Reset sensor baseline (only before flight)',
-          bytes: [segfaultMagicG, segfaultMagicC, 0x67, 0x67],
-          danger: true,
-        ),
-      ];
+    ConnectorCommand(
+      id: 'deploy_parachute',
+      label: 'Deploy chute',
+      description: 'Deploy the parachute servo (release nose-cone latches)',
+      bytes: [segfaultMagicG, segfaultMagicC, 0xAA, 0x00],
+      danger: true,
+    ),
+    ConnectorCommand(
+      id: 'stow_parachute',
+      label: 'Stow chute',
+      description: 'Stow the parachute servo (lock nose-cone latches)',
+      bytes: [segfaultMagicG, segfaultMagicC, 0x55, 0x00],
+    ),
+    ConnectorCommand(
+      id: 'reset_baseline',
+      label: 'Reset baseline',
+      description: 'Reset sensor baseline (only before flight)',
+      bytes: [segfaultMagicG, segfaultMagicC, 0x67, 0x67],
+      danger: true,
+    ),
+  ];
 
-  static bool _isKnownStateId(int id) =>
-      id >= 0 && id <= 4;
+  static bool _isKnownStateId(int id) => id >= 0 && id <= 4;
 
   @override
   List<int>? bytesForState(int stateId) {
@@ -460,26 +472,23 @@ class SegfaultConnector extends TelemetryConnector {
 
   @override
   List<ConnectorEventDef> get events => const [
-        ConnectorEventDef(
-            label: 'Launch', fromStateId: 1, toStateId: 2),
-        ConnectorEventDef(
-            label: 'Apogee', fromStateId: 2, toStateId: 3),
-        ConnectorEventDef(
-            label: 'Parachute', fromStateId: 3, toStateId: 4),
-      ];
+    ConnectorEventDef(label: 'Launch', fromStateId: 1, toStateId: 2),
+    ConnectorEventDef(label: 'Apogee', fromStateId: 2, toStateId: 3),
+    ConnectorEventDef(label: 'Parachute', fromStateId: 3, toStateId: 4),
+  ];
 
   @override
   FieldCapabilities get capabilities => const FieldCapabilities({
-        TelemetryField.gpsPosition,
-        TelemetryField.baroAltitude,
-        TelemetryField.velocity,
-        TelemetryField.acceleration,
-        TelemetryField.gyro,
-        TelemetryField.attitude,
-        TelemetryField.battery,
-        TelemetryField.hall,
-        TelemetryField.fsm,
-      });
+    TelemetryField.gpsPosition,
+    TelemetryField.baroAltitude,
+    TelemetryField.velocity,
+    TelemetryField.acceleration,
+    TelemetryField.gyro,
+    TelemetryField.attitude,
+    TelemetryField.battery,
+    TelemetryField.hall,
+    TelemetryField.fsm,
+  });
 }
 
 bool _bytesEqual(List<int> a, List<int> b) {

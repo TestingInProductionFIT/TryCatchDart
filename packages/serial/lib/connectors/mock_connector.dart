@@ -69,8 +69,7 @@ class MockConnector extends TelemetryConnector {
   String get displayName => 'MOCK';
 
   @override
-  String get description =>
-      'Original TryCatch format (AA55 framing, 52-byte frames).';
+  String get description => 'Mock connector used with MOCK port for testing';
 
   @override
   ConnectorStreamParser createParser() => MockConnectorParser();
@@ -81,28 +80,29 @@ class MockConnector extends TelemetryConnector {
   /// set for the wire/recordings and must NOT be used directly
   /// for painting).
   static int _colorFor(FsmState state) => switch (state) {
-        FsmState.idle => 0xFF7F788D,
-        FsmState.armed => 0xFFE03434,
-        FsmState.ascent => 0xFFF0B400,
-        FsmState.apogee => 0xFFF07D12,
-        FsmState.parachute => 0xFF0DA39A,
-        FsmState.landed => 0xFF2A4A9B,
-        FsmState.debugUnlocked => 0xFF6CA62E,
-        FsmState.debugLocked => 0xFF8B44E8,
-        FsmState.unknown => 0xFFA29CA9,
-      };
+    FsmState.idle => 0xFF7F788D,
+    FsmState.armed => 0xFFE03434,
+    FsmState.ascent => 0xFFF0B400,
+    FsmState.apogee => 0xFFF07D12,
+    FsmState.parachute => 0xFF0DA39A,
+    FsmState.landed => 0xFF2A4A9B,
+    FsmState.debugUnlocked => 0xFF6CA62E,
+    FsmState.debugLocked => 0xFF8B44E8,
+    FsmState.unknown => 0xFFA29CA9,
+  };
 
   static ConnectorFsmState _describe(FsmState state) => ConnectorFsmState(
-        id: state.id,
-        label: state.label,
-        colorArgb: _colorFor(state),
-        hasNosecone: state.hasNosecone,
-        hasParachute: state.hasParachute,
-        showsParachute: state.showsParachute,
-        pipeline: state != FsmState.debugUnlocked &&
-            state != FsmState.debugLocked &&
-            state != FsmState.unknown,
-      );
+    id: state.id,
+    label: state.label,
+    colorArgb: _colorFor(state),
+    hasNosecone: state.hasNosecone,
+    hasParachute: state.hasParachute,
+    showsParachute: state.showsParachute,
+    pipeline:
+        state != FsmState.debugUnlocked &&
+        state != FsmState.debugLocked &&
+        state != FsmState.unknown,
+  );
 
   static const List<FsmState> _ordered = [
     FsmState.idle,
@@ -117,8 +117,9 @@ class MockConnector extends TelemetryConnector {
   ];
 
   @override
-  List<ConnectorFsmState> get states =>
-      [for (final s in _ordered) _describe(s)];
+  List<ConnectorFsmState> get states => [
+    for (final s in _ordered) _describe(s),
+  ];
 
   @override
   ConnectorFsmState stateForId(int id) => _describe(FsmState.fromId(id));
@@ -128,15 +129,15 @@ class MockConnector extends TelemetryConnector {
 
   @override
   List<ConnectorCommand> get commands => [
-        for (final cmd in RocketCommands.all)
-          ConnectorCommand(
-            id: cmd.id,
-            label: cmd.label,
-            description: cmd.description,
-            bytes: cmd.bytes,
-            danger: cmd.danger,
-          ),
-      ];
+    for (final cmd in RocketCommands.all)
+      ConnectorCommand(
+        id: cmd.id,
+        label: cmd.label,
+        description: cmd.description,
+        bytes: cmd.bytes,
+        danger: cmd.danger,
+      ),
+  ];
 
   @override
   List<int>? bytesForState(int stateId) {
@@ -146,28 +147,31 @@ class MockConnector extends TelemetryConnector {
   }
 
   @override
-  UplinkDescription describeCommand(List<int> bytes) =>
-      describeUplink(bytes);
+  UplinkDescription describeCommand(List<int> bytes) => describeUplink(bytes);
 
   @override
   List<ConnectorEventDef> get events => const [
-        ConnectorEventDef(
-            label: 'Launch',
-            fromStateId: 1, // armed
-            toStateId: 2), // ascent
-        ConnectorEventDef(
-            label: 'Apogee',
-            fromStateId: 2, // ascent
-            toStateId: 3), // apogee
-        ConnectorEventDef(
-            label: 'Parachute',
-            fromStateId: 3, // apogee
-            toStateId: 4), // parachute
-        ConnectorEventDef(
-            label: 'Touchdown',
-            fromStateId: 4, // parachute
-            toStateId: 5), // landed
-      ];
+    ConnectorEventDef(
+      label: 'Launch',
+      fromStateId: 1, // armed
+      toStateId: 2,
+    ), // ascent
+    ConnectorEventDef(
+      label: 'Apogee',
+      fromStateId: 2, // ascent
+      toStateId: 3,
+    ), // apogee
+    ConnectorEventDef(
+      label: 'Parachute',
+      fromStateId: 3, // apogee
+      toStateId: 4,
+    ), // parachute
+    ConnectorEventDef(
+      label: 'Touchdown',
+      fromStateId: 4, // parachute
+      toStateId: 5,
+    ), // landed
+  ];
 
   @override
   FieldCapabilities get capabilities => FieldCapabilities.all;

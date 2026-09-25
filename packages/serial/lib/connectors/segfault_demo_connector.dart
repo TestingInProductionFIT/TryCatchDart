@@ -39,11 +39,10 @@ class SegfaultDemoConnector extends TelemetryConnector {
   String get id => 'segfault_demo';
 
   @override
-  String get displayName => 'SegFault Demo';
+  String get displayName => 'Demo v1';
 
   @override
-  String get description =>
-      'Demo event firmware (2x2 realtime/powersaver x locked/deployed, no GPS).';
+  String get description => 'Connector for the demo version of the v1 rocket';
 
   @override
   ConnectorStreamParser createParser() =>
@@ -122,28 +121,28 @@ class SegfaultDemoConnector extends TelemetryConnector {
   @override
   List<ConnectorCommand> get commands => const [
     ConnectorCommand(
+      id: 'stow_parachute',
+      label: 'Lock chute',
+      description: 'Lock the parachute servo',
+      bytes: [segfaultMagicG, segfaultMagicC, 0x55, 0x00],
+    ),
+    ConnectorCommand(
       id: 'deploy_parachute',
       label: 'Deploy chute',
-      description: 'Deploy the parachute servo (keeps realtime/powersaver)',
+      description: 'Deploy the parachute servo',
       bytes: [segfaultMagicG, segfaultMagicC, 0xAA, 0x00],
       danger: true,
     ),
     ConnectorCommand(
-      id: 'stow_parachute',
-      label: 'Stow chute',
-      description: 'Stow the parachute servo (keeps realtime/powersaver)',
-      bytes: [segfaultMagicG, segfaultMagicC, 0x55, 0x00],
-    ),
-    ConnectorCommand(
       id: 'realtime',
       label: 'Realtime',
-      description: 'Fast telemetry (400 ms, keeps locked/deployed)',
+      description: 'Fast telemetry (400 ms)',
       bytes: [segfaultMagicG, segfaultMagicC, 0x52, 0x00],
     ),
     ConnectorCommand(
       id: 'powersaver',
       label: 'Powersaver',
-      description: 'Slow telemetry (10 s, keeps locked/deployed)',
+      description: 'Slow telemetry (10 s)',
       bytes: [segfaultMagicG, segfaultMagicC, 0x50, 0x00],
     ),
   ];
