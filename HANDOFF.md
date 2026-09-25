@@ -115,7 +115,7 @@ If your task genuinely requires touching another agent's area:
 | Riverpod | 3, no codegen | `Notifier`/`AsyncNotifier`. Use `AsyncValue.value`, **not** `valueOrNull`. `ProviderScope.overrides` injects the worker isolate in `main`. |
 | fl_chart | 1.2 | `SideTitleWidget(meta: meta, child:)`, `LineChart(duration: Duration.zero)`, `StrokePattern.dashed`, `BarAreaData`. `BorderSide.strokeAlignInside` is a `double`, not an enum. |
 | flutter_map | 8.3 | + `latlong2`, `vector_math` (`transformed(Vector4)`, `transformed3(Vector3)`, `scaleByDouble(x,y,z,w)`). |
-| tray_manager | 0.7.0 | Linux: still calls deprecated `app_indicator_new()`. `linux/CMakeLists.txt` suppresses `-Wno-deprecated-declarations` on the plugin target only (guarded by `if(TARGET …)`). Our own code keeps `-Werror`. |
+| tray_manager | 0.7.0 | Linux: StatusNotifierItem over D-Bus (no appindicator needed). `linux/CMakeLists.txt` keeps `-Werror` for our code, suppresses `-Wno-deprecated-declarations` on `tray_manager_plugin` only, and maps `G_APPLICATION_DEFAULT_FLAGS`→`G_APPLICATION_FLAGS_NONE` when glib < 2.74 (ubuntu-22.04 ships 2.72; cnativeapi 0.3.0 needs 2.74+). |
 | Others | — | `shared_preferences`, `path_provider`, `window_manager`, `flutter_libserialport`, local `packages/serial`. |
 
 No router package (4 flat screens via enum provider). No `build_runner`/freezed.

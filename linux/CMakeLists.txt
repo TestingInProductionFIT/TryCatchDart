@@ -55,6 +55,15 @@ add_subdirectory(${FLUTTER_MANAGED_DIR})
 # System-level dependencies.
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GTK REQUIRED IMPORTED_TARGET gtk+-3.0)
+# cnativeapi 0.3.0 uses G_APPLICATION_DEFAULT_FLAGS (glib >= 2.74) but
+# ubuntu-22.04 ships glib 2.72 where only G_APPLICATION_FLAGS_NONE exists
+# (same value 0). Map the new name to the old one on old distros only so
+# the plugin build keeps working while staying on 22.04 for old-glibc
+# compat. Newer distros (glib >= 2.74) get nothing, avoiding a redefinition.
+pkg_check_modules(GIO gio-2.0)
+if(GIO_FOUND AND GIO_VERSION VERSION_LESS "2.74")
+  add_compile_definitions(G_APPLICATION_DEFAULT_FLAGS=G_APPLICATION_FLAGS_NONE)
+endif()
 
 # Application build; see runner/CMakeLists.txt.
 add_subdirectory("runner")
@@ -76,11 +85,12 @@ set_target_properties(${BINARY_NAME}
 # them to the application.
 include(flutter/generated_plugins.cmake)
 
-# tray_manager still calls app_indicator_new(), which the
-# ayatana-appindicator headers mark deprecated (upstream has not migrated to
-# ayatana_app_indicator_new). Our APPLY_STANDARD_SETTINGS adds -Werror, so the
-# deprecation notice fails the build. Silence it for that third-party target
-# only — our own code keeps -Werror. Safe if the plugin is absent/renamed.
+# tray_manager <=0.5 called app_indicator_new(), which the
+# ayatana-appindicator headers mark deprecated. Kept as a harmless guard:
+# our APPLY_STANDARD_SETTINGS adds -Werror, so silence the notice for that
+# third-party target only — our own code keeps -Werror. Safe if the plugin
+# is absent/renamed. (tray_manager 0.7/cnativeapi 0.3 no longer use
+# appindicator at all: StatusNotifierItem over D-Bus.)
 if(TARGET tray_manager_plugin)
   target_compile_options(tray_manager_plugin PRIVATE -Wno-deprecated-declarations)
 endif()
