@@ -118,7 +118,10 @@ class _ControlPanelWidgetState extends ConsumerState<ControlPanelTile> {
       );
     }
     return LayoutBuilder(builder: (context, constraints) {
-      final columns = constraints.maxWidth > 460 ? 3 : 2;
+      // Four commands always form a 2x2 grid, even on wide tiles where
+      // the default would be 3 columns (3 + 1 orphan row).
+      final columns =
+          commands.length == 4 ? 2 : (constraints.maxWidth > 460 ? 3 : 2);
       final rows = (commands.length / columns).ceil();
       final bounded = constraints.maxHeight.isFinite;
       final fillExtent =

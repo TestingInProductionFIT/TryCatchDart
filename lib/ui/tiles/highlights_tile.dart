@@ -79,7 +79,7 @@ class HighlightsTile extends ConsumerWidget {
             ),
           ],
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 12),
         Row(
           children: [
             Expanded(
@@ -101,7 +101,7 @@ class HighlightsTile extends ConsumerWidget {
           ],
         ),
         if (replaying) ...[
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           Row(
             children: [
               Expanded(
@@ -233,16 +233,16 @@ class _Cell extends StatelessWidget {
           overflow: TextOverflow.ellipsis,
           textAlign: TextAlign.center,
           style:
-              AppText.microLabel.copyWith(fontSize: 9, letterSpacing: 1.2),
+              AppText.microLabel.copyWith(fontSize: 10.5, letterSpacing: 1.2),
         ),
-        const SizedBox(height: 2),
+        const SizedBox(height: 4),
         Text(
           value,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           textAlign: TextAlign.center,
           style: AppText.mono.copyWith(
-            fontSize: 15,
+            fontSize: 18,
             fontWeight: FontWeight.w800,
             fontFeatures: const [FontFeature.tabularFigures()],
             color: color,
@@ -255,7 +255,7 @@ class _Cell extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
             textAlign: TextAlign.center,
             style: AppText.mono.copyWith(
-              fontSize: 11,
+              fontSize: 12.5,
               fontWeight: FontWeight.w600,
               fontFeatures: const [FontFeature.tabularFigures()],
               color: AppColors.mutedForeground,
