@@ -38,11 +38,20 @@ class RealSerialPort {
         return false;
       }
 
-      // Configure hardware parameters from centralized constants
-      _port!.config.baudRate = SerialHardwareConfig.baudRate;
-      _port!.config.parity = SerialHardwareConfig.parity;
-      _port!.config.stopBits = SerialHardwareConfig.stopBits;
-      _port!.config.bits = SerialHardwareConfig.dataBits;
+      // Configure hardware parameters from centralized constants.
+      //
+      // NOTE: mutating `_port.config` fields alone does NOT touch the port:
+      // the `config` getter returns a cached in-memory struct and only the
+      // `config` *setter* calls sp_set_config. Without the assignment below
+      // the port keeps whatever baud the OS/driver had (e.g. 9600 left over
+      // by another tool), which garbles every frame while the air link is
+      // fine. Always assign back through the setter.
+      final serialConfig = _port!.config;
+      serialConfig.baudRate = SerialHardwareConfig.baudRate;
+      serialConfig.parity = SerialHardwareConfig.parity;
+      serialConfig.stopBits = SerialHardwareConfig.stopBits;
+      serialConfig.bits = SerialHardwareConfig.dataBits;
+      _port!.config = serialConfig;
 
       // Attach native asynchronous stream reader
       _reader = SerialPortReader(_port!);
